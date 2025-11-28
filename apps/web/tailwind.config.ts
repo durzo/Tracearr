@@ -13,7 +13,27 @@ export default {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+      },
       colors: {
+        /* Tracearr Brand Colors */
+        cyan: {
+          core: 'hsl(var(--cyan-core))',
+          deep: 'hsl(var(--cyan-deep))',
+          dark: 'hsl(var(--cyan-dark))',
+        },
+        blue: {
+          core: 'hsl(var(--blue-core))',
+          steel: 'hsl(var(--blue-steel))',
+          soft: 'hsl(var(--blue-soft))',
+        },
+        icon: {
+          DEFAULT: 'hsl(var(--icon-default))',
+          active: 'hsl(var(--icon-active))',
+          danger: 'hsl(var(--icon-danger))',
+        },
+        /* shadcn/ui semantic colors */
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
