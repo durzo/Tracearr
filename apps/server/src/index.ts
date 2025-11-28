@@ -23,6 +23,9 @@ config({ path: resolve(PROJECT_ROOT, '.env') });
 
 // GeoIP database path (in project root/data)
 const GEOIP_DB_PATH = resolve(PROJECT_ROOT, 'data/GeoLite2-City.mmdb');
+
+// Migrations path (relative to compiled output in production, source in dev)
+const MIGRATIONS_PATH = resolve(__dirname, '../src/db/migrations');
 import type { ActiveSession, ViolationWithDetails, DashboardStats, TautulliImportProgress } from '@tracearr/shared';
 
 import authPlugin from './plugins/auth.js';
@@ -42,7 +45,7 @@ import { geoipService } from './services/geoip.js';
 import { createCacheService, createPubSubService } from './services/cache.js';
 import { initializePoller, startPoller, stopPoller } from './jobs/poller.js';
 import { initializeWebSocket, broadcastToSessions } from './websocket/index.js';
-import { db } from './db/client.js';
+import { db, runMigrations } from './db/client.js';
 import { sql } from 'drizzle-orm';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
@@ -58,6 +61,16 @@ async function buildApp() {
           : undefined,
     },
   });
+
+  // Run database migrations
+  try {
+    app.log.info('Running database migrations...');
+    await runMigrations(MIGRATIONS_PATH);
+    app.log.info('Database migrations complete');
+  } catch (err) {
+    app.log.error({ err }, 'Failed to run database migrations');
+    throw err;
+  }
 
   // Initialize encryption
   try {

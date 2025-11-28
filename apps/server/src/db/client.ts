@@ -3,6 +3,7 @@
  */
 
 import { drizzle } from 'drizzle-orm/node-postgres';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
 import * as schema from './schema.js';
 
@@ -35,4 +36,8 @@ export async function checkDatabaseConnection(): Promise<boolean> {
     console.error('Database connection check failed:', error);
     return false;
   }
+}
+
+export async function runMigrations(migrationsFolder: string): Promise<void> {
+  await migrate(db, { migrationsFolder });
 }
