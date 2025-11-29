@@ -247,6 +247,28 @@ export interface ClientToServerEvents {
   'unsubscribe:sessions': () => void;
 }
 
+// User location aggregation (derived from sessions)
+export interface UserLocation {
+  city: string | null;
+  country: string | null;
+  lat: number | null;
+  lon: number | null;
+  sessionCount: number;
+  lastSeenAt: Date;
+  ipAddresses: string[];
+}
+
+// User device aggregation (derived from sessions)
+export interface UserDevice {
+  deviceId: string | null;
+  playerName: string | null;
+  product: string | null;
+  device: string | null;
+  platform: string | null;
+  sessionCount: number;
+  lastSeenAt: Date;
+}
+
 // API response types
 export interface PaginatedResponse<T> {
   data: T[];

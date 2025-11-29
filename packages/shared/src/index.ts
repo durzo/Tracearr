@@ -11,6 +11,8 @@ export type {
   User,
   UserRole,
   AuthUser,
+  UserLocation,
+  UserDevice,
   // Session
   SessionState,
   MediaType,

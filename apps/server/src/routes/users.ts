@@ -3,11 +3,13 @@
  */
 
 import type { FastifyPluginAsync } from 'fastify';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, sql, isNotNull } from 'drizzle-orm';
 import {
   updateUserSchema,
   userIdParamSchema,
   paginationSchema,
+  type UserLocation,
+  type UserDevice,
 } from '@tracearr/shared';
 import { db } from '../db/client.js';
 import { users, sessions, servers } from '../db/schema.js';
@@ -66,12 +68,10 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
 
       return {
         data: userList,
-        pagination: {
-          page,
-          pageSize,
-          total,
-          totalPages: Math.ceil(total / pageSize),
-        },
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
       };
     }
   );
@@ -298,13 +298,145 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
 
       return {
         data: sessionData,
-        pagination: {
-          page,
-          pageSize,
-          total,
-          totalPages: Math.ceil(total / pageSize),
-        },
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
       };
+    }
+  );
+
+  /**
+   * GET /users/:id/locations - Get user's unique locations (aggregated from sessions)
+   */
+  app.get(
+    '/:id/locations',
+    { preHandler: [app.authenticate] },
+    async (request, reply) => {
+      const params = userIdParamSchema.safeParse(request.params);
+      if (!params.success) {
+        return reply.badRequest('Invalid user ID');
+      }
+
+      const { id } = params.data;
+      const authUser = request.user;
+
+      // Verify user exists and access
+      const userRows = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, id))
+        .limit(1);
+
+      const user = userRows[0];
+      if (!user) {
+        return reply.notFound('User not found');
+      }
+
+      if (!authUser.serverIds.includes(user.serverId)) {
+        return reply.forbidden('You do not have access to this user');
+      }
+
+      // Aggregate locations from sessions
+      const locationData = await db
+        .select({
+          city: sessions.geoCity,
+          country: sessions.geoCountry,
+          lat: sessions.geoLat,
+          lon: sessions.geoLon,
+          sessionCount: sql<number>`count(*)::int`,
+          lastSeenAt: sql<Date>`max(${sessions.startedAt})`,
+          ipAddresses: sql<string[]>`array_agg(distinct ${sessions.ipAddress})`,
+        })
+        .from(sessions)
+        .where(eq(sessions.userId, id))
+        .groupBy(
+          sessions.geoCity,
+          sessions.geoCountry,
+          sessions.geoLat,
+          sessions.geoLon
+        )
+        .orderBy(desc(sql`max(${sessions.startedAt})`));
+
+      const locations: UserLocation[] = locationData.map((loc) => ({
+        city: loc.city,
+        country: loc.country,
+        lat: loc.lat,
+        lon: loc.lon,
+        sessionCount: loc.sessionCount,
+        lastSeenAt: loc.lastSeenAt,
+        ipAddresses: loc.ipAddresses ?? [],
+      }));
+
+      return { data: locations };
+    }
+  );
+
+  /**
+   * GET /users/:id/devices - Get user's unique devices (aggregated from sessions)
+   */
+  app.get(
+    '/:id/devices',
+    { preHandler: [app.authenticate] },
+    async (request, reply) => {
+      const params = userIdParamSchema.safeParse(request.params);
+      if (!params.success) {
+        return reply.badRequest('Invalid user ID');
+      }
+
+      const { id } = params.data;
+      const authUser = request.user;
+
+      // Verify user exists and access
+      const userRows = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, id))
+        .limit(1);
+
+      const user = userRows[0];
+      if (!user) {
+        return reply.notFound('User not found');
+      }
+
+      if (!authUser.serverIds.includes(user.serverId)) {
+        return reply.forbidden('You do not have access to this user');
+      }
+
+      // Aggregate devices from sessions
+      // Group by deviceId primarily, but also include other identifying info
+      const deviceData = await db
+        .select({
+          deviceId: sessions.deviceId,
+          playerName: sessions.playerName,
+          product: sessions.product,
+          device: sessions.device,
+          platform: sessions.platform,
+          sessionCount: sql<number>`count(*)::int`,
+          lastSeenAt: sql<Date>`max(${sessions.startedAt})`,
+        })
+        .from(sessions)
+        .where(eq(sessions.userId, id))
+        .groupBy(
+          sessions.deviceId,
+          sessions.playerName,
+          sessions.product,
+          sessions.device,
+          sessions.platform
+        )
+        .orderBy(desc(sql`max(${sessions.startedAt})`));
+
+      const devices: UserDevice[] = deviceData.map((dev) => ({
+        deviceId: dev.deviceId,
+        playerName: dev.playerName,
+        product: dev.product,
+        device: dev.device,
+        platform: dev.platform,
+        sessionCount: dev.sessionCount,
+        lastSeenAt: dev.lastSeenAt,
+      }));
+
+      return { data: devices };
     }
   );
 };
