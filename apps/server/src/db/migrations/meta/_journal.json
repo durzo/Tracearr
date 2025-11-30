@@ -78,6 +78,13 @@
       "when": 1764536762069,
       "tag": "0010_glossy_stature",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1764537947789,
+      "tag": "0011_happy_power_pack",
+      "breakpoints": true
     }
   ]
 }

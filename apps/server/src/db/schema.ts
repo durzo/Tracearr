@@ -198,6 +198,34 @@ export const violations = pgTable(
   ]
 );
 
+// Mobile access tokens (for QR code pairing)
+export const mobileTokens = pgTable('mobile_tokens', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(), // SHA-256 of trr_mob_xxx token
+  isEnabled: boolean('is_enabled').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  rotatedAt: timestamp('rotated_at', { withTimezone: true }),
+});
+
+// Mobile sessions (paired devices)
+export const mobileSessions = pgTable(
+  'mobile_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    refreshTokenHash: varchar('refresh_token_hash', { length: 64 }).notNull().unique(), // SHA-256
+    deviceName: varchar('device_name', { length: 100 }).notNull(),
+    deviceId: varchar('device_id', { length: 100 }).notNull(),
+    platform: varchar('platform', { length: 20 }).notNull().$type<'ios' | 'android'>(),
+    expoPushToken: varchar('expo_push_token', { length: 255 }), // For push notifications
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('mobile_sessions_device_id_idx').on(table.deviceId),
+    index('mobile_sessions_refresh_token_idx').on(table.refreshTokenHash),
+  ]
+);
+
 // Application settings (single row)
 export const settings = pgTable('settings', {
   id: integer('id').primaryKey().default(1),
