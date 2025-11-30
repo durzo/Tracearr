@@ -319,6 +319,12 @@ export interface TautulliImportResult {
   skipped: number;
   errors: number;
   message: string;
+  /** Details about users that were skipped (not found in Tracearr) */
+  skippedUsers?: {
+    tautulliUserId: number;
+    username: string;
+    recordCount: number;
+  }[];
 }
 
 // WebSocket event types

@@ -3,6 +3,7 @@
  */
 
 import { eq, and } from 'drizzle-orm';
+import { z } from 'zod';
 import type { TautulliImportProgress, TautulliImportResult } from '@tracearr/shared';
 import { db } from '../db/client.js';
 import { sessions, users, settings } from '../db/schema.js';
@@ -11,86 +12,100 @@ import { geoipService } from './geoip.js';
 import type { PubSubService } from './cache.js';
 
 const PAGE_SIZE = 100;
+const REQUEST_TIMEOUT_MS = 30000; // 30 seconds
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 1000; // Base delay, will be multiplied by attempt number
 
-interface TautulliHistoryRecord {
-  reference_id: string; // Unique session identifier
-  row_id: number;
-  date: number; // Unix timestamp
-  started: number; // Unix timestamp
-  stopped: number; // Unix timestamp
-  duration: number; // Seconds watched
-  paused_counter: number; // Seconds paused
-  user_id: number;
-  user: string; // friendly_name
-  friendly_name: string;
-  platform: string;
-  product: string;
-  player: string;
-  ip_address: string;
-  live: number;
-  machine_id: string;
-  location: string;
-  secure: number;
-  relayed: number;
-  media_type: string;
-  rating_key: string;
-  parent_rating_key: string;
-  grandparent_rating_key: string;
-  full_title: string;
-  title: string;
-  grandparent_title: string;
-  original_title: string;
-  year: number;
-  media_index: number;
-  parent_media_index: number;
-  thumb: string;
-  parent_thumb: string;
-  grandparent_thumb: string;
-  originally_available_at: string;
-  guid: string;
-  transcode_decision: string;
-  percent_complete: number;
-  watched_status: number;
-  group_count: number;
-  group_ids: string;
-  state: string | null;
-  session_key: string | null;
-}
+// Helper for fields that can be number or empty string (Tautulli API inconsistency)
+const numberOrEmptyString = z.union([z.number(), z.literal('')]);
 
-interface TautulliHistoryResponse {
-  response: {
-    result: string;
-    message: string | null;
-    data: {
-      recordsFiltered: number;
-      recordsTotal: number;
-      data: TautulliHistoryRecord[];
-      draw: number;
-      filter_duration: string;
-      total_duration: string;
-    };
-  };
-}
+// Zod schemas for runtime validation of Tautulli API responses
+const TautulliHistoryRecordSchema = z.object({
+  reference_id: z.number(), // API returns number, not string
+  row_id: z.number(),
+  date: z.number(),
+  started: z.number(),
+  stopped: z.number(),
+  duration: z.number(),
+  paused_counter: z.number(),
+  user_id: z.number(),
+  user: z.string(),
+  friendly_name: z.string(),
+  platform: z.string(),
+  product: z.string(),
+  player: z.string(),
+  ip_address: z.string(),
+  live: z.number(),
+  machine_id: z.string(),
+  location: z.string(),
+  secure: z.number(),
+  relayed: z.number(),
+  media_type: z.string(),
+  // rating_key fields are numbers for episodes, empty strings for movies
+  rating_key: numberOrEmptyString,
+  parent_rating_key: numberOrEmptyString,
+  grandparent_rating_key: numberOrEmptyString,
+  full_title: z.string(),
+  title: z.string(),
+  parent_title: z.string(), // Added - present in API
+  grandparent_title: z.string(),
+  original_title: z.string(),
+  year: z.number(),
+  // media_index fields are numbers for episodes, empty strings for movies
+  media_index: numberOrEmptyString,
+  parent_media_index: numberOrEmptyString,
+  thumb: z.string(),
+  originally_available_at: z.string(),
+  guid: z.string(),
+  transcode_decision: z.string(),
+  percent_complete: z.number(),
+  watched_status: z.number(), // Can be 0, 0.75, 1 (decimal for partial watch)
+  group_count: z.number(),
+  group_ids: z.string(),
+  state: z.string().nullable(),
+  session_key: z.string().nullable(),
+});
 
-interface TautulliUserRecord {
-  user_id: number;
-  username: string;
-  friendly_name: string;
-  email: string;
-  thumb: string;
-  is_home_user: number;
-  is_admin: number;
-  is_active: number;
-  do_notify: number;
-}
+const TautulliHistoryResponseSchema = z.object({
+  response: z.object({
+    result: z.string(),
+    message: z.string().nullable(),
+    data: z.object({
+      recordsFiltered: z.number(),
+      recordsTotal: z.number(),
+      data: z.array(TautulliHistoryRecordSchema),
+      draw: z.number(),
+      filter_duration: z.string(),
+      total_duration: z.string(),
+    }),
+  }),
+});
 
-interface TautulliUsersResponse {
-  response: {
-    result: string;
-    message: string | null;
-    data: TautulliUserRecord[];
-  };
-}
+const TautulliUserRecordSchema = z.object({
+  user_id: z.number(),
+  username: z.string(),
+  friendly_name: z.string(),
+  email: z.string().nullable(), // Can be null for local users
+  thumb: z.string().nullable(), // Can be null for local users
+  is_home_user: z.number().nullable(), // Can be null for local users
+  is_admin: z.number(),
+  is_active: z.number(),
+  do_notify: z.number(),
+});
+
+const TautulliUsersResponseSchema = z.object({
+  response: z.object({
+    result: z.string(),
+    message: z.string().nullable(),
+    data: z.array(TautulliUserRecordSchema),
+  }),
+});
+
+// Infer types from schemas
+type TautulliHistoryRecord = z.infer<typeof TautulliHistoryRecordSchema>;
+type TautulliHistoryResponse = z.infer<typeof TautulliHistoryResponseSchema>;
+type TautulliUserRecord = z.infer<typeof TautulliUserRecordSchema>;
+type TautulliUsersResponse = z.infer<typeof TautulliUsersResponseSchema>;
 
 export class TautulliService {
   private baseUrl: string;
@@ -102,9 +117,13 @@ export class TautulliService {
   }
 
   /**
-   * Make API request to Tautulli
+   * Make API request to Tautulli with timeout and retry logic
    */
-  private async request<T>(cmd: string, params: Record<string, string | number> = {}): Promise<T> {
+  private async request<T>(
+    cmd: string,
+    params: Record<string, string | number> = {},
+    schema?: z.ZodType<T>
+  ): Promise<T> {
     const url = new URL(`${this.baseUrl}/api/v2`);
     url.searchParams.set('apikey', this.apiKey);
     url.searchParams.set('cmd', cmd);
@@ -113,13 +132,65 @@ export class TautulliService {
       url.searchParams.set(key, String(value));
     }
 
-    const response = await fetch(url.toString());
+    let lastError: Error | null = null;
 
-    if (!response.ok) {
-      throw new Error(`Tautulli API error: ${response.status}`);
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+      try {
+        const response = await fetch(url.toString(), {
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          throw new Error(`Tautulli API error: ${response.status} ${response.statusText}`);
+        }
+
+        const json = await response.json();
+
+        // Validate response with Zod schema if provided
+        if (schema) {
+          const parsed = schema.safeParse(json);
+          if (!parsed.success) {
+            console.error('Tautulli API response validation failed:', parsed.error.flatten());
+            throw new Error(`Invalid Tautulli API response: ${parsed.error.message}`);
+          }
+          return parsed.data;
+        }
+
+        return json as T;
+      } catch (error) {
+        clearTimeout(timeoutId);
+
+        if (error instanceof Error) {
+          // Don't retry on abort (timeout) after max retries
+          if (error.name === 'AbortError') {
+            lastError = new Error(`Tautulli API timeout after ${REQUEST_TIMEOUT_MS}ms`);
+          } else {
+            lastError = error;
+          }
+        } else {
+          lastError = new Error('Unknown error');
+        }
+
+        // Don't retry on validation errors
+        if (lastError.message.includes('Invalid Tautulli API response')) {
+          throw lastError;
+        }
+
+        // Wait before retrying (exponential backoff)
+        if (attempt < MAX_RETRIES) {
+          const delay = RETRY_DELAY_MS * attempt;
+          console.warn(`Tautulli API request failed (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay}ms...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
     }
 
-    return response.json() as Promise<T>;
+    throw lastError ?? new Error('Tautulli API request failed after retries');
   }
 
   /**
@@ -138,7 +209,11 @@ export class TautulliService {
    * Get all users from Tautulli
    */
   async getUsers(): Promise<TautulliUserRecord[]> {
-    const result = await this.request<TautulliUsersResponse>('get_users');
+    const result = await this.request<TautulliUsersResponse>(
+      'get_users',
+      {},
+      TautulliUsersResponseSchema
+    );
     return result.response.data ?? [];
   }
 
@@ -149,12 +224,16 @@ export class TautulliService {
     start: number = 0,
     length: number = PAGE_SIZE
   ): Promise<{ records: TautulliHistoryRecord[]; total: number }> {
-    const result = await this.request<TautulliHistoryResponse>('get_history', {
-      start,
-      length,
-      order_column: 'date',
-      order_dir: 'desc',
-    });
+    const result = await this.request<TautulliHistoryResponse>(
+      'get_history',
+      {
+        start,
+        length,
+        order_column: 'date',
+        order_dir: 'desc',
+      },
+      TautulliHistoryResponseSchema
+    );
 
     return {
       records: result.response.data?.data ?? [],
@@ -253,6 +332,9 @@ export class TautulliService {
     let errors = 0;
     let page = 0;
 
+    // Track skipped users for warning message
+    const skippedUsers = new Map<number, { username: string; count: number }>();
+
     // Process all pages
     while (page * PAGE_SIZE < total) {
       progress.status = 'processing';
@@ -269,20 +351,31 @@ export class TautulliService {
           // Find Tracearr user by Plex user ID
           const userId = userMap.get(record.user_id);
           if (!userId) {
-            // User not found in Tracearr - skip
+            // User not found in Tracearr - track for warning
+            const existing = skippedUsers.get(record.user_id);
+            if (existing) {
+              existing.count++;
+            } else {
+              skippedUsers.set(record.user_id, {
+                username: record.friendly_name || record.user,
+                count: 1,
+              });
+            }
             skipped++;
             progress.skippedRecords++;
             continue;
           }
 
           // Check for existing session by externalSessionId
+          // Convert reference_id to string for DB comparison
+          const referenceIdStr = String(record.reference_id);
           const existingByRef = await db
             .select()
             .from(sessions)
             .where(
               and(
                 eq(sessions.serverId, serverId),
-                eq(sessions.externalSessionId, record.reference_id)
+                eq(sessions.externalSessionId, referenceIdStr)
               )
             )
             .limit(1);
@@ -310,18 +403,22 @@ export class TautulliService {
 
           // Check for duplicate by ratingKey + startedAt (fallback dedup)
           const startedAt = new Date(record.started * 1000);
-          const existingByTime = await db
-            .select()
-            .from(sessions)
-            .where(
-              and(
-                eq(sessions.serverId, serverId),
-                eq(sessions.userId, userId),
-                eq(sessions.ratingKey, record.rating_key),
-                eq(sessions.startedAt, startedAt)
-              )
-            )
-            .limit(1);
+          // Convert rating_key to string for DB comparison (can be number or empty string)
+          const ratingKeyStr = typeof record.rating_key === 'number' ? String(record.rating_key) : null;
+          const existingByTime = ratingKeyStr
+            ? await db
+                .select()
+                .from(sessions)
+                .where(
+                  and(
+                    eq(sessions.serverId, serverId),
+                    eq(sessions.userId, userId),
+                    eq(sessions.ratingKey, ratingKeyStr),
+                    eq(sessions.startedAt, startedAt)
+                  )
+                )
+                .limit(1)
+            : [];
 
           if (existingByTime.length > 0) {
             // Update with externalSessionId for future dedup
@@ -329,7 +426,7 @@ export class TautulliService {
             await db
               .update(sessions)
               .set({
-                externalSessionId: record.reference_id,
+                externalSessionId: referenceIdStr,
                 stoppedAt: new Date(record.stopped * 1000),
                 durationMs: record.duration * 1000,
                 pausedDurationMs: record.paused_counter * 1000,
@@ -358,20 +455,21 @@ export class TautulliService {
             serverId,
             userId,
             sessionKey: record.session_key ?? `tautulli-${record.reference_id}`,
-            ratingKey: record.rating_key,
-            externalSessionId: record.reference_id,
+            // Convert rating_key to string (can be number or empty string from API)
+            ratingKey: typeof record.rating_key === 'number' ? String(record.rating_key) : null,
+            // reference_id is always a number from API, convert to string
+            externalSessionId: String(record.reference_id),
             state: 'stopped', // Historical data is always stopped
             mediaType,
             mediaTitle: record.full_title || record.title,
             // Enhanced metadata from Tautulli
             grandparentTitle: record.grandparent_title || null,
-            seasonNumber: record.parent_media_index || null,
-            episodeNumber: record.media_index || null,
+            // Handle number or empty string from API
+            seasonNumber: typeof record.parent_media_index === 'number' ? record.parent_media_index : null,
+            episodeNumber: typeof record.media_index === 'number' ? record.media_index : null,
             year: record.year || null,
-            // For episodes, use show poster (grandparent_thumb); for movies, use thumb
-            thumbPath: mediaType === 'episode' && record.grandparent_thumb
-              ? record.grandparent_thumb
-              : record.thumb || null,
+            // Tautulli provides thumb which is season poster for episodes, show/movie poster for others
+            thumbPath: record.thumb || null,
             startedAt,
             stoppedAt: new Date(record.stopped * 1000),
             durationMs: record.duration * 1000,
@@ -422,9 +520,25 @@ export class TautulliService {
       console.warn('Failed to refresh aggregates after import:', err);
     }
 
+    // Build final message with skipped user warnings
+    let message = `Import complete: ${imported} imported, ${skipped} skipped, ${errors} errors`;
+
+    if (skippedUsers.size > 0) {
+      const skippedUserList = [...skippedUsers.values()]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5) // Show top 5 skipped users
+        .map(u => `${u.username} (${u.count} records)`)
+        .join(', ');
+
+      const moreUsers = skippedUsers.size > 5 ? ` and ${skippedUsers.size - 5} more` : '';
+      message += `. Warning: ${skippedUsers.size} users not found in Tracearr: ${skippedUserList}${moreUsers}. Sync your server to import these users first.`;
+
+      console.warn(`Tautulli import skipped users: ${[...skippedUsers.values()].map(u => u.username).join(', ')}`);
+    }
+
     // Final progress update
     progress.status = 'complete';
-    progress.message = `Import complete: ${imported} imported, ${skipped} skipped, ${errors} errors`;
+    progress.message = message;
     await publishProgress();
 
     return {
@@ -432,7 +546,12 @@ export class TautulliService {
       imported,
       skipped,
       errors,
-      message: progress.message,
+      message,
+      skippedUsers: skippedUsers.size > 0 ? [...skippedUsers.entries()].map(([id, data]) => ({
+        tautulliUserId: id,
+        username: data.username,
+        recordCount: data.count,
+      })) : undefined,
     };
   }
 }
