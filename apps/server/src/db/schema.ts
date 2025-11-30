@@ -145,6 +145,9 @@ export const sessions = pgTable(
     index('sessions_media_type_idx').on(table.mediaType), // For media type aggregations
     index('sessions_transcode_idx').on(table.isTranscode), // For quality stats
     index('sessions_platform_idx').on(table.platform), // For platform stats
+    // Indexes for top-content queries (movies and shows aggregation)
+    index('sessions_top_movies_idx').on(table.mediaType, table.mediaTitle, table.year), // For top movies GROUP BY
+    index('sessions_top_shows_idx').on(table.mediaType, table.grandparentTitle), // For top shows GROUP BY series
   ]
 );
 
