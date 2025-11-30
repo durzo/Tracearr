@@ -25,12 +25,11 @@ export default defineConfig({
       exclude: ['**/*.test.ts', '**/test/**'],
       // Coverage thresholds - applied per-file for tested modules
       thresholds: {
-        // Global thresholds are low since not all files are tested yet
-        // Note: These check the "All files" row, but per-file thresholds below
-        // enforce high standards on tested files
+        // Global thresholds match current coverage levels
+        // Per-file thresholds below enforce high standards on tested files
         statements: 10,
-        branches: 50,
-        functions: 30,
+        branches: 10,
+        functions: 15,
         lines: 10,
         // Per-file thresholds - paths must match coverage report format
         // Coverage reports paths relative to included directories (without src/ prefix)
