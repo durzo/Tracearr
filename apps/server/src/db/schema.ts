@@ -13,6 +13,7 @@ import {
   real,
   jsonb,
   index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -74,7 +75,8 @@ export const users = pgTable(
   },
   (table) => [
     index('users_server_id_idx').on(table.serverId),
-    index('users_external_id_idx').on(table.serverId, table.externalId),
+    // Unique constraint for atomic upsert operations (prevents race conditions)
+    uniqueIndex('users_server_external_id_unique').on(table.serverId, table.externalId),
     index('users_plex_account_id_idx').on(table.plexAccountId),
     index('users_username_idx').on(table.username),
   ]
