@@ -101,8 +101,10 @@ export function parseSession(item: Record<string, unknown>): MediaSession {
   const positionMs = parseNumber(item.viewOffset);
   const mediaType = parseMediaType(item.type);
 
-  // Get bitrate from Media array (first element)
+  // Get bitrate and resolution from Media array (first element)
   const bitrate = parseNumber(parseFirstArrayElement(item.Media, 'bitrate'));
+  const videoResolution = parseOptionalString(parseFirstArrayElement(item.Media, 'videoResolution'));
+  const videoHeight = parseOptionalNumber(parseFirstArrayElement(item.Media, 'height'));
 
   // Determine transcode status
   const videoDecision = parseString(transcodeSession?.videoDecision, 'directplay');
@@ -144,6 +146,8 @@ export function parseSession(item: Record<string, unknown>): MediaSession {
       bitrate,
       isTranscode,
       videoDecision,
+      videoResolution,
+      videoHeight,
     },
   };
 

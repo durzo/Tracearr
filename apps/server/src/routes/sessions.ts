@@ -311,7 +311,16 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
           const activeSession = JSON.parse(cached) as ActiveSession;
           // Verify access
           if (authUser.serverIds.includes(activeSession.serverId)) {
-            return activeSession;
+            // Transform ActiveSession to SessionWithDetails format for consistent API response
+            // ActiveSession has nested user/server objects, but clients expect flat structure
+            const { user, server, ...sessionFields } = activeSession;
+            return {
+              ...sessionFields,
+              username: user.username,
+              userThumb: user.thumbUrl,
+              serverName: server.name,
+              serverType: server.type,
+            };
           }
         } catch {
           // Fall through to DB
@@ -346,6 +355,8 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
           startedAt: sessions.startedAt,
           stoppedAt: sessions.stoppedAt,
           durationMs: sessions.durationMs,
+          progressMs: sessions.progressMs,
+          totalDurationMs: sessions.totalDurationMs,
           // Pause tracking fields
           lastPausedAt: sessions.lastPausedAt,
           pausedDurationMs: sessions.pausedDurationMs,

@@ -154,6 +154,8 @@ export interface SessionPauseData {
  * Result of processing a single server's sessions
  */
 export interface ServerProcessingResult {
+  /** Whether the server was successfully polled (false = connection error) */
+  success: boolean;
   /** Newly created sessions */
   newSessions: ActiveSession[];
   /** Session keys that stopped playing */

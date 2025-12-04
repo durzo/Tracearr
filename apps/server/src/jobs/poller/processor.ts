@@ -21,6 +21,7 @@ import { mapMediaSession } from './sessionMapper.js';
 import { batchGetRecentUserSessions, getActiveRules } from './database.js';
 import { calculatePauseAccumulation, calculateStopDuration, checkWatchCompletion } from './stateTracker.js';
 import { createViolation } from './violations.js';
+import { enqueueNotification } from '../notificationQueue.js';
 
 // ============================================================================
 // Module State
@@ -548,10 +549,10 @@ async function processServerSessions(
       }
     }
 
-    return { newSessions, stoppedSessionKeys, updatedSessions };
+    return { success: true, newSessions, stoppedSessionKeys, updatedSessions };
   } catch (error) {
     console.error(`Error polling server ${server.name}:`, error);
-    return { newSessions: [], stoppedSessionKeys: [], updatedSessions: [] };
+    return { success: false, newSessions: [], stoppedSessionKeys: [], updatedSessions: [] };
   }
 }
 
@@ -585,14 +586,41 @@ async function pollServers(): Promise<void> {
     const allStoppedKeys: string[] = [];
     const allUpdatedSessions: ActiveSession[] = [];
 
-    // Process each server
+    // Process each server with health tracking
     for (const server of allServers) {
       const serverWithToken = server as ServerWithToken;
-      const { newSessions, stoppedSessionKeys, updatedSessions } = await processServerSessions(
+
+      // Get previous health state for transition detection
+      const wasHealthy = cacheService ? await cacheService.getServerHealth(server.id) : null;
+
+      const { success, newSessions, stoppedSessionKeys, updatedSessions } = await processServerSessions(
         serverWithToken,
         activeRules,
         cachedSessionKeys
       );
+
+      // Track health state and notify on transitions
+      if (cacheService) {
+        await cacheService.setServerHealth(server.id, success);
+
+        // Detect health state transitions
+        if (wasHealthy === true && !success) {
+          // Server went down - notify
+          console.log(`[Poller] Server ${server.name} is DOWN`);
+          await enqueueNotification({
+            type: 'server_down',
+            payload: { serverName: server.name, serverId: server.id },
+          });
+        } else if (wasHealthy === false && success) {
+          // Server came back up - notify
+          console.log(`[Poller] Server ${server.name} is back UP`);
+          await enqueueNotification({
+            type: 'server_up',
+            payload: { serverName: server.name, serverId: server.id },
+          });
+        }
+        // wasHealthy === null means first poll, don't notify
+      }
 
       allNewSessions.push(...newSessions);
       allStoppedKeys.push(...stoppedSessionKeys);
@@ -637,6 +665,8 @@ async function pollServers(): Promise<void> {
     if (pubSubService) {
       for (const session of allNewSessions) {
         await pubSubService.publish('session:started', session);
+        // Enqueue notification for async dispatch
+        await enqueueNotification({ type: 'session_started', payload: session });
       }
 
       for (const session of allUpdatedSessions) {
@@ -653,6 +683,8 @@ async function pollServers(): Promise<void> {
           );
           if (stoppedSession) {
             await pubSubService.publish('session:stopped', stoppedSession.id);
+            // Enqueue notification for async dispatch
+            await enqueueNotification({ type: 'session_stopped', payload: stoppedSession });
           }
         }
       }

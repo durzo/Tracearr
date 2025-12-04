@@ -295,3 +295,58 @@ export async function getNetworkSettings(): Promise<{
     trustProxy: settingsRow.trustProxy,
   };
 }
+
+/**
+ * Notification settings for internal use by NotificationDispatcher
+ */
+export interface NotificationSettings {
+  notifyOnViolation: boolean;
+  notifyOnSessionStart: boolean;
+  notifyOnSessionStop: boolean;
+  notifyOnServerDown: boolean;
+  discordWebhookUrl: string | null;
+  customWebhookUrl: string | null;
+  webhookSecret: string | null;
+}
+
+/**
+ * Get notification settings from database (for internal use by notification dispatcher)
+ */
+export async function getNotificationSettings(): Promise<NotificationSettings> {
+  const row = await db
+    .select({
+      notifyOnViolation: settings.notifyOnViolation,
+      notifyOnSessionStart: settings.notifyOnSessionStart,
+      notifyOnSessionStop: settings.notifyOnSessionStop,
+      notifyOnServerDown: settings.notifyOnServerDown,
+      discordWebhookUrl: settings.discordWebhookUrl,
+      customWebhookUrl: settings.customWebhookUrl,
+    })
+    .from(settings)
+    .where(eq(settings.id, SETTINGS_ID))
+    .limit(1);
+
+  const settingsRow = row[0];
+  if (!settingsRow) {
+    // Return defaults if settings don't exist yet
+    return {
+      notifyOnViolation: true,
+      notifyOnSessionStart: false,
+      notifyOnSessionStop: false,
+      notifyOnServerDown: true,
+      discordWebhookUrl: null,
+      customWebhookUrl: null,
+      webhookSecret: null,
+    };
+  }
+
+  return {
+    notifyOnViolation: settingsRow.notifyOnViolation,
+    notifyOnSessionStart: settingsRow.notifyOnSessionStart,
+    notifyOnSessionStop: settingsRow.notifyOnSessionStop,
+    notifyOnServerDown: settingsRow.notifyOnServerDown,
+    discordWebhookUrl: settingsRow.discordWebhookUrl,
+    customWebhookUrl: settingsRow.customWebhookUrl,
+    webhookSecret: null, // TODO: Add webhookSecret column to settings table in Phase 4
+  };
+}

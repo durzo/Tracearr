@@ -9,9 +9,10 @@ import { eq, sql } from 'drizzle-orm';
 import type { Rule, ViolationSeverity, ViolationWithDetails } from '@tracearr/shared';
 import { WS_EVENTS } from '@tracearr/shared';
 import { db } from '../../db/client.js';
-import { serverUsers, violations } from '../../db/schema.js';
+import { servers, serverUsers, sessions, violations } from '../../db/schema.js';
 import type { RuleEvaluationResult } from '../../services/rules.js';
 import type { PubSubService } from '../../services/cache.js';
+import { enqueueNotification } from '../notificationQueue.js';
 
 // ============================================================================
 // Trust Score Calculation
@@ -119,19 +120,24 @@ export async function createViolation(
     return violation;
   });
 
-  // Get server user details for the violation broadcast (outside transaction - read only)
-  const [serverUser] = await db
+  // Get server user and server details for the violation broadcast (outside transaction - read only)
+  const [details] = await db
     .select({
-      id: serverUsers.id,
+      userId: serverUsers.id,
       username: serverUsers.username,
       thumbUrl: serverUsers.thumbUrl,
+      serverId: servers.id,
+      serverName: servers.name,
+      serverType: servers.type,
     })
     .from(serverUsers)
+    .innerJoin(sessions, eq(sessions.id, sessionId))
+    .innerJoin(servers, eq(servers.id, sessions.serverId))
     .where(eq(serverUsers.id, serverUserId))
     .limit(1);
 
   // Publish violation event for WebSocket broadcast
-  if (pubSubService && created && serverUser) {
+  if (pubSubService && created && details) {
     const violationWithDetails: ViolationWithDetails = {
       id: created.id,
       ruleId: created.ruleId,
@@ -142,18 +148,26 @@ export async function createViolation(
       acknowledgedAt: created.acknowledgedAt,
       createdAt: created.createdAt,
       user: {
-        id: serverUser.id,
-        username: serverUser.username,
-        thumbUrl: serverUser.thumbUrl,
+        id: details.userId,
+        username: details.username,
+        thumbUrl: details.thumbUrl,
       },
       rule: {
         id: rule.id,
         name: rule.name,
         type: rule.type,
       },
+      server: {
+        id: details.serverId,
+        name: details.serverName,
+        type: details.serverType,
+      },
     };
 
     await pubSubService.publish(WS_EVENTS.VIOLATION_NEW, violationWithDetails);
-    console.log(`[Poller] Violation broadcast: ${rule.name} for user ${serverUser.username}`);
+    console.log(`[Poller] Violation broadcast: ${rule.name} for user ${details.username}`);
+
+    // Enqueue notification for async dispatch (Discord, webhooks, push)
+    await enqueueNotification({ type: 'violation', payload: violationWithDetails });
   }
 }

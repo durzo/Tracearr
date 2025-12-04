@@ -92,6 +92,10 @@ export interface MediaSession {
     isTranscode: boolean;
     /** Video decision (directplay, copy, transcode) - normalized to lowercase */
     videoDecision: string;
+    /** Video resolution (e.g., "4k", "1080", "720", "480", "sd") */
+    videoResolution?: string;
+    /** Video height in pixels (for calculating resolution) */
+    videoHeight?: number;
   };
 
   /**
