@@ -32,6 +32,7 @@ export {
   startPoller,
   stopPoller,
   triggerPoll,
+  triggerReconciliationPoll,
 } from './processor.js';
 
 // ============================================================================

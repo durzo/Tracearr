@@ -15,6 +15,7 @@ import { createMediaServerClient } from '../../services/mediaServer/index.js';
 import { geoipService, type GeoLocation } from '../../services/geoip.js';
 import { ruleEngine } from '../../services/rules.js';
 import type { CacheService, PubSubService } from '../../services/cache.js';
+import { sseManager } from '../../services/sseManager.js';
 
 import type { PollerConfig, ServerWithToken, ServerProcessingResult } from './types.js';
 import { mapMediaSession } from './sessionMapper.js';
@@ -562,6 +563,11 @@ async function processServerSessions(
 
 /**
  * Poll all connected servers for active sessions
+ *
+ * With SSE integration:
+ * - Plex servers with active SSE connections are skipped (handled by SSE)
+ * - Plex servers in fallback mode are polled
+ * - Jellyfin/Emby servers are always polled (no SSE support)
  */
 async function pollServers(): Promise<void> {
   try {
@@ -569,6 +575,22 @@ async function pollServers(): Promise<void> {
     const allServers = await db.select().from(servers);
 
     if (allServers.length === 0) {
+      return;
+    }
+
+    // Filter to only servers that need polling
+    // SSE-connected Plex servers are handled by SSE, not polling
+    const serversNeedingPoll = allServers.filter((server) => {
+      // Non-Plex servers always need polling (Jellyfin/Emby don't support SSE yet)
+      if (server.type !== 'plex') {
+        return true;
+      }
+      // Plex servers in fallback mode need polling
+      return sseManager.isInFallback(server.id);
+    });
+
+    if (serversNeedingPoll.length === 0) {
+      // All Plex servers are connected via SSE, no polling needed
       return;
     }
 
@@ -587,7 +609,7 @@ async function pollServers(): Promise<void> {
     const allUpdatedSessions: ActiveSession[] = [];
 
     // Process each server with health tracking
-    for (const server of allServers) {
+    for (const server of serversNeedingPoll) {
       const serverWithToken = server as ServerWithToken;
 
       // Get previous health state for transition detection
@@ -753,4 +775,44 @@ export function stopPoller(): void {
  */
 export async function triggerPoll(): Promise<void> {
   await pollServers();
+}
+
+/**
+ * Reconciliation poll for SSE-connected servers
+ *
+ * This is a lighter poll that runs periodically to catch any events
+ * that might have been missed by SSE. Only polls Plex servers that
+ * have active SSE connections (not in fallback mode).
+ */
+export async function triggerReconciliationPoll(): Promise<void> {
+  try {
+    // Get all Plex servers with active SSE connections
+    const allServers = await db.select().from(servers);
+    const sseServers = allServers.filter(
+      (server) => server.type === 'plex' && !sseManager.isInFallback(server.id)
+    );
+
+    if (sseServers.length === 0) {
+      return;
+    }
+
+    console.log(`[Poller] Running reconciliation poll for ${sseServers.length} SSE-connected server(s)`);
+
+    // Get cached session keys
+    const cachedSessions = cacheService ? await cacheService.getActiveSessions() : null;
+    const cachedSessionKeys = new Set(
+      (cachedSessions ?? []).map((s) => `${s.serverId}:${s.sessionKey}`)
+    );
+
+    // Get active rules
+    const activeRules = await getActiveRules();
+
+    // Process each SSE server
+    for (const server of sseServers) {
+      const serverWithToken = server as ServerWithToken;
+      await processServerSessions(serverWithToken, activeRules, cachedSessionKeys);
+    }
+  } catch (error) {
+    console.error('[Poller] Reconciliation poll error:', error);
+  }
 }

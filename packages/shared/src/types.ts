@@ -614,3 +614,105 @@ export interface PushNotificationPayload {
   sound?: string | boolean;
   priority?: 'default' | 'high';
 }
+
+// =============================================================================
+// SSE (Server-Sent Events) Types
+// =============================================================================
+
+// SSE connection states
+export type SSEConnectionState =
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'disconnected'
+  | 'fallback';
+
+// Plex SSE notification container (outer wrapper)
+export interface PlexSSENotification {
+  NotificationContainer: {
+    type: string;
+    size: number;
+    PlaySessionStateNotification?: PlexPlaySessionNotification[];
+    ActivityNotification?: PlexActivityNotification[];
+    StatusNotification?: PlexStatusNotification[];
+    TranscodeSession?: PlexTranscodeNotification[];
+  };
+}
+
+// Play session state notification (start/stop/pause/resume)
+export interface PlexPlaySessionNotification {
+  sessionKey: string;
+  clientIdentifier: string;
+  guid: string;
+  ratingKey: string;
+  url: string;
+  key: string;
+  viewOffset: number;
+  playQueueItemID: number;
+  state: 'playing' | 'paused' | 'stopped' | 'buffering';
+}
+
+// Activity notification (library scans, etc.)
+export interface PlexActivityNotification {
+  event: string;
+  uuid: string;
+  Activity: {
+    uuid: string;
+    type: string;
+    cancellable: boolean;
+    userID: number;
+    title: string;
+    subtitle: string;
+    progress: number;
+    Context?: {
+      key: string;
+    };
+  };
+}
+
+// Status notification (server updates, etc.)
+export interface PlexStatusNotification {
+  title: string;
+  description: string;
+  notificationName: string;
+}
+
+// Transcode session notification
+export interface PlexTranscodeNotification {
+  key: string;
+  throttled: boolean;
+  complete: boolean;
+  progress: number;
+  size: number;
+  speed: number;
+  error: boolean;
+  duration: number;
+  remaining: number;
+  context: string;
+  sourceVideoCodec: string;
+  sourceAudioCodec: string;
+  videoDecision: string;
+  audioDecision: string;
+  subtitleDecision: string;
+  protocol: string;
+  container: string;
+  videoCodec: string;
+  audioCodec: string;
+  audioChannels: number;
+  transcodeHwRequested: boolean;
+  transcodeHwDecoding: string;
+  transcodeHwEncoding: string;
+  transcodeHwDecodingTitle: string;
+  transcodeHwEncodingTitle: string;
+}
+
+// SSE connection status for monitoring
+export interface SSEConnectionStatus {
+  serverId: string;
+  serverName: string;
+  state: SSEConnectionState;
+  connectedAt: Date | null;
+  lastEventAt: Date | null;
+  reconnectAttempts: number;
+  error: string | null;
+}

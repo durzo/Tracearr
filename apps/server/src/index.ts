@@ -50,6 +50,8 @@ import { initializeEncryption, isEncryptionInitialized } from './utils/crypto.js
 import { geoipService } from './services/geoip.js';
 import { createCacheService, createPubSubService } from './services/cache.js';
 import { initializePoller, startPoller, stopPoller } from './jobs/poller/index.js';
+import { sseManager } from './services/sseManager.js';
+import { initializeSSEProcessor, startSSEProcessor, stopSSEProcessor } from './jobs/sseProcessor.js';
 import { initializeWebSocket, broadcastToSessions } from './websocket/index.js';
 import {
   initNotificationQueue,
@@ -177,10 +179,22 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
   // Initialize poller with cache services
   initializePoller(cacheService, pubSubService);
 
+  // Initialize SSE manager and processor for real-time Plex updates
+  try {
+    await sseManager.initialize(cacheService, pubSubService);
+    initializeSSEProcessor(cacheService, pubSubService);
+    app.log.info('SSE manager initialized');
+  } catch (err) {
+    app.log.error({ err }, 'Failed to initialize SSE manager');
+    // Don't throw - SSE is optional, fallback to polling
+  }
+
   // Cleanup pub/sub redis and notification queue on close
   app.addHook('onClose', async () => {
     await pubSubRedis.quit();
     stopPoller();
+    await sseManager.stop();
+    stopSSEProcessor();
     await shutdownNotificationQueue();
   });
 
@@ -354,6 +368,15 @@ async function start() {
       startPoller({ enabled: true, intervalMs: pollerSettings.intervalMs });
     } else {
       app.log.info('Session poller disabled in settings');
+    }
+
+    // Start SSE connections for Plex servers (real-time updates)
+    try {
+      startSSEProcessor(); // Subscribe to SSE events
+      await sseManager.start(); // Start SSE connections
+      app.log.info('SSE connections started for Plex servers');
+    } catch (err) {
+      app.log.error({ err }, 'Failed to start SSE connections - falling back to polling');
     }
 
     // Log network settings status

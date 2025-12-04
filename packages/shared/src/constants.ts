@@ -112,6 +112,51 @@ export const POLLING_INTERVALS = {
   SESSIONS: 15000,
   STATS_REFRESH: 60000,
   SERVER_HEALTH: 30000,
+  // Reconciliation interval when SSE is active (fallback check)
+  SSE_RECONCILIATION: 5 * 60 * 1000, // 5 minutes
+} as const;
+
+// SSE (Server-Sent Events) configuration
+export const SSE_CONFIG = {
+  // Reconnection settings
+  INITIAL_RETRY_DELAY_MS: 1000,
+  MAX_RETRY_DELAY_MS: 30000,
+  RETRY_MULTIPLIER: 2,
+  MAX_RETRIES: 10,
+  // Heartbeat/keepalive
+  HEARTBEAT_TIMEOUT_MS: 300000, // 5 minutes - matches reconciliation interval
+  // When to fall back to polling
+  FALLBACK_THRESHOLD: 5, // consecutive failures before fallback
+} as const;
+
+// Plex SSE notification types (from /:/eventsource/notifications)
+export const PLEX_SSE_EVENTS = {
+  // Session-related
+  PLAYING: 'playing',
+  PROGRESS: 'progress',
+  STOPPED: 'stopped',
+  PAUSED: 'paused',
+  RESUMED: 'resumed',
+  // Library updates
+  LIBRARY_UPDATE: 'library.update',
+  LIBRARY_SCAN: 'library.scan',
+  // Server status
+  SERVER_BACKUP: 'server.backup',
+  SERVER_UPDATE: 'server.update',
+  // Activity
+  ACTIVITY: 'activity',
+  // Transcoder
+  TRANSCODE_SESSION_UPDATE: 'transcodeSession.update',
+  TRANSCODE_SESSION_END: 'transcodeSession.end',
+} as const;
+
+// SSE connection states
+export const SSE_STATE = {
+  CONNECTING: 'connecting',
+  CONNECTED: 'connected',
+  RECONNECTING: 'reconnecting',
+  DISCONNECTED: 'disconnected',
+  FALLBACK: 'fallback', // Using polling as fallback
 } as const;
 
 // Pagination defaults

@@ -75,6 +75,14 @@ export type {
   NotificationChannelRouting,
   EncryptedPushPayload,
   PushNotificationPayload,
+  // SSE (Server-Sent Events)
+  SSEConnectionState,
+  PlexSSENotification,
+  PlexPlaySessionNotification,
+  PlexActivityNotification,
+  PlexStatusNotification,
+  PlexTranscodeNotification,
+  SSEConnectionStatus,
 } from './types.js';
 
 // Schema exports
@@ -151,6 +159,10 @@ export {
   GEOIP_CONFIG,
   TIME_MS,
   SESSION_LIMITS,
+  // SSE
+  SSE_CONFIG,
+  PLEX_SSE_EVENTS,
+  SSE_STATE,
 } from './constants.js';
 
 // Role helper exports
