@@ -20,8 +20,9 @@ import {
   jsonb,
   index,
   uniqueIndex,
+  check,
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 
 // Server types enum
 export const serverTypeEnum = ['plex', 'jellyfin', 'emby'] as const;
@@ -290,13 +291,106 @@ export const mobileSessions = pgTable(
     deviceId: varchar('device_id', { length: 100 }).notNull(),
     platform: varchar('platform', { length: 20 }).notNull().$type<'ios' | 'android'>(),
     expoPushToken: varchar('expo_push_token', { length: 255 }), // For push notifications
+    deviceSecret: varchar('device_secret', { length: 64 }), // For push payload encryption (base64)
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index('mobile_sessions_device_id_idx').on(table.deviceId),
     index('mobile_sessions_refresh_token_idx').on(table.refreshTokenHash),
+    index('mobile_sessions_expo_push_token_idx').on(table.expoPushToken),
   ]
+);
+
+// Notification preferences per mobile device
+export const notificationPreferences = pgTable(
+  'notification_preferences',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    mobileSessionId: uuid('mobile_session_id')
+      .notNull()
+      .unique()
+      .references(() => mobileSessions.id, { onDelete: 'cascade' }),
+
+    // Global toggles
+    pushEnabled: boolean('push_enabled').notNull().default(true),
+
+    // Event type toggles
+    onViolationDetected: boolean('on_violation_detected').notNull().default(true),
+    onStreamStarted: boolean('on_stream_started').notNull().default(false),
+    onStreamStopped: boolean('on_stream_stopped').notNull().default(false),
+    onConcurrentStreams: boolean('on_concurrent_streams').notNull().default(true),
+    onNewDevice: boolean('on_new_device').notNull().default(true),
+    onTrustScoreChanged: boolean('on_trust_score_changed').notNull().default(false),
+    onServerDown: boolean('on_server_down').notNull().default(true),
+    onServerUp: boolean('on_server_up').notNull().default(true),
+
+    // Severity filtering (violations only)
+    violationMinSeverity: integer('violation_min_severity').notNull().default(1), // 1=low, 2=warning, 3=high
+    violationRuleTypes: text('violation_rule_types').array().default([]), // Empty = all types
+
+    // Rate limiting
+    maxPerMinute: integer('max_per_minute').notNull().default(10),
+    maxPerHour: integer('max_per_hour').notNull().default(60),
+
+    // Quiet hours
+    quietHoursEnabled: boolean('quiet_hours_enabled').notNull().default(false),
+    quietHoursStart: varchar('quiet_hours_start', { length: 5 }), // HH:MM format
+    quietHoursEnd: varchar('quiet_hours_end', { length: 5 }), // HH:MM format
+    quietHoursTimezone: varchar('quiet_hours_timezone', { length: 50 }).default('UTC'),
+    quietHoursOverrideCritical: boolean('quiet_hours_override_critical').notNull().default(true),
+
+    // Timestamps
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('notification_prefs_mobile_session_idx').on(table.mobileSessionId),
+    // Validate quiet hours format: HH:MM where HH is 00-23 and MM is 00-59
+    check(
+      'quiet_hours_start_format',
+      sql`${table.quietHoursStart} IS NULL OR ${table.quietHoursStart} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'`
+    ),
+    check(
+      'quiet_hours_end_format',
+      sql`${table.quietHoursEnd} IS NULL OR ${table.quietHoursEnd} ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'`
+    ),
+  ]
+);
+
+// Notification event type enum
+export const notificationEventTypeEnum = [
+  'violation_detected',
+  'stream_started',
+  'stream_stopped',
+  'concurrent_streams',
+  'new_device',
+  'trust_score_changed',
+  'server_down',
+  'server_up',
+] as const;
+
+// Notification channel routing configuration
+// Controls which channels receive which event types (web admin configurable)
+export const notificationChannelRouting = pgTable(
+  'notification_channel_routing',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    eventType: varchar('event_type', { length: 50 })
+      .notNull()
+      .unique()
+      .$type<(typeof notificationEventTypeEnum)[number]>(),
+
+    // Channel toggles
+    discordEnabled: boolean('discord_enabled').notNull().default(true),
+    webhookEnabled: boolean('webhook_enabled').notNull().default(true),
+    pushEnabled: boolean('push_enabled').notNull().default(true),
+
+    // Timestamps
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('notification_channel_routing_event_type_idx').on(table.eventType)]
 );
 
 // Application settings (single row)
@@ -381,5 +475,19 @@ export const violationsRelations = relations(violations, ({ one }) => ({
   session: one(sessions, {
     fields: [violations.sessionId],
     references: [sessions.id],
+  }),
+}));
+
+export const mobileSessionsRelations = relations(mobileSessions, ({ one }) => ({
+  notificationPreferences: one(notificationPreferences, {
+    fields: [mobileSessions.id],
+    references: [notificationPreferences.mobileSessionId],
+  }),
+}));
+
+export const notificationPreferencesRelations = relations(notificationPreferences, ({ one }) => ({
+  mobileSession: one(mobileSessions, {
+    fields: [notificationPreferences.mobileSessionId],
+    references: [mobileSessions.id],
   }),
 }));

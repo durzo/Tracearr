@@ -22,6 +22,34 @@
       "when": 1764788872702,
       "tag": "0002_rainy_bishop",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1764799561925,
+      "tag": "0003_black_maginty",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1764800111127,
+      "tag": "0004_bent_unus",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1764801611462,
+      "tag": "0005_elite_wendell_vaughn",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1764806894704,
+      "tag": "0006_worthless_blue_shield",
+      "breakpoints": true
     }
   ]
 }

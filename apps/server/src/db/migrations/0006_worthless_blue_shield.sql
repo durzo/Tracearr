@@ -1,0 +1,3 @@
+CREATE INDEX "mobile_sessions_expo_push_token_idx" ON "mobile_sessions" USING btree ("expo_push_token");--> statement-breakpoint
+ALTER TABLE "notification_preferences" ADD CONSTRAINT "quiet_hours_start_format" CHECK ("notification_preferences"."quiet_hours_start" IS NULL OR "notification_preferences"."quiet_hours_start" ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$');--> statement-breakpoint
+ALTER TABLE "notification_preferences" ADD CONSTRAINT "quiet_hours_end_format" CHECK ("notification_preferences"."quiet_hours_end" IS NULL OR "notification_preferences"."quiet_hours_end" ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$');
