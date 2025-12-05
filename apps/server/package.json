@@ -58,6 +58,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@tracearr/test-utils": "workspace:*",
     "@types/bcrypt": "^5.0.2",
     "@types/eventsource": "^3.0.0",
     "@types/jsonwebtoken": "^9.0.9",

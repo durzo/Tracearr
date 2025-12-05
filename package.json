@@ -15,8 +15,17 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\"",
     "typecheck": "turbo typecheck",
     "test": "turbo test",
+    "test:all": "turbo test:all",
+    "test:unit": "turbo test:unit",
+    "test:services": "turbo test:services",
+    "test:routes": "turbo test:routes",
+    "test:security": "turbo test:security",
+    "test:integration": "turbo test:integration",
     "test:watch": "turbo test:watch",
     "test:coverage": "turbo test:coverage",
+    "test:unit:coverage": "turbo test:unit:coverage",
+    "test:services:coverage": "turbo test:services:coverage",
+    "test:routes:coverage": "turbo test:routes:coverage",
     "clean": "turbo clean && rm -rf node_modules"
   },
   "devDependencies": {
