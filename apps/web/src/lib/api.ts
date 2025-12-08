@@ -348,10 +348,11 @@ class ApiClient {
 
   // Users
   users = {
-    list: (params?: { page?: number; pageSize?: number }) => {
+    list: (params?: { page?: number; pageSize?: number; serverId?: string }) => {
       const searchParams = new URLSearchParams();
       if (params?.page) searchParams.set('page', String(params.page));
       if (params?.pageSize) searchParams.set('pageSize', String(params.pageSize));
+      if (params?.serverId) searchParams.set('serverId', params.serverId);
       return this.request<PaginatedResponse<ServerUserWithIdentity>>(`/users?${searchParams.toString()}`);
     },
     get: (id: string) => this.request<ServerUserDetail>(`/users/${id}`),
@@ -373,12 +374,19 @@ class ApiClient {
 
   // Sessions
   sessions = {
-    list: (params?: { page?: number; pageSize?: number; userId?: string }) => {
-      const query = new URLSearchParams(params as Record<string, string>).toString();
-      return this.request<PaginatedResponse<SessionWithDetails>>(`/sessions?${query}`);
+    list: (params?: { page?: number; pageSize?: number; userId?: string; serverId?: string }) => {
+      const searchParams = new URLSearchParams();
+      if (params?.page) searchParams.set('page', String(params.page));
+      if (params?.pageSize) searchParams.set('pageSize', String(params.pageSize));
+      if (params?.userId) searchParams.set('userId', params.userId);
+      if (params?.serverId) searchParams.set('serverId', params.serverId);
+      return this.request<PaginatedResponse<SessionWithDetails>>(`/sessions?${searchParams.toString()}`);
     },
-    getActive: async () => {
-      const response = await this.request<{ data: ActiveSession[] }>('/sessions/active');
+    getActive: async (serverId?: string) => {
+      const params = new URLSearchParams();
+      if (serverId) params.set('serverId', serverId);
+      const query = params.toString();
+      const response = await this.request<{ data: ActiveSession[] }>(`/sessions/active${query ? `?${query}` : ''}`);
       return response.data;
     },
     get: (id: string) => this.request<Session>(`/sessions/${id}`),
@@ -405,6 +413,7 @@ class ApiClient {
       userId?: string;
       severity?: string;
       acknowledged?: boolean;
+      serverId?: string;
     }) => {
       const searchParams = new URLSearchParams();
       if (params?.page) searchParams.set('page', String(params.page));
@@ -412,6 +421,7 @@ class ApiClient {
       if (params?.userId) searchParams.set('userId', params.userId);
       if (params?.severity) searchParams.set('severity', params.severity);
       if (params?.acknowledged !== undefined) searchParams.set('acknowledged', String(params.acknowledged));
+      if (params?.serverId) searchParams.set('serverId', params.serverId);
       return this.request<PaginatedResponse<ViolationWithDetails>>(`/violations?${searchParams.toString()}`);
     },
     acknowledge: (id: string) =>
@@ -421,13 +431,24 @@ class ApiClient {
 
   // Stats
   stats = {
-    dashboard: () => this.request<DashboardStats>('/stats/dashboard'),
-    plays: async (period?: string) => {
-      const response = await this.request<{ data: PlayStats[] }>(`/stats/plays?period=${period ?? 'week'}`);
+    dashboard: (serverId?: string) => {
+      const params = new URLSearchParams();
+      if (serverId) params.set('serverId', serverId);
+      const query = params.toString();
+      return this.request<DashboardStats>(`/stats/dashboard${query ? `?${query}` : ''}`);
+    },
+    plays: async (period?: string, serverId?: string) => {
+      const params = new URLSearchParams();
+      params.set('period', period ?? 'week');
+      if (serverId) params.set('serverId', serverId);
+      const response = await this.request<{ data: PlayStats[] }>(`/stats/plays?${params.toString()}`);
       return response.data;
     },
-    users: async () => {
-      const response = await this.request<{ data: UserStats[] }>('/stats/users');
+    users: async (serverId?: string) => {
+      const params = new URLSearchParams();
+      if (serverId) params.set('serverId', serverId);
+      const query = params.toString();
+      const response = await this.request<{ data: UserStats[] }>(`/stats/users${query ? `?${query}` : ''}`);
       return response.data;
     },
     locations: async (params?: {
@@ -444,38 +465,56 @@ class ApiClient {
       const query = searchParams.toString();
       return this.request<LocationStatsResponse>(`/stats/locations${query ? `?${query}` : ''}`);
     },
-    playsByDayOfWeek: async (period?: string) => {
+    playsByDayOfWeek: async (period?: string, serverId?: string) => {
+      const params = new URLSearchParams();
+      params.set('period', period ?? 'month');
+      if (serverId) params.set('serverId', serverId);
       const response = await this.request<{ data: { day: number; name: string; count: number }[] }>(
-        `/stats/plays-by-dayofweek?period=${period ?? 'month'}`
+        `/stats/plays-by-dayofweek?${params.toString()}`
       );
       return response.data;
     },
-    playsByHourOfDay: async (period?: string) => {
+    playsByHourOfDay: async (period?: string, serverId?: string) => {
+      const params = new URLSearchParams();
+      params.set('period', period ?? 'month');
+      if (serverId) params.set('serverId', serverId);
       const response = await this.request<{ data: { hour: number; count: number }[] }>(
-        `/stats/plays-by-hourofday?period=${period ?? 'month'}`
+        `/stats/plays-by-hourofday?${params.toString()}`
       );
       return response.data;
     },
-    platforms: async (period?: string) => {
+    platforms: async (period?: string, serverId?: string) => {
+      const params = new URLSearchParams();
+      params.set('period', period ?? 'month');
+      if (serverId) params.set('serverId', serverId);
       const response = await this.request<{ data: { platform: string | null; count: number }[] }>(
-        `/stats/platforms?period=${period ?? 'month'}`
+        `/stats/platforms?${params.toString()}`
       );
       return response.data;
     },
-    quality: async (period?: string) => {
+    quality: async (period?: string, serverId?: string) => {
+      const params = new URLSearchParams();
+      params.set('period', period ?? 'month');
+      if (serverId) params.set('serverId', serverId);
       return this.request<{
         directPlay: number;
         transcode: number;
         total: number;
         directPlayPercent: number;
         transcodePercent: number;
-      }>(`/stats/quality?period=${period ?? 'month'}`);
+      }>(`/stats/quality?${params.toString()}`);
     },
-    topUsers: async (period?: string) => {
-      const response = await this.request<{ data: TopUserStats[] }>(`/stats/top-users?period=${period ?? 'month'}`);
+    topUsers: async (period?: string, serverId?: string) => {
+      const params = new URLSearchParams();
+      params.set('period', period ?? 'month');
+      if (serverId) params.set('serverId', serverId);
+      const response = await this.request<{ data: TopUserStats[] }>(`/stats/top-users?${params.toString()}`);
       return response.data;
     },
-    topContent: async (period?: string) => {
+    topContent: async (period?: string, serverId?: string) => {
+      const params = new URLSearchParams();
+      params.set('period', period ?? 'month');
+      if (serverId) params.set('serverId', serverId);
       const response = await this.request<{
         movies: {
           title: string;
@@ -498,13 +537,16 @@ class ApiClient {
           serverId: string | null;
           ratingKey: string | null;
         }[];
-      }>(`/stats/top-content?period=${period ?? 'month'}`);
+      }>(`/stats/top-content?${params.toString()}`);
       return response;
     },
-    concurrent: async (period?: string) => {
+    concurrent: async (period?: string, serverId?: string) => {
+      const params = new URLSearchParams();
+      params.set('period', period ?? 'month');
+      if (serverId) params.set('serverId', serverId);
       const response = await this.request<{
         data: { hour: string; total: number; direct: number; transcode: number }[];
-      }>(`/stats/concurrent?period=${period ?? 'month'}`);
+      }>(`/stats/concurrent?${params.toString()}`);
       return response.data;
     },
   };

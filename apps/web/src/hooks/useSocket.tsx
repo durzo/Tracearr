@@ -81,15 +81,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     });
 
     // Handle real-time events
+    // Note: Since users can filter by server, we invalidate all matching query patterns
+    // and let react-query refetch with the appropriate server filter
     newSocket.on(WS_EVENTS.SESSION_STARTED as 'session:started', (session: ActiveSession) => {
-      // Update active sessions query (check for duplicates)
-      queryClient.setQueryData<ActiveSession[]>(['sessions', 'active'], (old) => {
-        if (!old) return [session];
-        // Don't add if already exists
-        if (old.some((s) => s.id === session.id)) return old;
-        return [...old, session];
-      });
-
+      // Invalidate all active sessions queries (regardless of server filter)
+      void queryClient.invalidateQueries({ queryKey: ['sessions', 'active'] });
       // Invalidate dashboard stats and session history
       void queryClient.invalidateQueries({ queryKey: ['stats', 'dashboard'] });
       void queryClient.invalidateQueries({ queryKey: ['sessions', 'list'] });
@@ -100,24 +96,17 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       });
     });
 
-    newSocket.on(WS_EVENTS.SESSION_STOPPED as 'session:stopped', (sessionId: string) => {
-      // Remove from active sessions
-      queryClient.setQueryData<ActiveSession[]>(['sessions', 'active'], (old) => {
-        if (!old) return [];
-        return old.filter((s) => s.id !== sessionId);
-      });
-
+    newSocket.on(WS_EVENTS.SESSION_STOPPED as 'session:stopped', (_sessionId: string) => {
+      // Invalidate all active sessions queries (regardless of server filter)
+      void queryClient.invalidateQueries({ queryKey: ['sessions', 'active'] });
       // Invalidate dashboard stats and session history (stopped session now has duration)
       void queryClient.invalidateQueries({ queryKey: ['stats', 'dashboard'] });
       void queryClient.invalidateQueries({ queryKey: ['sessions', 'list'] });
     });
 
-    newSocket.on(WS_EVENTS.SESSION_UPDATED as 'session:updated', (session: ActiveSession) => {
-      // Update session in active sessions
-      queryClient.setQueryData<ActiveSession[]>(['sessions', 'active'], (old) => {
-        if (!old) return [session];
-        return old.map((s) => (s.id === session.id ? session : s));
-      });
+    newSocket.on(WS_EVENTS.SESSION_UPDATED as 'session:updated', (_session: ActiveSession) => {
+      // Invalidate all active sessions queries (regardless of server filter)
+      void queryClient.invalidateQueries({ queryKey: ['sessions', 'active'] });
     });
 
     newSocket.on(WS_EVENTS.VIOLATION_NEW as 'violation:new', (violation: ViolationWithDetails) => {
@@ -139,9 +128,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       });
     });
 
-    newSocket.on(WS_EVENTS.STATS_UPDATED as 'stats:updated', (stats: DashboardStats) => {
-      // Update dashboard stats directly
-      queryClient.setQueryData(['stats', 'dashboard'], stats);
+    newSocket.on(WS_EVENTS.STATS_UPDATED as 'stats:updated', (_stats: DashboardStats) => {
+      // Invalidate all dashboard stats queries (they now have server-specific cache keys)
+      void queryClient.invalidateQueries({ queryKey: ['stats', 'dashboard'] });
     });
 
     setSocket(newSocket);

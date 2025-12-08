@@ -9,6 +9,7 @@ interface ViolationsParams {
   userId?: string;
   severity?: ViolationSeverity;
   acknowledged?: boolean;
+  serverId?: string;
 }
 
 export function useViolations(params: ViolationsParams = {}) {

@@ -18,10 +18,10 @@ export function useSessions(params: SessionsParams = {}) {
   });
 }
 
-export function useActiveSessions() {
+export function useActiveSessions(serverId?: string | null) {
   return useQuery({
-    queryKey: ['sessions', 'active'],
-    queryFn: api.sessions.getActive,
+    queryKey: ['sessions', 'active', serverId],
+    queryFn: () => api.sessions.getActive(serverId ?? undefined),
     staleTime: 1000 * 15, // 15 seconds
     refetchInterval: 1000 * 30, // 30 seconds
   });
