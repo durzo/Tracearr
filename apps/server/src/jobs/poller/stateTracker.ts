@@ -178,6 +178,53 @@ export function checkWatchCompletion(
 }
 
 // ============================================================================
+// Quality Change Detection
+// ============================================================================
+
+/**
+ * Determine if a new session represents a quality/resolution change during playback.
+ * This happens when Plex/Jellyfin assigns a new sessionKey but the user is still
+ * watching the same content.
+ *
+ * @param existingActiveSession - Active (not stopped) session for same user+content, or null
+ * @returns referenceId to link to if this is a quality change, or null
+ *
+ * @example
+ * // Quality change detected - link to existing session
+ * isQualityChangeScenario({ id: 'sess-1', referenceId: null, stoppedAt: null });
+ * // Returns: 'sess-1'
+ *
+ * // Quality change with existing chain - link to original
+ * isQualityChangeScenario({ id: 'sess-2', referenceId: 'sess-1', stoppedAt: null });
+ * // Returns: 'sess-1'
+ *
+ * // Session already stopped - not a quality change
+ * isQualityChangeScenario({ id: 'sess-1', referenceId: null, stoppedAt: new Date() });
+ * // Returns: null
+ *
+ * // No existing session
+ * isQualityChangeScenario(null);
+ * // Returns: null
+ */
+export function isQualityChangeScenario(
+  existingActiveSession: {
+    id: string;
+    referenceId: string | null;
+    stoppedAt: Date | null;
+  } | null | undefined
+): string | null {
+  // No existing session = not a quality change
+  if (!existingActiveSession) return null;
+
+  // Session already stopped = not a quality change (this is a resume scenario)
+  if (existingActiveSession.stoppedAt !== null) return null;
+
+  // Active session exists for same user+content = quality change
+  // Link to the original session chain
+  return existingActiveSession.referenceId || existingActiveSession.id;
+}
+
+// ============================================================================
 // Session Grouping (Resume Detection)
 // ============================================================================
 
