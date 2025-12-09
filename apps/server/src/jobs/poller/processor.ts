@@ -391,6 +391,7 @@ async function processServerSessions(
               serverId: server.id,
               serverUserId,
               sessionKey: processed.sessionKey,
+              plexSessionId: processed.plexSessionId || null,
               ratingKey: processed.ratingKey || null,
               state: processed.state,
               mediaType: processed.mediaType,
@@ -581,6 +582,7 @@ async function processServerSessions(
           bitrate: number;
           progressMs: number | null;
           lastSeenAt: Date;
+          plexSessionId?: string | null;
           lastPausedAt?: Date | null;
           pausedDurationMs?: number;
           watched?: boolean;
@@ -590,6 +592,8 @@ async function processServerSessions(
           bitrate: processed.bitrate,
           progressMs: processed.progressMs || null,
           lastSeenAt: now, // Track when we last saw this session (for stale detection)
+          // Always update plexSessionId (backfills sessions created before migration 0012)
+          plexSessionId: processed.plexSessionId || null,
         };
 
         // Handle state transitions for pause tracking

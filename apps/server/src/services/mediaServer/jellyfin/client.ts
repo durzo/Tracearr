@@ -165,6 +165,39 @@ export class JellyfinClient implements IMediaServerClient, IMediaServerClientWit
   }
 
   // ==========================================================================
+  // Session Control
+  // ==========================================================================
+
+  /**
+   * Terminate a playback session by sending a Stop command
+   *
+   * @param sessionId - The session ID (same as sessionKey for Jellyfin)
+   * @param _reason - Ignored (Jellyfin doesn't support user-facing messages)
+   * @returns true if successful, throws on error
+   *
+   * @example
+   * await client.terminateSession('session-uuid-123');
+   */
+  async terminateSession(sessionId: string, _reason?: string): Promise<boolean> {
+    const response = await fetch(`${this.baseUrl}/Sessions/${sessionId}/Playing/Stop`, {
+      method: 'POST',
+      headers: this.buildHeaders(),
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('Unauthorized to terminate session');
+      }
+      if (response.status === 404) {
+        throw new Error('Session not found (may have already ended)');
+      }
+      throw new Error(`Failed to terminate session: ${response.status} ${response.statusText}`);
+    }
+
+    return true;
+  }
+
+  // ==========================================================================
   // Jellyfin-Specific Methods
   // ==========================================================================
 

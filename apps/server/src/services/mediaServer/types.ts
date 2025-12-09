@@ -104,6 +104,12 @@ export interface MediaSession {
    * Plex doesn't provide this field.
    */
   lastPausedDate?: Date;
+
+  /**
+   * Plex Session.id - required for termination API (different from sessionKey!)
+   * For Jellyfin/Emby, this is the same as sessionKey so can be omitted.
+   */
+  plexSessionId?: string;
 }
 
 // ============================================================================
@@ -239,6 +245,16 @@ export interface IMediaServerClient {
    * @returns true if connection successful, false otherwise
    */
   testConnection(): Promise<boolean>;
+
+  /**
+   * Terminate a playback session
+   *
+   * @param sessionId - The session ID to terminate (use terminationId from MediaSession)
+   * @param reason - Optional message to display to user (Plex only)
+   * @returns true if successful
+   * @throws Error if termination fails
+   */
+  terminateSession(sessionId: string, reason?: string): Promise<boolean>;
 }
 
 /**

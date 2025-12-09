@@ -49,6 +49,8 @@ export interface ServerWithToken {
 export interface ProcessedSession {
   /** Unique session key from media server */
   sessionKey: string;
+  /** Plex Session.id - required for termination API (different from sessionKey) */
+  plexSessionId?: string;
   /** Media item identifier (ratingKey for Plex, itemId for Jellyfin) */
   ratingKey: string;
 

@@ -178,6 +178,11 @@ describe('IMediaServerClient Interface Compliance', () => {
       const client = createTestClient('plex');
       expect(typeof client.testConnection).toBe('function');
     });
+
+    it('should implement terminateSession method', () => {
+      const client = createTestClient('plex');
+      expect(typeof client.terminateSession).toBe('function');
+    });
   });
 
   describe('JellyfinClient', () => {
@@ -205,6 +210,11 @@ describe('IMediaServerClient Interface Compliance', () => {
       const client = createTestClient('jellyfin');
       expect(typeof client.testConnection).toBe('function');
     });
+
+    it('should implement terminateSession method', () => {
+      const client = createTestClient('jellyfin');
+      expect(typeof client.terminateSession).toBe('function');
+    });
   });
 
   describe('EmbyClient', () => {
@@ -231,6 +241,11 @@ describe('IMediaServerClient Interface Compliance', () => {
     it('should implement testConnection method', () => {
       const client = createTestClient('emby');
       expect(typeof client.testConnection).toBe('function');
+    });
+
+    it('should implement terminateSession method', () => {
+      const client = createTestClient('emby');
+      expect(typeof client.terminateSession).toBe('function');
     });
   });
 });
@@ -360,6 +375,7 @@ describe('Polymorphic Client Usage', () => {
       expect(typeof client.getUsers).toBe('function');
       expect(typeof client.getLibraries).toBe('function');
       expect(typeof client.testConnection).toBe('function');
+      expect(typeof client.terminateSession).toBe('function');
     }
   });
 

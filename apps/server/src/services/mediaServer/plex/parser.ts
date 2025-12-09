@@ -95,6 +95,7 @@ function calculateProgress(positionMs: number, durationMs: number): number {
 export function parseSession(item: Record<string, unknown>): MediaSession {
   const player = (item.Player as Record<string, unknown>) ?? {};
   const user = (item.User as Record<string, unknown>) ?? {};
+  const sessionInfo = (item.Session as Record<string, unknown>) ?? {};
   const transcodeSession = item.TranscodeSession as Record<string, unknown> | undefined;
 
   const durationMs = parseNumber(item.duration);
@@ -149,6 +150,8 @@ export function parseSession(item: Record<string, unknown>): MediaSession {
       videoResolution,
       videoHeight,
     },
+    // Plex termination API requires Session.id, not sessionKey
+    plexSessionId: parseOptionalString(sessionInfo.id),
   };
 
   // Add episode-specific metadata if this is an episode

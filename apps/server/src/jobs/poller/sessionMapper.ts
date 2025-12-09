@@ -131,6 +131,7 @@ export function mapMediaSession(
 
   return {
     sessionKey: session.sessionKey,
+    plexSessionId: session.plexSessionId,
     ratingKey: session.mediaId,
     // User data
     externalUserId: session.user.id,

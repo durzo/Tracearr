@@ -140,6 +140,49 @@ export class PlexClient implements IMediaServerClient, IMediaServerClientWithHis
   }
 
   // ==========================================================================
+  // Session Control
+  // ==========================================================================
+
+  /**
+   * Terminate a playback session
+   *
+   * Requires Plex Pass subscription on the server.
+   *
+   * @param sessionId - The Session.id from the sessions API (NOT sessionKey!)
+   * @param reason - Optional message displayed to the user in their client
+   * @returns true if successful, throws on error
+   *
+   * @example
+   * await client.terminateSession('abc123xyz', 'Concurrent stream limit exceeded');
+   */
+  async terminateSession(sessionId: string, reason?: string): Promise<boolean> {
+    const params = new URLSearchParams({ sessionId });
+    if (reason) {
+      params.set('reason', reason);
+    }
+
+    const response = await fetch(`${this.baseUrl}/status/sessions/terminate?${params}`, {
+      method: 'POST',
+      headers: this.buildHeaders(),
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('Plex Pass subscription required for stream termination');
+      }
+      if (response.status === 403) {
+        throw new Error('Invalid or empty session ID');
+      }
+      if (response.status === 404) {
+        throw new Error('Session not found (may have already ended)');
+      }
+      throw new Error(`Failed to terminate session: ${response.status} ${response.statusText}`);
+    }
+
+    return true;
+  }
+
+  // ==========================================================================
   // Server Resource Statistics (Undocumented Endpoint)
   // ==========================================================================
 
