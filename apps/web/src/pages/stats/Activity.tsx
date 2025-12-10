@@ -1,6 +1,5 @@
-import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { PeriodSelector } from '@/components/ui/period-selector';
+import { TimeRangePicker } from '@/components/ui/time-range-picker';
 import {
   PlaysChart,
   PlatformChart,
@@ -16,21 +15,21 @@ import {
   usePlatformStats,
   useQualityStats,
   useConcurrentStats,
-  type StatsPeriod,
 } from '@/hooks/queries';
 import { useServer } from '@/hooks/useServer';
+import { useTimeRange } from '@/hooks/useTimeRange';
 
 export function StatsActivity() {
-  const [period, setPeriod] = useState<StatsPeriod>('month');
+  const { value: timeRange, setValue: setTimeRange, apiParams } = useTimeRange();
   const { selectedServerId } = useServer();
 
-  // Fetch all stats with the same period and server filter
-  const plays = usePlaysStats(period, selectedServerId);
-  const dayOfWeek = usePlaysByDayOfWeek(period, selectedServerId);
-  const hourOfDay = usePlaysByHourOfDay(period, selectedServerId);
-  const platforms = usePlatformStats(period, selectedServerId);
-  const quality = useQualityStats(period, selectedServerId);
-  const concurrent = useConcurrentStats(period, selectedServerId);
+  // Fetch all stats with the same time range and server filter
+  const plays = usePlaysStats(apiParams, selectedServerId);
+  const dayOfWeek = usePlaysByDayOfWeek(apiParams, selectedServerId);
+  const hourOfDay = usePlaysByHourOfDay(apiParams, selectedServerId);
+  const platforms = usePlatformStats(apiParams, selectedServerId);
+  const quality = useQualityStats(apiParams, selectedServerId);
+  const concurrent = useConcurrentStats(apiParams, selectedServerId);
 
   // Transform data for charts
   const platformData = platforms.data?.map((p) => ({
@@ -48,7 +47,7 @@ export function StatsActivity() {
             Play trends, patterns, and streaming behavior
           </p>
         </div>
-        <PeriodSelector value={period} onChange={setPeriod} />
+        <TimeRangePicker value={timeRange} onChange={setTimeRange} />
       </div>
 
       {/* Charts grid */}
@@ -59,7 +58,7 @@ export function StatsActivity() {
             <CardTitle className="text-base font-medium">Plays Over Time</CardTitle>
           </CardHeader>
           <CardContent>
-            <PlaysChart data={plays.data} isLoading={plays.isLoading} height={250} period={period} />
+            <PlaysChart data={plays.data} isLoading={plays.isLoading} height={250} period={timeRange.period} />
           </CardContent>
         </Card>
 
@@ -69,7 +68,7 @@ export function StatsActivity() {
             <CardTitle className="text-base font-medium">Concurrent Streams</CardTitle>
           </CardHeader>
           <CardContent>
-            <ConcurrentChart data={concurrent.data} isLoading={concurrent.isLoading} height={250} period={period} />
+            <ConcurrentChart data={concurrent.data} isLoading={concurrent.isLoading} height={250} period={timeRange.period} />
           </CardContent>
         </Card>
 

@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import '@tracearr/shared';
-import { api } from '@/lib/api';
+import { api, type StatsTimeRange } from '@/lib/api';
 
-export type StatsPeriod = 'day' | 'week' | 'month' | 'year';
+// Re-export for backwards compatibility and convenience
+export type { StatsTimeRange };
 
 export function useDashboardStats(serverId?: string | null) {
   return useQuery({
@@ -13,24 +14,24 @@ export function useDashboardStats(serverId?: string | null) {
   });
 }
 
-export function usePlaysStats(period: StatsPeriod = 'week', serverId?: string | null) {
+export function usePlaysStats(timeRange?: StatsTimeRange, serverId?: string | null) {
   return useQuery({
-    queryKey: ['stats', 'plays', period, serverId],
-    queryFn: () => api.stats.plays(period, serverId ?? undefined),
+    queryKey: ['stats', 'plays', timeRange, serverId],
+    queryFn: () => api.stats.plays(timeRange ?? { period: 'week' }, serverId ?? undefined),
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 }
 
-export function useUserStats(serverId?: string | null) {
+export function useUserStats(timeRange?: StatsTimeRange, serverId?: string | null) {
   return useQuery({
-    queryKey: ['stats', 'users', serverId],
-    queryFn: () => api.stats.users(serverId ?? undefined),
+    queryKey: ['stats', 'users', timeRange, serverId],
+    queryFn: () => api.stats.users(timeRange ?? { period: 'month' }, serverId ?? undefined),
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 }
 
 export interface LocationStatsFilters {
-  days?: number;
+  timeRange?: StatsTimeRange;
   serverUserId?: string;
   serverId?: string;
   mediaType?: 'movie' | 'episode' | 'track';
@@ -44,58 +45,58 @@ export function useLocationStats(filters?: LocationStatsFilters) {
   });
 }
 
-export function usePlaysByDayOfWeek(period: StatsPeriod = 'month', serverId?: string | null) {
+export function usePlaysByDayOfWeek(timeRange?: StatsTimeRange, serverId?: string | null) {
   return useQuery({
-    queryKey: ['stats', 'plays-by-dayofweek', period, serverId],
-    queryFn: () => api.stats.playsByDayOfWeek(period, serverId ?? undefined),
+    queryKey: ['stats', 'plays-by-dayofweek', timeRange, serverId],
+    queryFn: () => api.stats.playsByDayOfWeek(timeRange ?? { period: 'month' }, serverId ?? undefined),
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 }
 
-export function usePlaysByHourOfDay(period: StatsPeriod = 'month', serverId?: string | null) {
+export function usePlaysByHourOfDay(timeRange?: StatsTimeRange, serverId?: string | null) {
   return useQuery({
-    queryKey: ['stats', 'plays-by-hourofday', period, serverId],
-    queryFn: () => api.stats.playsByHourOfDay(period, serverId ?? undefined),
+    queryKey: ['stats', 'plays-by-hourofday', timeRange, serverId],
+    queryFn: () => api.stats.playsByHourOfDay(timeRange ?? { period: 'month' }, serverId ?? undefined),
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 }
 
-export function usePlatformStats(period: StatsPeriod = 'month', serverId?: string | null) {
+export function usePlatformStats(timeRange?: StatsTimeRange, serverId?: string | null) {
   return useQuery({
-    queryKey: ['stats', 'platforms', period, serverId],
-    queryFn: () => api.stats.platforms(period, serverId ?? undefined),
+    queryKey: ['stats', 'platforms', timeRange, serverId],
+    queryFn: () => api.stats.platforms(timeRange ?? { period: 'month' }, serverId ?? undefined),
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 }
 
-export function useQualityStats(period: StatsPeriod = 'month', serverId?: string | null) {
+export function useQualityStats(timeRange?: StatsTimeRange, serverId?: string | null) {
   return useQuery({
-    queryKey: ['stats', 'quality', period, serverId],
-    queryFn: () => api.stats.quality(period, serverId ?? undefined),
+    queryKey: ['stats', 'quality', timeRange, serverId],
+    queryFn: () => api.stats.quality(timeRange ?? { period: 'month' }, serverId ?? undefined),
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 }
 
-export function useTopUsers(period: StatsPeriod = 'month', serverId?: string | null) {
+export function useTopUsers(timeRange?: StatsTimeRange, serverId?: string | null) {
   return useQuery({
-    queryKey: ['stats', 'top-users', period, serverId],
-    queryFn: () => api.stats.topUsers(period, serverId ?? undefined),
+    queryKey: ['stats', 'top-users', timeRange, serverId],
+    queryFn: () => api.stats.topUsers(timeRange ?? { period: 'month' }, serverId ?? undefined),
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 }
 
-export function useTopContent(period: StatsPeriod = 'month', serverId?: string | null) {
+export function useTopContent(timeRange?: StatsTimeRange, serverId?: string | null) {
   return useQuery({
-    queryKey: ['stats', 'top-content', period, serverId],
-    queryFn: () => api.stats.topContent(period, serverId ?? undefined),
+    queryKey: ['stats', 'top-content', timeRange, serverId],
+    queryFn: () => api.stats.topContent(timeRange ?? { period: 'month' }, serverId ?? undefined),
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 }
 
-export function useConcurrentStats(period: StatsPeriod = 'month', serverId?: string | null) {
+export function useConcurrentStats(timeRange?: StatsTimeRange, serverId?: string | null) {
   return useQuery({
-    queryKey: ['stats', 'concurrent', period, serverId],
-    queryFn: () => api.stats.concurrent(period, serverId ?? undefined),
+    queryKey: ['stats', 'concurrent', timeRange, serverId],
+    queryFn: () => api.stats.concurrent(timeRange ?? { period: 'month' }, serverId ?? undefined),
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 }

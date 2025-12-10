@@ -8,7 +8,7 @@ interface PlaysChartProps {
   data: PlayStats[] | undefined;
   isLoading?: boolean;
   height?: number;
-  period?: 'day' | 'week' | 'month' | 'year';
+  period?: 'day' | 'week' | 'month' | 'year' | 'all' | 'custom';
 }
 
 export function PlaysChart({ data, isLoading, height = 200, period = 'month' }: PlaysChartProps) {

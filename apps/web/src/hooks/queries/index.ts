@@ -12,7 +12,7 @@ export {
   useTopContent,
   useConcurrentStats,
   type LocationStatsFilters,
-  type StatsPeriod,
+  type StatsTimeRange,
 } from './useStats';
 
 // Session hooks

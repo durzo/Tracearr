@@ -25,6 +25,13 @@ import type {
 } from '@tracearr/shared';
 import { API_BASE_PATH } from '@tracearr/shared';
 
+// Stats time range parameters
+export interface StatsTimeRange {
+  period: 'day' | 'week' | 'month' | 'year' | 'all' | 'custom';
+  startDate?: string; // ISO date string
+  endDate?: string; // ISO date string
+}
+
 // Types for Plex server selection
 export interface PlexServerConnection {
   uri: string;
@@ -441,7 +448,16 @@ class ApiClient {
     dismiss: (id: string) => this.request<void>(`/violations/${id}`, { method: 'DELETE' }),
   };
 
-  // Stats
+  // Stats - helper to build stats query params
+  private buildStatsParams(timeRange?: StatsTimeRange, serverId?: string): URLSearchParams {
+    const params = new URLSearchParams();
+    if (timeRange?.period) params.set('period', timeRange.period);
+    if (timeRange?.startDate) params.set('startDate', timeRange.startDate);
+    if (timeRange?.endDate) params.set('endDate', timeRange.endDate);
+    if (serverId) params.set('serverId', serverId);
+    return params;
+  }
+
   stats = {
     dashboard: (serverId?: string) => {
       const params = new URLSearchParams();
@@ -449,65 +465,55 @@ class ApiClient {
       const query = params.toString();
       return this.request<DashboardStats>(`/stats/dashboard${query ? `?${query}` : ''}`);
     },
-    plays: async (period?: string, serverId?: string) => {
-      const params = new URLSearchParams();
-      params.set('period', period ?? 'week');
-      if (serverId) params.set('serverId', serverId);
+    plays: async (timeRange?: StatsTimeRange, serverId?: string) => {
+      const params = this.buildStatsParams(timeRange ?? { period: 'week' }, serverId);
       const response = await this.request<{ data: PlayStats[] }>(`/stats/plays?${params.toString()}`);
       return response.data;
     },
-    users: async (serverId?: string) => {
-      const params = new URLSearchParams();
-      if (serverId) params.set('serverId', serverId);
-      const query = params.toString();
-      const response = await this.request<{ data: UserStats[] }>(`/stats/users${query ? `?${query}` : ''}`);
+    users: async (timeRange?: StatsTimeRange, serverId?: string) => {
+      const params = this.buildStatsParams(timeRange ?? { period: 'month' }, serverId);
+      const response = await this.request<{ data: UserStats[] }>(`/stats/users?${params.toString()}`);
       return response.data;
     },
     locations: async (params?: {
-      days?: number;
+      timeRange?: StatsTimeRange;
       serverUserId?: string;
       serverId?: string;
       mediaType?: 'movie' | 'episode' | 'track';
     }) => {
       const searchParams = new URLSearchParams();
-      if (params?.days) searchParams.set('days', String(params.days));
+      if (params?.timeRange?.period) searchParams.set('period', params.timeRange.period);
+      if (params?.timeRange?.startDate) searchParams.set('startDate', params.timeRange.startDate);
+      if (params?.timeRange?.endDate) searchParams.set('endDate', params.timeRange.endDate);
       if (params?.serverUserId) searchParams.set('serverUserId', params.serverUserId);
       if (params?.serverId) searchParams.set('serverId', params.serverId);
       if (params?.mediaType) searchParams.set('mediaType', params.mediaType);
       const query = searchParams.toString();
       return this.request<LocationStatsResponse>(`/stats/locations${query ? `?${query}` : ''}`);
     },
-    playsByDayOfWeek: async (period?: string, serverId?: string) => {
-      const params = new URLSearchParams();
-      params.set('period', period ?? 'month');
-      if (serverId) params.set('serverId', serverId);
+    playsByDayOfWeek: async (timeRange?: StatsTimeRange, serverId?: string) => {
+      const params = this.buildStatsParams(timeRange ?? { period: 'month' }, serverId);
       const response = await this.request<{ data: { day: number; name: string; count: number }[] }>(
         `/stats/plays-by-dayofweek?${params.toString()}`
       );
       return response.data;
     },
-    playsByHourOfDay: async (period?: string, serverId?: string) => {
-      const params = new URLSearchParams();
-      params.set('period', period ?? 'month');
-      if (serverId) params.set('serverId', serverId);
+    playsByHourOfDay: async (timeRange?: StatsTimeRange, serverId?: string) => {
+      const params = this.buildStatsParams(timeRange ?? { period: 'month' }, serverId);
       const response = await this.request<{ data: { hour: number; count: number }[] }>(
         `/stats/plays-by-hourofday?${params.toString()}`
       );
       return response.data;
     },
-    platforms: async (period?: string, serverId?: string) => {
-      const params = new URLSearchParams();
-      params.set('period', period ?? 'month');
-      if (serverId) params.set('serverId', serverId);
+    platforms: async (timeRange?: StatsTimeRange, serverId?: string) => {
+      const params = this.buildStatsParams(timeRange ?? { period: 'month' }, serverId);
       const response = await this.request<{ data: { platform: string | null; count: number }[] }>(
         `/stats/platforms?${params.toString()}`
       );
       return response.data;
     },
-    quality: async (period?: string, serverId?: string) => {
-      const params = new URLSearchParams();
-      params.set('period', period ?? 'month');
-      if (serverId) params.set('serverId', serverId);
+    quality: async (timeRange?: StatsTimeRange, serverId?: string) => {
+      const params = this.buildStatsParams(timeRange ?? { period: 'month' }, serverId);
       return this.request<{
         directPlay: number;
         transcode: number;
@@ -516,17 +522,13 @@ class ApiClient {
         transcodePercent: number;
       }>(`/stats/quality?${params.toString()}`);
     },
-    topUsers: async (period?: string, serverId?: string) => {
-      const params = new URLSearchParams();
-      params.set('period', period ?? 'month');
-      if (serverId) params.set('serverId', serverId);
+    topUsers: async (timeRange?: StatsTimeRange, serverId?: string) => {
+      const params = this.buildStatsParams(timeRange ?? { period: 'month' }, serverId);
       const response = await this.request<{ data: TopUserStats[] }>(`/stats/top-users?${params.toString()}`);
       return response.data;
     },
-    topContent: async (period?: string, serverId?: string) => {
-      const params = new URLSearchParams();
-      params.set('period', period ?? 'month');
-      if (serverId) params.set('serverId', serverId);
+    topContent: async (timeRange?: StatsTimeRange, serverId?: string) => {
+      const params = this.buildStatsParams(timeRange ?? { period: 'month' }, serverId);
       const response = await this.request<{
         movies: {
           title: string;
@@ -552,10 +554,8 @@ class ApiClient {
       }>(`/stats/top-content?${params.toString()}`);
       return response;
     },
-    concurrent: async (period?: string, serverId?: string) => {
-      const params = new URLSearchParams();
-      params.set('period', period ?? 'month');
-      if (serverId) params.set('serverId', serverId);
+    concurrent: async (timeRange?: StatsTimeRange, serverId?: string) => {
+      const params = this.buildStatsParams(timeRange ?? { period: 'month' }, serverId);
       const response = await this.request<{
         data: { hour: string; total: number; direct: number; transcode: number }[];
       }>(`/stats/concurrent?${params.toString()}`);

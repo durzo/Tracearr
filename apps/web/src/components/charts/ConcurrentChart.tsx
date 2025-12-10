@@ -14,7 +14,7 @@ interface ConcurrentChartProps {
   data: ConcurrentData[] | undefined;
   isLoading?: boolean;
   height?: number;
-  period?: 'day' | 'week' | 'month' | 'year';
+  period?: 'day' | 'week' | 'month' | 'year' | 'all' | 'custom';
 }
 
 export function ConcurrentChart({ data, isLoading, height = 250, period = 'month' }: ConcurrentChartProps) {

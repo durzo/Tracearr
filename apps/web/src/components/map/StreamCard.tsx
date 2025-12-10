@@ -7,6 +7,7 @@ import type { ActiveSession, LocationStats } from '@tracearr/shared';
 import { cn } from '@/lib/utils';
 import { tokenStorage } from '@/lib/api';
 import { ActiveSessionBadge } from '@/components/sessions/ActiveSessionBadge';
+import { useTheme } from '@/components/theme-provider';
 import { User, MapPin } from 'lucide-react';
 
 // Fix for default marker icons in Leaflet with bundlers
@@ -144,6 +145,12 @@ function MapBoundsUpdater({
   return null;
 }
 
+// Map tile URLs for different themes
+const TILE_URLS = {
+  dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+};
+
 export function StreamCard({
   sessions,
   locations,
@@ -153,6 +160,11 @@ export function StreamCard({
   const hasData =
     (sessions?.some((s) => s.geoLat && s.geoLon)) ||
     (locations?.some((l) => l.lat && l.lon));
+  const { theme } = useTheme();
+  const resolvedTheme = theme === 'system'
+    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : theme;
+  const tileUrl = TILE_URLS[resolvedTheme];
 
   return (
     <div className={cn('relative overflow-hidden rounded-lg', className)} style={{ height }}>
@@ -165,8 +177,9 @@ export function StreamCard({
         zoomControl={true}
       >
         <TileLayer
+          key={resolvedTheme}
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          url={tileUrl}
         />
 
         <MapBoundsUpdater sessions={sessions} locations={locations} />

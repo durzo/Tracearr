@@ -1,25 +1,30 @@
-import { useState } from 'react';
 import { Users as UsersIcon, Trophy } from 'lucide-react';
-import { PeriodSelector } from '@/components/ui/period-selector';
+import { TimeRangePicker } from '@/components/ui/time-range-picker';
 import { UserCard, UserRow } from '@/components/users';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useTopUsers, type StatsPeriod } from '@/hooks/queries';
+import { useTopUsers } from '@/hooks/queries';
 import { useServer } from '@/hooks/useServer';
+import { useTimeRange } from '@/hooks/useTimeRange';
 
 export function StatsUsers() {
-  const [period, setPeriod] = useState<StatsPeriod>('month');
+  const { value: timeRange, setValue: setTimeRange, apiParams } = useTimeRange();
   const { selectedServerId } = useServer();
-  const topUsers = useTopUsers(period, selectedServerId);
+  const topUsers = useTopUsers(apiParams, selectedServerId);
 
   const users = topUsers.data ?? [];
   const podiumUsers = users.slice(0, 3);
   const listUsers = users.slice(3);
 
+  // Create a stable key for animations based on the time range
+  const rangeKey = timeRange.period === 'custom'
+    ? `custom-${timeRange.startDate?.toISOString()}-${timeRange.endDate?.toISOString()}`
+    : timeRange.period;
+
   return (
     <div className="space-y-8">
       {/* Header */}
       <div className="flex items-center justify-end">
-        <PeriodSelector value={period} onChange={setPeriod} />
+        <TimeRangePicker value={timeRange} onChange={setTimeRange} />
       </div>
 
       {topUsers.isLoading ? (
@@ -68,7 +73,7 @@ export function StatsUsers() {
 
             {/* Key prop forces re-render on period change for animations */}
             <div
-              key={`podium-${period}`}
+              key={`podium-${rangeKey}`}
               className="flex flex-col items-center gap-4 sm:flex-row sm:items-end sm:justify-center"
             >
               {/* #2 - Left (shown second on mobile, left on desktop) */}
@@ -136,7 +141,7 @@ export function StatsUsers() {
               </div>
 
               {/* Key prop forces re-render on period change for animations */}
-              <div key={`list-${period}`} className="space-y-2">
+              <div key={`list-${rangeKey}`} className="space-y-2">
                 {listUsers.map((user, index: number) => (
                   <UserRow
                     key={user.serverUserId}

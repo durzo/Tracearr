@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useSearchParams } from 'react-router';
-import { StreamMap, type MapViewMode } from '@/components/map';
+import { StreamMap } from '@/components/map';
 import {
   Select,
   SelectContent,
@@ -8,18 +8,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { TimeRangePicker } from '@/components/ui/time-range-picker';
 import { Button } from '@/components/ui/button';
 import { X, Flame, CircleDot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useLocationStats } from '@/hooks/queries';
 import { useServer } from '@/hooks/useServer';
-
-const TIME_RANGES = [
-  { value: '7', label: '7 days' },
-  { value: '30', label: '30 days' },
-  { value: '90', label: '90 days' },
-  { value: '365', label: 'All time' },
-] as const;
+import { useTimeRange } from '@/hooks/useTimeRange';
 
 const MEDIA_TYPES = [
   { value: 'movie', label: 'Movies' },
@@ -29,25 +24,37 @@ const MEDIA_TYPES = [
 
 export function Map() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [viewMode, setViewMode] = useState<MapViewMode>('heatmap');
+  const { value: timeRange, setValue: setTimeRange } = useTimeRange();
   const { selectedServerId } = useServer();
 
   // Parse filters from URL, use selected server from context
   const filters = useMemo(() => {
-    const days = searchParams.get('days');
     const serverUserId = searchParams.get('serverUserId');
     const mediaType = searchParams.get('mediaType') as 'movie' | 'episode' | 'track' | null;
+    const viewMode = (searchParams.get('view') as 'heatmap' | 'circles') || 'heatmap';
 
     return {
-      days: days ? Number(days) : 30,
       serverUserId: serverUserId || undefined,
       serverId: selectedServerId || undefined,
       mediaType: mediaType || undefined,
+      viewMode,
     };
   }, [searchParams, selectedServerId]);
 
+  // Build API params including time range
+  const apiParams = useMemo(() => ({
+    timeRange: {
+      period: timeRange.period,
+      startDate: timeRange.startDate?.toISOString(),
+      endDate: timeRange.endDate?.toISOString(),
+    },
+    serverUserId: filters.serverUserId,
+    serverId: filters.serverId,
+    mediaType: filters.mediaType,
+  }), [timeRange, filters]);
+
   // Fetch data - includes available filter options based on current filters
-  const { data: locationData, isLoading: locationsLoading } = useLocationStats(filters);
+  const { data: locationData, isLoading: locationsLoading } = useLocationStats(apiParams);
 
   const locations = locationData?.data ?? [];
   const summary = locationData?.summary;
@@ -55,12 +62,10 @@ export function Map() {
 
   // Dynamic filter options from the response
   const users = availableFilters?.users ?? [];
-  // const servers = availableFilters?.servers ?? []; // Server selection moved to sidebar
   const mediaTypes = availableFilters?.mediaTypes ?? [];
 
   // Get selected filter labels for display
   const selectedUser = users.find(u => u.id === filters.serverUserId);
-  // const selectedServer = servers.find(s => s.id === filters.serverId); // Server selection moved to sidebar
   const selectedMediaType = MEDIA_TYPES.find(m => m.value === filters.mediaType);
 
   // Filter MEDIA_TYPES to only show available options
@@ -74,22 +79,31 @@ export function Map() {
     } else {
       params.delete(key);
     }
-    setSearchParams(params);
+    setSearchParams(params, { replace: true });
   };
 
-  // Clear all filters
+  // Set view mode
+  const setViewMode = (mode: 'heatmap' | 'circles') => {
+    setFilter('view', mode === 'heatmap' ? null : mode);
+  };
+
+  // Clear all filters (except time range which has its own controls)
   const clearFilters = () => {
-    setSearchParams(new URLSearchParams());
+    const params = new URLSearchParams();
+    // Preserve time range params
+    if (searchParams.get('period')) params.set('period', searchParams.get('period')!);
+    if (searchParams.get('from')) params.set('from', searchParams.get('from')!);
+    if (searchParams.get('to')) params.set('to', searchParams.get('to')!);
+    setSearchParams(params, { replace: true });
   };
 
-  // Server is always set from context, so don't include it in hasFilters check
-  const hasFilters = filters.serverUserId || filters.mediaType || filters.days !== 30;
+  // Check if any non-time filters are active
+  const hasFilters = filters.serverUserId || filters.mediaType;
 
-  // Build summary text (server selection is now in sidebar, not shown here)
+  // Build summary text
   const summaryContext = useMemo(() => {
     const parts: string[] = [];
     if (selectedUser) parts.push(selectedUser.username);
-    // Server shown in sidebar, not in summary
     if (selectedMediaType) parts.push(selectedMediaType.label);
     return parts.join(' · ') || 'All activity';
   }, [selectedUser, selectedMediaType]);
@@ -98,20 +112,8 @@ export function Map() {
     <div className="-m-6 flex h-[calc(100vh-4rem)] flex-col">
       {/* Filter bar */}
       <div className="relative z-[1000] flex items-center gap-3 border-b bg-card/50 px-4 py-2 backdrop-blur">
-        {/* Time range */}
-        <Select
-          value={String(filters.days)}
-          onValueChange={(v) => setFilter('days', v === '30' ? null : v)}
-        >
-          <SelectTrigger className="w-[100px] h-8 text-sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="z-[1001]">
-            {TIME_RANGES.map((t) => (
-              <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {/* Time range picker */}
+        <TimeRangePicker value={timeRange} onChange={setTimeRange} />
 
         <div className="h-4 w-px bg-border" />
 
@@ -132,25 +134,6 @@ export function Map() {
             ))}
           </SelectContent>
         </Select>
-
-        {/* Server filter - moved to sidebar ServerSelector
-        <Select
-          value={filters.serverId ?? '_all'}
-          onValueChange={(v) => setFilter('serverId', v === '_all' ? null : v)}
-        >
-          <SelectTrigger className="w-[140px] h-8 text-sm">
-            <SelectValue placeholder="All servers" />
-          </SelectTrigger>
-          <SelectContent className="z-[1001]">
-            <SelectItem value="_all">All servers</SelectItem>
-            {servers.map((server) => (
-              <SelectItem key={server.id} value={server.id}>
-                {server.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        */}
 
         {/* Media type filter */}
         <Select
@@ -189,7 +172,7 @@ export function Map() {
             onClick={() => setViewMode('heatmap')}
             className={cn(
               'h-7 px-2.5 gap-1.5 text-xs rounded-sm',
-              viewMode === 'heatmap'
+              filters.viewMode === 'heatmap'
                 ? 'bg-background shadow-sm text-foreground'
                 : 'text-muted-foreground hover:text-foreground hover:bg-transparent'
             )}
@@ -203,7 +186,7 @@ export function Map() {
             onClick={() => setViewMode('circles')}
             className={cn(
               'h-7 px-2.5 gap-1.5 text-xs rounded-sm',
-              viewMode === 'circles'
+              filters.viewMode === 'circles'
                 ? 'bg-background shadow-sm text-foreground'
                 : 'text-muted-foreground hover:text-foreground hover:bg-transparent'
             )}
@@ -237,7 +220,7 @@ export function Map() {
         <StreamMap
           locations={locations}
           isLoading={locationsLoading}
-          viewMode={viewMode}
+          viewMode={filters.viewMode}
         />
       </div>
     </div>

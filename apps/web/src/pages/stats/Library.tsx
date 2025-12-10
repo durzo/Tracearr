@@ -1,15 +1,15 @@
-import { useState } from 'react';
 import { Film, Tv } from 'lucide-react';
-import { PeriodSelector } from '@/components/ui/period-selector';
+import { TimeRangePicker } from '@/components/ui/time-range-picker';
 import { MediaCard, MediaCardSmall } from '@/components/media';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useTopContent, type StatsPeriod } from '@/hooks/queries';
+import { useTopContent } from '@/hooks/queries';
 import { useServer } from '@/hooks/useServer';
+import { useTimeRange } from '@/hooks/useTimeRange';
 
 export function StatsLibrary() {
-  const [period, setPeriod] = useState<StatsPeriod>('month');
+  const { value: timeRange, setValue: setTimeRange, apiParams } = useTimeRange();
   const { selectedServerId } = useServer();
-  const topContent = useTopContent(period, selectedServerId);
+  const topContent = useTopContent(apiParams, selectedServerId);
 
   // Use separate movies and shows arrays from API
   const movies = topContent.data?.movies ?? [];
@@ -25,7 +25,7 @@ export function StatsLibrary() {
             Top movies and shows on your server
           </p>
         </div>
-        <PeriodSelector value={period} onChange={setPeriod} />
+        <TimeRangePicker value={timeRange} onChange={setTimeRange} />
       </div>
 
       {/* Top Movies Section */}

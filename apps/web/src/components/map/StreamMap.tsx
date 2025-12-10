@@ -5,6 +5,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { LocationStats } from '@tracearr/shared';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/components/theme-provider';
 
 export type MapViewMode = 'heatmap' | 'circles';
 
@@ -133,8 +134,19 @@ function MapBoundsUpdater({ locations, isLoading }: { locations: LocationStats[]
   return null;
 }
 
+// Map tile URLs for different themes
+const TILE_URLS = {
+  dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+};
+
 export function StreamMap({ locations, className, isLoading, viewMode = 'heatmap' }: StreamMapProps) {
   const hasData = locations.length > 0;
+  const { theme } = useTheme();
+  const resolvedTheme = theme === 'system'
+    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : theme;
+  const tileUrl = TILE_URLS[resolvedTheme];
 
   return (
     <div className={cn('relative h-full w-full', className)}>
@@ -147,8 +159,9 @@ export function StreamMap({ locations, className, isLoading, viewMode = 'heatmap
         zoomControl={false}
       >
         <TileLayer
+          key={resolvedTheme}
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          url={tileUrl}
         />
         <ZoomControl position="bottomright" />
 
