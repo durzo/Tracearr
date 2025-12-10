@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
 import { TrustScoreBadge } from '@/components/users/TrustScoreBadge';
+import { getAvatarUrl } from '@/components/users/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { User as UserIcon, Crown, Clock } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
@@ -17,12 +18,13 @@ const userColumns: ColumnDef<ServerUserWithIdentity>[] = [
     header: 'User',
     cell: ({ row }) => {
       const user = row.original;
+      const avatarUrl = getAvatarUrl(user.serverId, user.thumbUrl, 40);
       return (
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-            {user.thumbUrl ? (
+            {avatarUrl ? (
               <img
-                src={user.thumbUrl}
+                src={avatarUrl}
                 alt={user.username}
                 className="h-10 w-10 rounded-full object-cover"
               />

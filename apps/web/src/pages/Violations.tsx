@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
 import { Button } from '@/components/ui/button';
 import { SeverityBadge } from '@/components/violations/SeverityBadge';
+import { getAvatarUrl } from '@/components/users/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Select,
@@ -87,15 +88,16 @@ export function Violations() {
       header: 'User',
       cell: ({ row }) => {
         const violation = row.original;
+        const avatarUrl = getAvatarUrl(violation.user.serverId, violation.user.thumbUrl, 40);
         return (
           <Link
             to={`/users/${violation.user.id}`}
             className="flex items-center gap-3 hover:underline"
           >
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-              {violation.user.thumbUrl ? (
+              {avatarUrl ? (
                 <img
-                  src={violation.user.thumbUrl}
+                  src={avatarUrl}
                   alt={violation.user.username}
                   className="h-10 w-10 rounded-full object-cover"
                 />

@@ -7,6 +7,7 @@ import { UserLocationsCard } from '@/components/users/UserLocationsCard';
 import { UserDevicesCard } from '@/components/users/UserDevicesCard';
 import { SeverityBadge } from '@/components/violations/SeverityBadge';
 import { ActiveSessionBadge } from '@/components/sessions/ActiveSessionBadge';
+import { getAvatarUrl } from '@/components/users/utils';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -376,15 +377,18 @@ export function UserDetail() {
           <CardContent>
             <div className="flex items-start gap-4">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
-                {user.thumbUrl ? (
-                  <img
-                    src={user.thumbUrl}
-                    alt={user.username}
-                    className="h-16 w-16 rounded-full object-cover"
-                  />
-                ) : (
-                  <UserIcon className="h-8 w-8 text-muted-foreground" />
-                )}
+                {(() => {
+                  const avatarUrl = getAvatarUrl(user.serverId, user.thumbUrl, 64);
+                  return avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt={user.username}
+                      className="h-16 w-16 rounded-full object-cover"
+                    />
+                  ) : (
+                    <UserIcon className="h-8 w-8 text-muted-foreground" />
+                  );
+                })()}
               </div>
               <div className="flex-1 space-y-2">
                 <div className="flex items-center gap-2">
