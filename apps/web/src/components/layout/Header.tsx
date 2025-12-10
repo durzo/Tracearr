@@ -1,4 +1,4 @@
-import { Bell, LogOut, Settings } from 'lucide-react';
+import { LogOut, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { Button } from '@/components/ui/button';
 import {
@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { ModeToggle } from '@/components/ui/mode-toggle';
 import { useAuth } from '@/hooks/useAuth';
 
 export function Header() {
@@ -29,9 +30,7 @@ export function Header() {
     <header className="flex h-16 shrink-0 items-center justify-between border-b px-6">
       <div>{/* Breadcrumb or page title could go here */}</div>
       <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon">
-          <Bell className="h-5 w-5" />
-        </Button>
+        <ModeToggle />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="rounded-full">
