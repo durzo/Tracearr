@@ -52,6 +52,7 @@ export const servers = pgTable('servers', {
   type: varchar('type', { length: 20 }).notNull().$type<(typeof serverTypeEnum)[number]>(),
   url: text('url').notNull(),
   token: text('token').notNull(), // Encrypted
+  machineIdentifier: varchar('machine_identifier', { length: 100 }), // Plex clientIdentifier for dedup
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

@@ -1,0 +1,1 @@
+ALTER TABLE "servers" ADD COLUMN "machine_identifier" varchar(100);
