@@ -41,12 +41,15 @@ import {
   Plus,
   Clock,
 } from 'lucide-react';
+import { MediaServerIcon } from '@/components/icons/MediaServerIcon';
 import { format, formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { api, tokenStorage } from '@/lib/api';
+import type { PlexDiscoveredServer } from '@/lib/api';
 import { useSocket } from '@/hooks/useSocket';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
+import { PlexServerSelector } from '@/components/auth/PlexServerSelector';
 import type { Server, Settings as SettingsType, TautulliImportProgress, MobileSession, MobileQRPayload } from '@tracearr/shared';
 import {
   useSettings,
@@ -184,15 +187,36 @@ function ServerSettings() {
   const { data: serversData, isLoading, refetch } = useServers();
   const deleteServer = useDeleteServer();
   const syncServer = useSyncServer();
-  const { refetch: refetchUser } = useAuth();
+  const { refetch: refetchUser, user } = useAuth();
+  const { toast } = useToast();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [serverType, setServerType] = useState<'jellyfin' | 'emby'>('jellyfin');
+  const [serverType, setServerType] = useState<'plex' | 'jellyfin' | 'emby'>('plex');
   const [serverUrl, setServerUrl] = useState('');
   const [serverName, setServerName] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+
+  // Plex server discovery state
+  const [plexDialogStep, setPlexDialogStep] = useState<'loading' | 'no-plex' | 'no-servers' | 'select'>('loading');
+  const [plexServers, setPlexServers] = useState<PlexDiscoveredServer[]>([]);
+  const [connectingPlexServer, setConnectingPlexServer] = useState<string | null>(null);
+
+  // Update server type when user data loads (non-owners can't add Plex)
+  useEffect(() => {
+    if (user && user.role !== 'owner' && serverType === 'plex') {
+      setServerType('jellyfin');
+    }
+  }, [user, serverType]);
+
+  // Fetch Plex servers when dialog opens with Plex selected
+  useEffect(() => {
+    if (showAddDialog && serverType === 'plex' && user?.role === 'owner') {
+      void fetchPlexServers();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only trigger on dialog open, not serverType changes
+  }, [showAddDialog]);
 
   // Handle both array and wrapped response formats
   const servers = Array.isArray(serversData)
@@ -211,12 +235,75 @@ function ServerSettings() {
     syncServer.mutate(id);
   };
 
+  // Default server type based on user role
+  const defaultServerType = user?.role === 'owner' ? 'plex' : 'jellyfin';
+
   const resetAddForm = () => {
     setServerUrl('');
     setServerName('');
     setApiKey('');
     setConnectError(null);
-    setServerType('jellyfin');
+    setServerType(defaultServerType as 'plex' | 'jellyfin' | 'emby');
+    setPlexDialogStep('loading');
+    setPlexServers([]);
+    setConnectingPlexServer(null);
+  };
+
+  // Fetch available Plex servers when dialog opens with Plex selected
+  const fetchPlexServers = async () => {
+    setPlexDialogStep('loading');
+    setConnectError(null);
+
+    try {
+      const result = await api.auth.getAvailablePlexServers();
+
+      if (!result.hasPlexToken) {
+        setPlexDialogStep('no-plex');
+        return;
+      }
+
+      if (result.servers.length === 0) {
+        setPlexDialogStep('no-servers');
+        return;
+      }
+
+      setPlexServers(result.servers);
+      setPlexDialogStep('select');
+    } catch (error) {
+      setConnectError(error instanceof Error ? error.message : 'Failed to fetch Plex servers');
+      setPlexDialogStep('no-plex');
+    }
+  };
+
+  // Handle Plex server selection from PlexServerSelector
+  const handlePlexServerSelect = async (serverUri: string, name: string, clientIdentifier: string) => {
+    setConnectingPlexServer(name);
+    setConnectError(null);
+
+    try {
+      await api.auth.addPlexServer({
+        serverUri,
+        serverName: name,
+        clientIdentifier,
+      });
+
+      toast({
+        title: 'Server Added',
+        description: `${name} has been connected successfully`,
+      });
+
+      // Refresh server list and user data
+      await refetch();
+      await refetchUser();
+
+      // Close dialog and reset
+      setShowAddDialog(false);
+      resetAddForm();
+    } catch (error) {
+      setConnectError(error instanceof Error ? error.message : 'Failed to connect Plex server');
+    } finally {
+      setConnectingPlexServer(null);
+    }
   };
 
   const handleAddServer = async () => {
@@ -317,84 +404,173 @@ function ServerSettings() {
       </Card>
 
       {/* Add Server Dialog */}
-      <Dialog open={showAddDialog} onOpenChange={(open) => { if (!open) { resetAddForm(); } setShowAddDialog(open); }}>
-        <DialogContent>
+      <Dialog
+        open={showAddDialog}
+        onOpenChange={(open) => {
+          if (!open) { resetAddForm(); }
+          setShowAddDialog(open);
+        }}
+      >
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Add Server</DialogTitle>
             <DialogDescription>
-              Connect a Jellyfin or Emby server to Tracearr. You need administrator access on the server.
+              {serverType === 'plex'
+                ? 'Add another Plex server you own to Tracearr.'
+                : 'Connect a Jellyfin or Emby server. You need administrator access.'}
             </DialogDescription>
           </DialogHeader>
+
           <div className="space-y-4 py-4">
+            {/* Server Type Selector */}
             <div className="space-y-2">
               <Label>Server Type</Label>
-              <Select value={serverType} onValueChange={(v) => { setServerType(v as 'jellyfin' | 'emby'); }}>
+              <Select
+                value={serverType}
+                onValueChange={(v) => {
+                  const newType = v as 'plex' | 'jellyfin' | 'emby';
+                  setServerType(newType);
+                  setConnectError(null);
+                  // Fetch Plex servers when switching to Plex type
+                  if (newType === 'plex' && user?.role === 'owner') {
+                    void fetchPlexServers();
+                  }
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  {user?.role === 'owner' && (
+                    <SelectItem value="plex">Plex</SelectItem>
+                  )}
                   <SelectItem value="jellyfin">Jellyfin</SelectItem>
                   <SelectItem value="emby">Emby</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="serverUrl">Server URL</Label>
-              <Input
-                id="serverUrl"
-                placeholder="http://192.168.1.100:8096"
-                value={serverUrl}
-                onChange={(e) => { setServerUrl(e.target.value); }}
-              />
-              <p className="text-xs text-muted-foreground">
-                The URL where your {serverType === 'jellyfin' ? 'Jellyfin' : 'Emby'} server is accessible
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="serverName">Server Name</Label>
-              <Input
-                id="serverName"
-                placeholder="My Media Server"
-                value={serverName}
-                onChange={(e) => { setServerName(e.target.value); }}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="apiKey">API Key</Label>
-              <Input
-                id="apiKey"
-                type="password"
-                placeholder="Enter your API key"
-                value={apiKey}
-                onChange={(e) => { setApiKey(e.target.value); }}
-              />
-              <p className="text-xs text-muted-foreground">
-                {serverType === 'jellyfin'
-                  ? 'Find this in Jellyfin Dashboard → API Keys'
-                  : 'Find this in Emby Server → API Keys'}
-              </p>
-            </div>
-            {connectError && (
-              <div className="flex items-center gap-2 text-sm text-destructive">
-                <XCircle className="h-4 w-4" />
-                {connectError}
-              </div>
+
+            {/* Plex Server Selection Flow */}
+            {serverType === 'plex' ? (
+              <>
+                {plexDialogStep === 'loading' && (
+                  <div className="flex flex-col items-center justify-center py-8 gap-3">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">
+                      Discovering available Plex servers...
+                    </p>
+                  </div>
+                )}
+
+                {plexDialogStep === 'no-plex' && (
+                  <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
+                    <AlertTriangle className="h-8 w-8 text-amber-500" />
+                    <div>
+                      <p className="font-medium">No Plex Account Linked</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        You need to have at least one Plex server connected to add more.
+                      </p>
+                    </div>
+                    {connectError && (
+                      <p className="text-sm text-destructive">{connectError}</p>
+                    )}
+                  </div>
+                )}
+
+                {plexDialogStep === 'no-servers' && (
+                  <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
+                    <ServerIcon className="h-8 w-8 text-muted-foreground" />
+                    <div>
+                      <p className="font-medium">All Servers Connected</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        All your owned Plex servers are already connected to Tracearr.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {plexDialogStep === 'select' && (
+                  <PlexServerSelector
+                    servers={plexServers}
+                    onSelect={handlePlexServerSelect}
+                    connecting={connectingPlexServer !== null}
+                    connectingToServer={connectingPlexServer}
+                    showCancel={false}
+                  />
+                )}
+
+                {connectError && plexDialogStep === 'select' && (
+                  <div className="flex items-center gap-2 text-sm text-destructive">
+                    <XCircle className="h-4 w-4" />
+                    {connectError}
+                  </div>
+                )}
+              </>
+            ) : (
+              /* Jellyfin/Emby Form */
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="serverUrl">Server URL</Label>
+                  <Input
+                    id="serverUrl"
+                    placeholder="http://192.168.1.100:8096"
+                    value={serverUrl}
+                    onChange={(e) => { setServerUrl(e.target.value); }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    The URL where your {serverType === 'jellyfin' ? 'Jellyfin' : 'Emby'} server is accessible
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="serverName">Server Name</Label>
+                  <Input
+                    id="serverName"
+                    placeholder="My Media Server"
+                    value={serverName}
+                    onChange={(e) => { setServerName(e.target.value); }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="apiKey">API Key</Label>
+                  <Input
+                    id="apiKey"
+                    type="password"
+                    placeholder="Enter your API key"
+                    value={apiKey}
+                    onChange={(e) => { setApiKey(e.target.value); }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {serverType === 'jellyfin'
+                      ? 'Find this in Jellyfin Dashboard → API Keys'
+                      : 'Find this in Emby Server → API Keys'}
+                  </p>
+                </div>
+                {connectError && (
+                  <div className="flex items-center gap-2 text-sm text-destructive">
+                    <XCircle className="h-4 w-4" />
+                    {connectError}
+                  </div>
+                )}
+              </>
             )}
           </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={() => { setShowAddDialog(false); resetAddForm(); }}>
               Cancel
             </Button>
-            <Button onClick={handleAddServer} disabled={isConnecting}>
-              {isConnecting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Connecting...
-                </>
-              ) : (
-                'Connect Server'
-              )}
-            </Button>
+            {serverType !== 'plex' && (
+              <Button onClick={handleAddServer} disabled={isConnecting}>
+                {isConnecting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Connecting...
+                  </>
+                ) : (
+                  'Connect Server'
+                )}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -442,14 +618,11 @@ function ServerCard({
     <div className="flex items-center justify-between rounded-lg border p-4">
       <div className="flex items-center gap-4">
         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-          <ServerIcon className="h-5 w-5" />
+          <MediaServerIcon type={server.type} className="h-6 w-6" />
         </div>
         <div>
           <div className="flex items-center gap-2">
             <h3 className="font-semibold">{server.name}</h3>
-            <span className="rounded bg-muted px-2 py-0.5 text-xs capitalize">
-              {server.type}
-            </span>
           </div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <span>{server.url}</span>
