@@ -58,6 +58,16 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
 
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          android: false
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
