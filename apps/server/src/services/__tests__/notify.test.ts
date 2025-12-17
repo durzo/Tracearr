@@ -348,7 +348,7 @@ describe('NotificationService', () => {
       const callArgs = mockFetch.mock.calls[0]!;
       const body = JSON.parse(callArgs[1].body);
       expect(body.title).toBe('Stream Started');
-      expect(body.message).toContain('testuser');
+      expect(body.message).toContain('Test User'); // Uses identityName when available
       expect(body.message).toContain('Test Movie');
     });
   });
