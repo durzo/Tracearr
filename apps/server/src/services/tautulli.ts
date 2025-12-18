@@ -41,7 +41,7 @@ export const TautulliHistoryRecordSchema = z.object({
 
   // User info (coerce handles string/number inconsistency across Tautulli versions)
   user_id: z.coerce.number(),
-  user: z.string(),
+  user: z.string().nullable(), // Only used in warning message
   friendly_name: z.string().nullable(),
   user_thumb: z.string().nullable(), // User avatar URL
 
@@ -66,17 +66,17 @@ export const TautulliHistoryRecordSchema = z.object({
   grandparent_rating_key: numberOrEmptyStringOrNull,
   full_title: z.string(),
   title: z.string(),
-  parent_title: z.string(),
+  parent_title: z.string().nullable(),
   grandparent_title: z.string().nullable(),
   original_title: z.string().nullable(),
-  // year: number for movies, empty string "" for episodes
-  year: numberOrEmptyString,
-  // media_index: number for episodes, empty string for movies
-  media_index: numberOrEmptyString,
-  parent_media_index: numberOrEmptyString,
-  thumb: z.string(),
-  originally_available_at: z.string(),
-  guid: z.string(),
+  // year: number for movies, empty string "" for episodes, or null
+  year: numberOrEmptyStringOrNull,
+  // media_index: number for episodes, empty string for movies, or null
+  media_index: numberOrEmptyStringOrNull,
+  parent_media_index: numberOrEmptyStringOrNull,
+  thumb: z.string().nullable(),
+  originally_available_at: z.string().nullable(),
+  guid: z.string().nullable(),
 
   // Playback info
   transcode_decision: z.string().nullable(),
@@ -516,9 +516,9 @@ export class TautulliService {
 
       // Flush updates in parallel chunks (much faster than sequential transaction)
       // Each update is independent, so we can safely parallelize
-      // Pool has max 20 connections - chunks of 100 will queue but process efficiently
+      // Pool has max 20 connections - keep chunk size within pool limits to avoid exhaustion
       if (updateBatch.length > 0) {
-        const UPDATE_CHUNK_SIZE = 100;
+        const UPDATE_CHUNK_SIZE = 10;
         for (let i = 0; i < updateBatch.length; i += UPDATE_CHUNK_SIZE) {
           const chunk = updateBatch.slice(i, i + UPDATE_CHUNK_SIZE);
           await Promise.all(
@@ -595,7 +595,7 @@ export class TautulliService {
               existing.count++;
             } else {
               skippedUsers.set(record.user_id, {
-                username: record.friendly_name || record.user,
+                username: record.friendly_name || record.user || 'Unknown',
                 count: 1,
               });
             }
