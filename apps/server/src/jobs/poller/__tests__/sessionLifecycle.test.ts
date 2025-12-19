@@ -7,7 +7,7 @@
  * 3. Quality change detection - Stops old session when same user/content with new sessionKey
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 // ============================================================================
 // 1. Distributed Lock Tests (withSessionCreateLock)
@@ -398,7 +398,7 @@ describe('Concurrent access handling', () => {
     expect(stopAttempts.length).toBe(2);
 
     // Only one succeeded
-    const successes = [result1, result2].filter((r) => r === true);
+    const successes = [result1, result2].filter((r) => r);
     expect(successes.length).toBe(1);
   });
 });

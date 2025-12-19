@@ -522,27 +522,27 @@ export async function stopSessionAtomic(input: SessionStopInput): Promise<Sessio
  * Notification types used during poll processing
  */
 type PollNotification =
-  | { type: 'session_started'; payload: import('@tracearr/shared').ActiveSession }
-  | { type: 'session_stopped'; payload: import('@tracearr/shared').ActiveSession };
+  | { type: 'session_started'; payload: ActiveSession }
+  | { type: 'session_stopped'; payload: ActiveSession };
 
 /**
  * Input for processing poll results
  */
 export interface PollResultsInput {
   /** Newly created sessions */
-  newSessions: import('@tracearr/shared').ActiveSession[];
+  newSessions: ActiveSession[];
   /** Keys of stopped sessions in format "serverId:sessionKey" */
   stoppedKeys: string[];
   /** Sessions that were updated */
-  updatedSessions: import('@tracearr/shared').ActiveSession[];
+  updatedSessions: ActiveSession[];
   /** Cached sessions for looking up stopped session details */
-  cachedSessions: import('@tracearr/shared').ActiveSession[];
+  cachedSessions: ActiveSession[];
   /** Cache service for persistence */
   cacheService: {
     incrementalSyncActiveSessions: (
-      newSessions: import('@tracearr/shared').ActiveSession[],
+      newSessions: ActiveSession[],
       stoppedIds: string[],
-      updatedSessions: import('@tracearr/shared').ActiveSession[]
+      updatedSessions: ActiveSession[]
     ) => Promise<void>;
     addUserSession: (userId: string, sessionId: string) => Promise<void>;
     removeUserSession: (userId: string, sessionId: string) => Promise<void>;
@@ -560,8 +560,8 @@ export interface PollResultsInput {
  */
 function findStoppedSession(
   key: string,
-  cachedSessions: import('@tracearr/shared').ActiveSession[]
-): import('@tracearr/shared').ActiveSession | undefined {
+  cachedSessions: ActiveSession[]
+): ActiveSession | undefined {
   const parts = key.split(':');
   if (parts.length < 2) return undefined;
   const serverId = parts[0];

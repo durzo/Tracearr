@@ -12,7 +12,7 @@
  */
 
 import { eq, and } from 'drizzle-orm';
-import type { PlexPlaySessionNotification, ActiveSession } from '@tracearr/shared';
+import type { PlexPlaySessionNotification } from '@tracearr/shared';
 import { db } from '../db/client.js';
 import { servers, sessions, serverUsers, users } from '../db/schema.js';
 import { createMediaServerClient } from '../services/mediaServer/index.js';
