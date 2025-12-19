@@ -68,9 +68,10 @@ export const playsRoutes: FastifyPluginAsync = async (app) => {
       : sql`WHERE true`;
 
     // Convert to user's timezone before truncating to day
+    // Use ::text (not ::date::text) so JS parses as local time, not UTC
     const result = await db.execute(sql`
         SELECT
-          date_trunc('day', started_at AT TIME ZONE ${tz})::date::text as date,
+          date_trunc('day', started_at AT TIME ZONE ${tz})::text as date,
           count(DISTINCT COALESCE(reference_id, id))::int as count
         FROM sessions
         ${baseWhere}
