@@ -7,6 +7,15 @@ on:
         description: 'Tag to deploy (e.g., v1.2.3-beta.1)'
         required: true
         type: string
+      platform:
+        description: 'Platform to build and deploy'
+        required: true
+        type: choice
+        options:
+          - all
+          - android
+          - ios
+        default: 'all'
 
 concurrency:
   group: mobile-release-${{ github.ref }}
@@ -170,6 +179,7 @@ jobs:
         with:
           profile: preview
           branch: preview
+          platform: ${{ inputs.platform }}
           working-directory: apps/mobile
           auto-submit-builds: true
         env:
@@ -239,13 +249,21 @@ jobs:
       - name: Push OTA update with retry
         run: |
           TAG="${{ inputs.tag }}"
-          echo "::warning::Deploy failed, attempting OTA fallback for $TAG"
+          PLATFORM="${{ inputs.platform }}"
+          echo "::warning::Deploy failed, attempting OTA fallback for $TAG (platform: $PLATFORM)"
+
+          # Build platform flag
+          PLATFORM_FLAG=""
+          if [ "$PLATFORM" != "all" ]; then
+            PLATFORM_FLAG="--platform $PLATFORM"
+          fi
 
           for attempt in 1 2 3; do
             echo "Attempt $attempt of 3..."
             if eas update \
                 --channel preview \
                 --message "Release $TAG (fallback)" \
+                $PLATFORM_FLAG \
                 --non-interactive; then
               echo "OTA update successful on attempt $attempt"
               exit 0
@@ -270,6 +288,7 @@ jobs:
       - name: Report status
         env:
           TAG: ${{ inputs.tag }}
+          PLATFORM: ${{ inputs.platform }}
           PRERELEASE: ${{ needs.check-release-type.outputs.prerelease }}
           MOBILE_CHANGED: ${{ needs.check-mobile-changes.outputs.mobile_changed || 'skipped' }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
@@ -279,6 +298,7 @@ jobs:
             echo "## Mobile Release Summary"
             echo ""
             echo "**Tag**: $TAG"
+            echo "**Platform**: $PLATFORM"
             echo "**Prerelease**: $PRERELEASE"
             echo "**Mobile Changed**: $MOBILE_CHANGED"
             echo ""
