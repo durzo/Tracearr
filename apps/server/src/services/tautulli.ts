@@ -22,6 +22,7 @@ import {
   createSimpleProgressPublisher,
 } from './import/index.js';
 import { normalizePlatformName } from '../utils/platformNormalizer.js';
+import { normalizeStreamDecisions } from '../utils/transcodeNormalizer.js';
 
 const PAGE_SIZE = 5000; // Larger batches = fewer API calls (tested up to 10k, scales linearly)
 const REQUEST_TIMEOUT_MS = 30000; // 30 seconds
@@ -624,16 +625,19 @@ export class TautulliService {
             deviceId: record.machine_id || null,
             product: record.product || null,
             platform: normalizePlatformName(record.platform || ''),
-            quality: record.transcode_decision === 'transcode' ? 'Transcode' : 'Direct',
-            isTranscode: record.transcode_decision === 'transcode',
-            videoDecision:
-              record.transcode_decision === 'direct play'
-                ? 'directplay'
-                : record.transcode_decision,
-            audioDecision:
-              record.transcode_decision === 'direct play'
-                ? 'directplay'
-                : record.transcode_decision,
+            // Tautulli uses single transcode_decision for both video/audio
+            ...(() => {
+              const { videoDecision, audioDecision, isTranscode } = normalizeStreamDecisions(
+                record.transcode_decision,
+                record.transcode_decision
+              );
+              return {
+                quality: isTranscode ? 'Transcode' : 'Direct',
+                isTranscode,
+                videoDecision,
+                audioDecision,
+              };
+            })(),
             bitrate: null,
           });
 

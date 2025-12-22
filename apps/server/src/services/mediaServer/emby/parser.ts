@@ -17,6 +17,11 @@ import {
   getNestedValue,
   parseDateString,
 } from '../../../utils/parsing.js';
+import {
+  normalizePlayMethod,
+  isTranscodingFromInfo,
+  type StreamDecisions,
+} from '../../../utils/transcodeNormalizer.js';
 import type { MediaSession, MediaUser, MediaLibrary, MediaWatchHistoryItem } from '../types.js';
 
 // ============================================================================
@@ -145,61 +150,41 @@ function getVideoDimensions(session: Record<string, unknown>): {
 }
 
 /**
- * Get play method from PlayState and normalize to lowercase
- * PlayMethod enum: DirectPlay, DirectStream, Transcode
+ * Get stream decisions using the transcode normalizer
+ * Extracts PlayMethod and IsVideoDirect/IsAudioDirect flags, then normalizes
  */
-function getPlayMethod(session: Record<string, unknown>): string {
+function getStreamDecisions(session: Record<string, unknown>): StreamDecisions {
   const playState = getNestedObject(session, 'PlayState');
   const playMethod = parseOptionalString(playState?.PlayMethod);
 
+  // If PlayMethod is available, use it with optional granular flags
   if (playMethod) {
-    // Normalize to lowercase: DirectPlay -> directplay, DirectStream -> directstream, Transcode -> transcode
-    return playMethod.toLowerCase();
+    const transcodingInfo = getNestedObject(session, 'TranscodingInfo');
+    const isVideoDirect =
+      transcodingInfo && typeof getNestedValue(transcodingInfo, 'IsVideoDirect') === 'boolean'
+        ? (getNestedValue(transcodingInfo, 'IsVideoDirect') as boolean)
+        : undefined;
+    const isAudioDirect =
+      transcodingInfo && typeof getNestedValue(transcodingInfo, 'IsAudioDirect') === 'boolean'
+        ? (getNestedValue(transcodingInfo, 'IsAudioDirect') as boolean)
+        : undefined;
+
+    return normalizePlayMethod(playMethod, isVideoDirect, isAudioDirect);
   }
 
   // Fall back to checking TranscodingInfo if PlayMethod not available
   const transcodingInfo = getNestedObject(session, 'TranscodingInfo');
-  if (!transcodingInfo) return 'directplay';
-
-  // If TranscodingInfo exists, it's transcoding
-  return 'transcode';
-}
-
-/**
- * Get video and audio decisions from TranscodingInfo
- * Returns individual track decisions for more granular tracking
- */
-function getStreamDecisions(session: Record<string, unknown>): {
-  videoDecision: string;
-  audioDecision: string;
-} {
-  const playMethod = getPlayMethod(session);
-
-  // For DirectPlay, both video and audio are direct
-  if (playMethod === 'directplay') {
-    return { videoDecision: 'directplay', audioDecision: 'directplay' };
-  }
-
-  // For DirectStream (remux), container changes but tracks are copied
-  if (playMethod === 'directstream') {
-    return { videoDecision: 'copy', audioDecision: 'copy' };
-  }
-
-  // For Transcode, check individual track decisions from TranscodingInfo
-  const transcodingInfo = getNestedObject(session, 'TranscodingInfo');
   if (!transcodingInfo) {
-    // Fallback: assume both are transcoded if in transcode mode
-    return { videoDecision: 'transcode', audioDecision: 'transcode' };
+    return { videoDecision: 'directplay', audioDecision: 'directplay', isTranscode: false };
   }
 
+  // Use IsVideoDirect to determine if transcoding
   const isVideoDirect = getNestedValue(transcodingInfo, 'IsVideoDirect');
-  const isAudioDirect = getNestedValue(transcodingInfo, 'IsAudioDirect');
+  if (isTranscodingFromInfo(true, isVideoDirect as boolean | undefined)) {
+    return { videoDecision: 'transcode', audioDecision: 'transcode', isTranscode: true };
+  }
 
-  return {
-    // If IsVideoDirect is true, video is being copied; false means transcoding
-    videoDecision: isVideoDirect === true ? 'copy' : 'transcode',
-    audioDecision: isAudioDirect === true ? 'copy' : 'transcode',
-  };
+  return { videoDecision: 'directplay', audioDecision: 'directplay', isTranscode: false };
 }
 
 /**
@@ -258,10 +243,8 @@ export function parseSession(session: Record<string, unknown>): MediaSession | n
   const positionMs = ticksToMs(playState?.PositionTicks);
   const mediaType = parseMediaType(nowPlaying.Type);
 
-  // Get individual video/audio decisions for granular tracking
-  const { videoDecision, audioDecision } = getStreamDecisions(session);
-  // isTranscode = true if either video or audio is being transcoded
-  const isTranscode = videoDecision === 'transcode' || audioDecision === 'transcode';
+  // Get stream decisions using the transcode normalizer
+  const { videoDecision, audioDecision, isTranscode } = getStreamDecisions(session);
 
   // Build full image paths for Emby (not just image tag IDs)
   const itemId = parseString(nowPlaying.Id);
