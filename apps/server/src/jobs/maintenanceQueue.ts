@@ -18,7 +18,17 @@ import { db } from '../db/client.js';
 import { sessions } from '../db/schema.js';
 import { normalizeClient, normalizePlatformName } from '../utils/platformNormalizer.js';
 import { getPubSubService } from '../services/cache.js';
-import { getCode as getCountryCode } from 'country-list';
+import countries from 'i18n-iso-countries';
+import countriesEn from 'i18n-iso-countries/langs/en.json' with { type: 'json' };
+
+// Register English locale for country name lookups
+countries.registerLocale(countriesEn);
+
+// Convert country name to ISO 3166-1 alpha-2 code
+// Handles common variations like "United States", "USA", "United Kingdom", etc.
+function getCountryCode(name: string): string | undefined {
+  return countries.getAlpha2Code(name, 'en') ?? undefined;
+}
 
 // Job data types
 export interface MaintenanceJobData {
