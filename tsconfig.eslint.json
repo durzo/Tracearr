@@ -11,6 +11,8 @@
     "paths": {
       "@tracearr/shared": ["./packages/shared/src"],
       "@tracearr/shared/*": ["./packages/shared/src/*"],
+      "@tracearr/translations": ["./packages/translations/src"],
+      "@tracearr/translations/*": ["./packages/translations/src/*"],
       "@/*": ["./apps/web/src/*"]
     }
   },
@@ -21,6 +23,7 @@
     "apps/mobile/**/*.ts",
     "apps/mobile/**/*.tsx",
     "packages/shared/src/**/*.ts",
+    "packages/translations/src/**/*.ts",
     "packages/test-utils/src/**/*.ts",
     "*.config.ts",
     "*.config.js",

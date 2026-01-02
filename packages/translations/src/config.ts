@@ -110,7 +110,7 @@ export async function initI18n(options?: Partial<typeof defaultI18nConfig>): Pro
       initPromise = null;
       return i18n;
     })
-    .catch((error) => {
+    .catch((error: unknown) => {
       initPromise = null;
       throw error;
     });
