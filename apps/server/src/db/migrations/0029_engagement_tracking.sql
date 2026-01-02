@@ -46,6 +46,8 @@ WHERE rating_key IS NOT NULL
 GROUP BY day, server_user_id, rating_key
 WITH NO DATA;
 
+--> statement-breakpoint
+
 -- Add refresh policy (runs every 15 minutes, processes last 7 days)
 SELECT add_continuous_aggregate_policy('daily_content_engagement',
   start_offset => INTERVAL '7 days',
@@ -53,6 +55,8 @@ SELECT add_continuous_aggregate_policy('daily_content_engagement',
   schedule_interval => INTERVAL '15 minutes',
   if_not_exists => true
 );
+
+--> statement-breakpoint
 
 -- ============================================================================
 -- PHASE 2: Content Engagement Summary View
@@ -108,6 +112,8 @@ SELECT
 FROM daily_content_engagement
 GROUP BY server_user_id, rating_key;
 
+--> statement-breakpoint
+
 -- ============================================================================
 -- PHASE 3A: Episode Continuity Stats (Consecutive Episode Detection)
 -- ============================================================================
@@ -150,6 +156,8 @@ FROM episode_timeline
 GROUP BY server_user_id, show_title
 HAVING COUNT(*) >= 2;  -- Need at least 2 episodes for continuity analysis
 
+--> statement-breakpoint
+
 -- ============================================================================
 -- PHASE 3B: Daily Show Intensity (Episodes per Day)
 -- ============================================================================
@@ -166,6 +174,8 @@ WHERE media_type = 'episode'
   AND show_title IS NOT NULL
   AND valid_session_count > 0
 GROUP BY server_user_id, show_title, day;
+
+--> statement-breakpoint
 
 -- ============================================================================
 -- PHASE 3: Show-Level Engagement Summary (Episode Rollup)
@@ -219,6 +229,8 @@ LEFT JOIN intensity_stats ist ON ces.server_user_id = ist.server_user_id AND ces
 WHERE ces.media_type = 'episode' AND ces.show_title IS NOT NULL
 GROUP BY ces.server_user_id, ces.show_title, ist.total_viewing_days, ist.max_episodes_in_one_day, ist.avg_episodes_per_viewing_day;
 
+--> statement-breakpoint
+
 -- ============================================================================
 -- PHASE 4: Top Content by Plays View
 -- ============================================================================
@@ -253,6 +265,8 @@ SELECT
         / NULLIF(COUNT(*), 0), 1) AS abandonment_rate
 FROM content_engagement_summary
 GROUP BY rating_key, media_title, show_title, media_type, content_duration_ms, thumb_path, server_id, year;
+
+--> statement-breakpoint
 
 -- ============================================================================
 -- PHASE 5: Top Shows by Engagement View (Episode Rollup)
@@ -310,6 +324,8 @@ LEFT JOIN episode_continuity_stats ecs
   ON ses.server_user_id = ecs.server_user_id AND ses.show_title = ecs.show_title
 GROUP BY ses.show_title;
 
+--> statement-breakpoint
+
 -- ============================================================================
 -- PHASE 6: User Engagement Profile View
 -- ============================================================================
@@ -346,6 +362,8 @@ SELECT
   MODE() WITHIN GROUP (ORDER BY media_type) AS favorite_media_type
 FROM content_engagement_summary
 GROUP BY server_user_id;
+
+--> statement-breakpoint
 
 -- ============================================================================
 -- PHASE 7: Time-filtered Engagement Function (for date range queries)
@@ -451,6 +469,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE;
 
+--> statement-breakpoint
+
 -- ============================================================================
 -- PHASE 8: Show-level Time-filtered Function
 -- ============================================================================
@@ -502,11 +522,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE;
 
--- ============================================================================
--- PHASE 9: Initial Backfill
--- ============================================================================
--- Populate the continuous aggregate with historical data.
--- This runs once during migration to backfill all existing sessions.
--- Subsequent updates are handled by the automatic refresh policy.
-
-CALL refresh_continuous_aggregate('daily_content_engagement', NULL, NULL);
+-- NOTE: Initial backfill is handled by the refresh policy (runs every 15 minutes)
+-- Manual backfill if needed: CALL refresh_continuous_aggregate('daily_content_engagement', NULL, NULL);
+-- (Must be run outside a transaction)
