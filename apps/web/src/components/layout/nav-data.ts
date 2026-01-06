@@ -13,7 +13,6 @@ import {
   Gauge,
   Smartphone,
   Activity,
-  Cpu,
 } from 'lucide-react';
 
 export interface NavItem {
@@ -53,7 +52,6 @@ export const navigation: NavEntry[] = [
     children: [
       { name: 'Devices', href: '/stats/devices', icon: Smartphone },
       { name: 'Bandwidth', href: '/stats/bandwidth', icon: Activity },
-      { name: 'Quality', href: '/stats/quality', icon: Cpu },
     ],
   },
   { name: 'Users', href: '/users', icon: Users },
