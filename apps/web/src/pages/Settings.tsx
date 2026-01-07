@@ -496,7 +496,6 @@ function ServerSettings() {
                   }}
                   onEditUrl={() => {
                     setEditServer(server);
-                    setEditUrl(server.url);
                   }}
                   isSyncing={syncServer.isPending}
                 />
@@ -808,7 +807,6 @@ function ServerSettings() {
         server={editServer}
         onClose={() => {
           setEditServer(null);
-          setEditUrl('');
         }}
         onUpdate={(url, clientIdentifier) => {
           if (editServer) {
@@ -817,7 +815,6 @@ function ServerSettings() {
               {
                 onSuccess: () => {
                   setEditServer(null);
-                  setEditUrl('');
                 },
               }
             );

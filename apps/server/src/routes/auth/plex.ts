@@ -689,7 +689,7 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
       }
 
       // Find the specific server by machineIdentifier (if we have it)
-      let targetServer = existingServer.machineIdentifier
+      const targetServer = existingServer.machineIdentifier
         ? plexServers.find((s) => s.clientIdentifier === existingServer.machineIdentifier)
         : plexServers[0]; // Fallback to first server if no machineIdentifier
 
