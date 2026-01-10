@@ -67,6 +67,7 @@ export interface ServerUser {
   isServerAdmin: boolean;
   trustScore: number;
   sessionCount: number;
+  joinedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
