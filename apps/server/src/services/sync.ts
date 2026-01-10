@@ -9,11 +9,12 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { servers } from '../db/schema.js';
 import { createMediaServerClient, PlexClient, type MediaUser } from './mediaServer/index.js';
-import { syncUserFromMediaServer } from './userService.js';
+import { syncUserFromMediaServer, type SyncUserOptions } from './userService.js';
 
 export interface SyncResult {
   usersAdded: number;
   usersUpdated: number;
+  usersSkipped: number;
   librariesSynced: number;
   errors: string[];
 }
@@ -26,21 +27,33 @@ export interface SyncOptions {
 /**
  * Generic user sync - works for both Plex and Jellyfin
  *
- * Uses userService.upsertUserFromMediaServer to handle create/update logic,
- * eliminating duplicate code between syncPlexUsers and syncJellyfinUsers.
+ * For Plex servers (isPlexServer=true):
+ * - Matches by plexAccountId, then externalId (same for shared users), then username
+ * - Creates new users with dual IDs: externalId (local PMS) + plexAccountId (plex.tv)
+ * - For shared users: plex.tv ID = local PMS ID
+ * - For owner: plex.tv ID ≠ local PMS ID (owner is always "1" locally)
+ *
+ * For Jellyfin/Emby servers:
+ * - Creates new users if not found
+ * - Uses externalId for matching
  */
 async function syncServerUsers(
   serverId: string,
-  mediaUsers: MediaUser[]
-): Promise<{ added: number; updated: number; errors: string[] }> {
+  mediaUsers: MediaUser[],
+  options: SyncUserOptions = {}
+): Promise<{ added: number; updated: number; skipped: number; errors: string[] }> {
   const errors: string[] = [];
   let added = 0;
   let updated = 0;
+  let skipped = 0;
 
   for (const mediaUser of mediaUsers) {
     try {
-      const result = await syncUserFromMediaServer(serverId, mediaUser);
-      if (result.created) {
+      const result = await syncUserFromMediaServer(serverId, mediaUser, options);
+      if (result === null) {
+        // Plex sync skipped new user (will be created by poller)
+        skipped++;
+      } else if (result.created) {
         added++;
       } else {
         updated++;
@@ -51,7 +64,7 @@ async function syncServerUsers(
     }
   }
 
-  return { added, updated, errors };
+  return { added, updated, skipped, errors };
 }
 
 /**
@@ -84,18 +97,23 @@ async function fetchPlexUsers(token: string, serverUrl: string): Promise<MediaUs
 
 /**
  * Sync users from Plex server to local database
+ *
+ * Uses isPlexServer=true to:
+ * - Match by plexAccountId, externalId, then username
+ * - Create new users with dual IDs (externalId + plexAccountId)
+ * - For shared users: plex.tv ID = local PMS ID (same)
  */
 async function syncPlexUsers(
   serverId: string,
   token: string,
   serverUrl: string
-): Promise<{ added: number; updated: number; errors: string[] }> {
+): Promise<{ added: number; updated: number; skipped: number; errors: string[] }> {
   try {
     const plexUsers = await fetchPlexUsers(token, serverUrl);
-    return syncServerUsers(serverId, plexUsers);
+    return syncServerUsers(serverId, plexUsers, { isPlexServer: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    return { added: 0, updated: 0, errors: [`Plex user sync failed: ${message}`] };
+    return { added: 0, updated: 0, skipped: 0, errors: [`Plex user sync failed: ${message}`] };
   }
 }
 
@@ -108,7 +126,7 @@ async function syncMediaServerUsers(
   serverType: 'jellyfin' | 'emby',
   serverUrl: string,
   token: string
-): Promise<{ added: number; updated: number; errors: string[] }> {
+): Promise<{ added: number; updated: number; skipped: number; errors: string[] }> {
   const serverName = serverType.charAt(0).toUpperCase() + serverType.slice(1);
   try {
     const client = createMediaServerClient({
@@ -117,10 +135,15 @@ async function syncMediaServerUsers(
       token,
     });
     const users = await client.getUsers();
-    return syncServerUsers(serverId, users);
+    return syncServerUsers(serverId, users); // isPlexServer defaults to false
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    return { added: 0, updated: 0, errors: [`${serverName} user sync failed: ${message}`] };
+    return {
+      added: 0,
+      updated: 0,
+      skipped: 0,
+      errors: [`${serverName} user sync failed: ${message}`],
+    };
   }
 }
 
@@ -134,6 +157,7 @@ export async function syncServer(
   const result: SyncResult = {
     usersAdded: 0,
     usersUpdated: 0,
+    usersSkipped: 0,
     librariesSynced: 0,
     errors: [],
   };
@@ -156,11 +180,13 @@ export async function syncServer(
       const userResult = await syncPlexUsers(serverId, token, serverUrl);
       result.usersAdded = userResult.added;
       result.usersUpdated = userResult.updated;
+      result.usersSkipped = userResult.skipped;
       result.errors.push(...userResult.errors);
     } else if (server.type === 'jellyfin' || server.type === 'emby') {
       const userResult = await syncMediaServerUsers(serverId, server.type, serverUrl, server.token);
       result.usersAdded = userResult.added;
       result.usersUpdated = userResult.updated;
+      result.usersSkipped = userResult.skipped;
       result.errors.push(...userResult.errors);
     }
   }

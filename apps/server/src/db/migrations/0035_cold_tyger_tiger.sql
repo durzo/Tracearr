@@ -1,0 +1,2 @@
+ALTER TABLE "server_users" ADD COLUMN "plex_account_id" varchar(255);--> statement-breakpoint
+CREATE INDEX "server_users_plex_account_idx" ON "server_users" USING btree ("server_id","plex_account_id");

@@ -452,6 +452,7 @@ describe('Plex Auth Routes', () => {
       vi.mocked(syncServer).mockResolvedValue({
         usersAdded: 5,
         usersUpdated: 0,
+        usersSkipped: 0,
         librariesSynced: 3,
         errors: [],
       });

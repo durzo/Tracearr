@@ -492,11 +492,13 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
         .where(eq(servers.id, serverId));
 
       // Create server_user linking the identity to this server
-      // Use local PMS user ID (not Plex.tv ID) so it matches session data
+      // externalId = local PMS ID (matches session data from poller)
+      // plexAccountId = plex.tv ID (matches sync data from plex.tv API)
       await db.insert(serverUsers).values({
         userId: newUser.id,
         serverId,
         externalId: ownerLocalId,
+        plexAccountId: plexAccountId,
         username: plexUsername,
         email: plexEmail,
         thumbUrl: plexThumb,
@@ -749,12 +751,17 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
     }
 
     let plexToken: string;
-    let plexAccountId: string | undefined;
+    let plexAccountId: string | undefined; // UUID of plex_accounts row
+    let plexTvAccountId: string | undefined; // Actual plex.tv account ID
 
     // If accountId provided, use that plex_account's token
     if (accountId) {
       const account = await db
-        .select({ id: plexAccounts.id, plexToken: plexAccounts.plexToken })
+        .select({
+          id: plexAccounts.id,
+          plexToken: plexAccounts.plexToken,
+          plexAccountId: plexAccounts.plexAccountId,
+        })
         .from(plexAccounts)
         .where(and(eq(plexAccounts.id, accountId), eq(plexAccounts.userId, user.id)))
         .limit(1);
@@ -764,6 +771,7 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
       }
       plexToken = account[0]!.plexToken;
       plexAccountId = account[0]!.id;
+      plexTvAccountId = account[0]!.plexAccountId;
     } else {
       // Legacy fallback: use first Plex server's token and account linkage
       const existingPlexServer = await db
@@ -775,7 +783,11 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
       if (existingPlexServer.length === 0) {
         // Check if user has linked plex accounts
         const userAccounts = await db
-          .select({ id: plexAccounts.id, plexToken: plexAccounts.plexToken })
+          .select({
+            id: plexAccounts.id,
+            plexToken: plexAccounts.plexToken,
+            plexAccountId: plexAccounts.plexAccountId,
+          })
           .from(plexAccounts)
           .where(eq(plexAccounts.userId, user.id))
           .limit(1);
@@ -785,10 +797,20 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
         }
         plexToken = userAccounts[0]!.plexToken;
         plexAccountId = userAccounts[0]!.id;
+        plexTvAccountId = userAccounts[0]!.plexAccountId;
       } else {
         plexToken = existingPlexServer[0]!.token;
         // Also inherit the plexAccountId from the existing server if available
         plexAccountId = existingPlexServer[0]!.plexAccountId ?? undefined;
+        // Get the plex.tv ID from the linked plex_account
+        if (plexAccountId) {
+          const linkedAccount = await db
+            .select({ plexAccountId: plexAccounts.plexAccountId })
+            .from(plexAccounts)
+            .where(eq(plexAccounts.id, plexAccountId))
+            .limit(1);
+          plexTvAccountId = linkedAccount[0]?.plexAccountId;
+        }
       }
     }
 
@@ -840,6 +862,38 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
 
       if (!newServer) {
         return reply.internalServerError('Failed to create server');
+      }
+
+      // Create owner's serverUser for this server
+      // This ensures the owner has a serverUser even before sync runs
+      // (sync won't create new users for Plex - it only updates existing ones)
+      try {
+        const pmsClient = new PlexClient({ url: serverUri, token: plexToken });
+        const localAccounts = await pmsClient.getUsers();
+        const ownerLocalAccount = localAccounts.find((a) => a.isAdmin) ?? localAccounts[0];
+        const ownerLocalId = ownerLocalAccount?.id ?? '1';
+
+        await db.insert(serverUsers).values({
+          userId: user.id,
+          serverId: newServer.id,
+          externalId: ownerLocalId, // Local PMS ID - used by poller
+          plexAccountId: plexTvAccountId ?? null, // Plex.tv ID - used by sync
+          username: user.username,
+          email: user.email,
+          thumbUrl: user.thumbnail,
+          isServerAdmin: true,
+        });
+
+        app.log.info(
+          { userId: user.id, serverId: newServer.id, externalId: ownerLocalId },
+          'Created owner serverUser for new Plex server'
+        );
+      } catch (err) {
+        // Log but don't fail - sync will create the serverUser later if needed
+        app.log.warn(
+          { error: err, serverId: newServer.id },
+          'Failed to create owner serverUser, will be created on first stream'
+        );
       }
 
       app.log.info({ serverId: newServer.id, serverName }, 'Additional Plex server added');

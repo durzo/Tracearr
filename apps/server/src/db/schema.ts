@@ -188,7 +188,10 @@ export const serverUsers = pgTable(
       .references(() => servers.id, { onDelete: 'cascade' }),
 
     // Server-specific identity
-    externalId: varchar('external_id', { length: 255 }).notNull(), // Plex/Jellyfin user ID
+    externalId: varchar('external_id', { length: 255 }).notNull(), // Local server user ID (Plex PMS ID / Jellyfin ID)
+    // For Plex: plex.tv account ID (different from local PMS ID). Used for sync matching.
+    // Sessions use externalId (local PMS ID), sync uses plexAccountId (plex.tv ID)
+    plexAccountId: varchar('plex_account_id', { length: 255 }),
     username: varchar('username', { length: 255 }).notNull(), // Username on this server
     email: varchar('email', { length: 255 }), // Email from server sync (may differ from users.email)
     thumbUrl: text('thumb_url'), // Avatar from server
@@ -216,6 +219,8 @@ export const serverUsers = pgTable(
     index('server_users_user_idx').on(table.userId),
     index('server_users_server_idx').on(table.serverId),
     index('server_users_username_idx').on(table.username),
+    // For Plex sync matching by plex.tv account ID
+    index('server_users_plex_account_idx').on(table.serverId, table.plexAccountId),
   ]
 );
 

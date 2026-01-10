@@ -251,7 +251,7 @@ export async function requireServerUserById(id: string): Promise<ServerUser> {
 }
 
 /**
- * Get server user by server ID and external ID (Plex/Jellyfin user ID)
+ * Get server user by server ID and external ID (local PMS ID / Jellyfin ID)
  */
 export async function getServerUserByExternalId(
   serverId: string,
@@ -261,6 +261,38 @@ export async function getServerUserByExternalId(
     .select()
     .from(serverUsers)
     .where(and(eq(serverUsers.serverId, serverId), eq(serverUsers.externalId, externalId)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Get server user by server ID and Plex account ID (plex.tv ID)
+ * Used for Plex sync which uses plex.tv IDs instead of local PMS IDs
+ */
+export async function getServerUserByPlexAccountId(
+  serverId: string,
+  plexAccountId: string
+): Promise<ServerUser | null> {
+  const rows = await db
+    .select()
+    .from(serverUsers)
+    .where(and(eq(serverUsers.serverId, serverId), eq(serverUsers.plexAccountId, plexAccountId)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Get server user by server ID and username
+ * Used as fallback for linking Plex sync users to existing serverUsers
+ */
+export async function getServerUserByUsername(
+  serverId: string,
+  username: string
+): Promise<ServerUser | null> {
+  const rows = await db
+    .select()
+    .from(serverUsers)
+    .where(and(eq(serverUsers.serverId, serverId), eq(serverUsers.username, username)))
     .limit(1);
   return rows[0] ?? null;
 }
@@ -446,24 +478,128 @@ export async function incrementServerUserSessionCount(serverUserId: string): Pro
 // Sync Operations (Creates both user identity and server user)
 // ============================================================================
 
+export interface SyncUserOptions {
+  /** Set to true when syncing from Plex (uses plex.tv IDs) */
+  isPlexServer?: boolean;
+}
+
 /**
  * Sync a user from media server - handles auto-linking by email
  *
- * Flow:
+ * Flow for Jellyfin/Emby:
  * 1. Check if server_user exists by (serverId, externalId)
  * 2. If exists: update server_user
- * 3. If new:
- *    a. Try to find existing user identity by email match
- *    b. If no match: create new user identity
- *    c. Create server_user linked to user
+ * 3. If new: create user + server_user
  *
- * Returns { serverUser, user, created: boolean }
+ * Flow for Plex (isPlexServer=true):
+ * 1. mediaUser.id is a plex.tv ID, NOT a local PMS ID
+ * 2. Check if server_user exists by plexAccountId
+ * 3. If not found, try to match by username (link existing users created by poller)
+ * 4. If found: update metadata and set plexAccountId
+ * 5. If new: skip creation (let poller create when user streams)
+ *
+ * Returns { serverUser, user, created: boolean } or null if skipped
  */
 export async function syncUserFromMediaServer(
   serverId: string,
-  mediaUser: MediaUser
-): Promise<{ serverUser: ServerUser; user: User; created: boolean }> {
-  // Check for existing server user
+  mediaUser: MediaUser,
+  options: SyncUserOptions = {}
+): Promise<{ serverUser: ServerUser; user: User; created: boolean } | null> {
+  const { isPlexServer = false } = options;
+
+  if (isPlexServer) {
+    // For Plex: mediaUser.id is plex.tv ID
+    // Shared users: plex.tv ID = local PMS ID (same!)
+    // Owner: plex.tv ID ≠ local PMS ID (owner is always "1" locally)
+
+    // Try plexAccountId first (already synced users)
+    let existing = await getServerUserByPlexAccountId(serverId, mediaUser.id);
+
+    // Try externalId - for shared users, plex.tv ID = local PMS ID
+    if (!existing) {
+      existing = await getServerUserByExternalId(serverId, mediaUser.id);
+    }
+
+    // Username fallback (display name vs login name may differ)
+    if (!existing) {
+      existing = await getServerUserByUsername(serverId, mediaUser.username);
+    }
+
+    if (existing) {
+      // Update existing server user and set plexAccountId
+      const updated = await db
+        .update(serverUsers)
+        .set({
+          username: mediaUser.username,
+          email: mediaUser.email ?? null,
+          thumbUrl: mediaUser.thumb ?? null,
+          isServerAdmin: mediaUser.isAdmin,
+          plexAccountId: mediaUser.id, // Set plex.tv ID
+          joinedAt: mediaUser.joinedAt ?? existing.joinedAt,
+          updatedAt: new Date(),
+        })
+        .where(eq(serverUsers.id, existing.id))
+        .returning();
+
+      const user = await requireUserById(existing.userId);
+      return { serverUser: updated[0]!, user, created: false };
+    }
+
+    // Create new Plex user
+    // For shared users: plex.tv ID = local PMS ID, so use mediaUser.id for both
+    // For owner (isAdmin): should already exist from OAuth, but handle edge case
+    const externalId = mediaUser.isAdmin ? '1' : mediaUser.id;
+
+    const result = await db.transaction(async (tx) => {
+      let user: User | undefined;
+
+      // Try to find existing user by email match
+      if (mediaUser.email) {
+        const [existingUser] = await tx
+          .select()
+          .from(users)
+          .where(eq(users.email, mediaUser.email))
+          .limit(1);
+        user = existingUser;
+      }
+
+      // No match - create new user identity
+      if (!user) {
+        const [newUser] = await tx
+          .insert(users)
+          .values({
+            username: mediaUser.username,
+            name: null,
+            email: mediaUser.email ?? null,
+            thumbnail: mediaUser.thumb ?? null,
+          })
+          .returning();
+        user = newUser!;
+      }
+
+      // Create server user with dual IDs for Plex
+      const [serverUser] = await tx
+        .insert(serverUsers)
+        .values({
+          userId: user.id,
+          serverId,
+          externalId,
+          plexAccountId: mediaUser.id,
+          username: mediaUser.username,
+          email: mediaUser.email ?? null,
+          thumbUrl: mediaUser.thumb ?? null,
+          isServerAdmin: mediaUser.isAdmin,
+          joinedAt: mediaUser.joinedAt ?? null,
+        })
+        .returning();
+
+      return { serverUser: serverUser!, user };
+    });
+
+    return { serverUser: result.serverUser, user: result.user, created: true };
+  }
+
+  // For Jellyfin/Emby: original flow using externalId
   const existing = await getServerUserByExternalId(serverId, mediaUser.id);
 
   if (existing) {
@@ -535,23 +671,27 @@ export async function syncUserFromMediaServer(
  */
 export async function batchSyncUsersFromMediaServer(
   serverId: string,
-  mediaUsers: MediaUser[]
-): Promise<{ added: number; updated: number }> {
-  if (mediaUsers.length === 0) return { added: 0, updated: 0 };
+  mediaUsers: MediaUser[],
+  options: SyncUserOptions = {}
+): Promise<{ added: number; updated: number; skipped: number }> {
+  if (mediaUsers.length === 0) return { added: 0, updated: 0, skipped: 0 };
 
   let added = 0;
   let updated = 0;
+  let skipped = 0;
 
   for (const mediaUser of mediaUsers) {
-    const result = await syncUserFromMediaServer(serverId, mediaUser);
-    if (result.created) {
+    const result = await syncUserFromMediaServer(serverId, mediaUser, options);
+    if (result === null) {
+      skipped++;
+    } else if (result.created) {
       added++;
     } else {
       updated++;
     }
   }
 
-  return { added, updated };
+  return { added, updated, skipped };
 }
 
 // ============================================================================

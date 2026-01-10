@@ -533,9 +533,10 @@ describe('syncUserFromMediaServer', () => {
 
     const result = await syncUserFromMediaServer(serverId, mediaUser);
 
-    expect(result.created).toBe(true);
-    expect(result.serverUser.externalId).toBe(mediaUser.id);
-    expect(result.user.id).toBe(userId);
+    expect(result).not.toBeNull();
+    expect(result!.created).toBe(true);
+    expect(result!.serverUser.externalId).toBe(mediaUser.id);
+    expect(result!.user.id).toBe(userId);
   });
 
   it('should update existing server user when exists', async () => {
@@ -576,8 +577,9 @@ describe('syncUserFromMediaServer', () => {
 
     const result = await syncUserFromMediaServer(serverId, mediaUser);
 
-    expect(result.created).toBe(false);
-    expect(result.serverUser.username).toBe(mediaUser.username);
+    expect(result).not.toBeNull();
+    expect(result!.created).toBe(false);
+    expect(result!.serverUser.username).toBe(mediaUser.username);
   });
 });
 
@@ -642,7 +644,7 @@ describe('batchSyncUsersFromMediaServer', () => {
   it('should return zeros for empty input', async () => {
     const result = await batchSyncUsersFromMediaServer(randomUUID(), []);
 
-    expect(result).toEqual({ added: 0, updated: 0 });
+    expect(result).toEqual({ added: 0, updated: 0, skipped: 0 });
     expect(db.insert).not.toHaveBeenCalled();
   });
 
