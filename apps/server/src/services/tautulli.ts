@@ -102,6 +102,8 @@ export const TautulliHistoryRecordSchema = z.object({
   session_key: z.union([z.null(), z.coerce.number()]), // Null first, then coerce string/number
 });
 
+// Response schema with raw data array - individual records validated separately
+// This allows the import to continue even if some records have unexpected data
 export const TautulliHistoryResponseSchema = z.object({
   response: z.object({
     result: z.string(),
@@ -109,7 +111,7 @@ export const TautulliHistoryResponseSchema = z.object({
     data: z.object({
       recordsFiltered: z.number(),
       recordsTotal: z.number(),
-      data: z.array(TautulliHistoryRecordSchema),
+      data: z.array(z.unknown()), // Validate records individually during processing
       draw: z.number(),
       filter_duration: z.string(),
       total_duration: z.string(),
@@ -429,11 +431,12 @@ export class TautulliService {
 
   /**
    * Get paginated history from Tautulli
+   * Returns raw records (unknown[]) - caller must validate each record individually
    */
   async getHistory(
     start: number = 0,
     length: number = PAGE_SIZE
-  ): Promise<{ records: TautulliHistoryRecord[]; total: number }> {
+  ): Promise<{ records: unknown[]; total: number }> {
     const result = await this.request<TautulliHistoryResponse>(
       'get_history',
       {
@@ -655,16 +658,32 @@ export class TautulliService {
         geoCache = new Map();
       }
 
-      const { records } = await tautulli.getHistory(page * PAGE_SIZE, PAGE_SIZE);
+      const { records: rawRecords } = await tautulli.getHistory(page * PAGE_SIZE, PAGE_SIZE);
 
       // Track actual records fetched (may differ from API total if records changed)
-      progress.fetchedRecords += records.length;
+      progress.fetchedRecords += rawRecords.length;
+
+      // Validate records individually - skip bad records instead of failing entire page
+      const validRecords: TautulliHistoryRecord[] = [];
+      for (const raw of rawRecords) {
+        const parsed = TautulliHistoryRecordSchema.safeParse(raw);
+        if (parsed.success) {
+          validRecords.push(parsed.data);
+        } else {
+          // Log first error for debugging, count as error
+          const refId = (raw as Record<string, unknown>)?.reference_id ?? 'unknown';
+          console.warn(`[Tautulli] Skipping malformed record ${refId}:`, parsed.error.issues[0]);
+          errors++;
+          progress.errorRecords++;
+          progress.processedRecords++;
+        }
+      }
 
       // === Per-page dedup queries using shared modules ===
       const pageRefIds: string[] = [];
       const pageTimeKeys: Array<{ serverUserId: string; ratingKey: string; startedAt: Date }> = [];
 
-      for (const record of records) {
+      for (const record of validRecords) {
         if (record.reference_id !== null) {
           pageRefIds.push(String(record.reference_id));
         }
@@ -683,7 +702,7 @@ export class TautulliService {
       const sessionByExternalId = await queryExistingByExternalIds(serverId, pageRefIds);
       const sessionByTimeKey = await queryExistingByTimeKeys(serverId, pageTimeKeys);
 
-      for (const record of records) {
+      for (const record of validRecords) {
         progress.processedRecords++;
 
         try {
