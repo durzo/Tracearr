@@ -31,12 +31,15 @@ export function useDebouncedSave<K extends keyof Settings>(
   const lastSavedRef = useRef<Settings[K] | undefined>(serverValue);
   const hasErrorRef = useRef(false);
   const userHasEditedRef = useRef(false);
+  const isSavingRef = useRef(false);
 
   const performSave = useCallback(
     (valueToSave: Settings[K] | undefined) => {
+      isSavingRef.current = true;
       setStatus('saving');
       updateSettings.mutate({ [key]: valueToSave ?? null } as Partial<Settings>, {
         onSuccess: () => {
+          isSavingRef.current = false;
           lastSavedRef.current = valueToSave;
           hasErrorRef.current = false;
           setErrorMessage(null);
@@ -48,6 +51,7 @@ export function useDebouncedSave<K extends keyof Settings>(
           statusTimeoutRef.current = setTimeout(() => setStatus('idle'), 2000);
         },
         onError: (err) => {
+          isSavingRef.current = false;
           hasErrorRef.current = true;
           setErrorMessage(err.message || 'Failed to save');
           setStatus('error');
@@ -90,10 +94,6 @@ export function useDebouncedSave<K extends keyof Settings>(
       return;
     }
 
-    if (status === 'saving') {
-      return;
-    }
-
     // Clear any existing timeout
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
@@ -104,9 +104,20 @@ export function useDebouncedSave<K extends keyof Settings>(
       setErrorMessage(null);
     }
 
+    // Show saving indicator during debounce
     setStatus('saving');
 
     timeoutRef.current = setTimeout(() => {
+      // Check if a save is already in progress
+      if (isSavingRef.current) {
+        // Schedule another check after the current save completes
+        timeoutRef.current = setTimeout(() => {
+          if (value !== lastSavedRef.current) {
+            performSave(value);
+          }
+        }, delay);
+        return;
+      }
       performSave(value);
     }, delay);
 
@@ -115,7 +126,7 @@ export function useDebouncedSave<K extends keyof Settings>(
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [value, delay, performSave, status]);
+  }, [value, delay, performSave]);
 
   const setValueWithTracking = useCallback((newValue: Settings[K] | undefined) => {
     userHasEditedRef.current = true;
