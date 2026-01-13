@@ -189,15 +189,15 @@ describe('NotificationManager', () => {
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
 
-      // Verify pushover url
+      // Verify pushover POST body
       const callArgs = mockFetch.mock.calls[0]!;
-      const url = new URL(callArgs[0]);
-      const searchParams = url.searchParams;
-      expect(searchParams.get('user')).toBe('pushover-user-key');
-      expect(searchParams.get('token')).toBe('pushover-api-token');
-      expect(searchParams.get('title')).toBe('Violation Detected');
-      expect(searchParams.get('message')).toContain('Test User');
-      expect(searchParams.get('priority')).toBe('0');
+      expect(callArgs[0]).toBe('https://api.pushover.net/1/messages.json');
+      const body = new URLSearchParams(callArgs[1].body);
+      expect(body.get('user')).toBe('pushover-user-key');
+      expect(body.get('token')).toBe('pushover-api-token');
+      expect(body.get('title')).toBe('Violation Detected');
+      expect(body.get('message')).toContain('Test User');
+      expect(body.get('priority')).toBe('0');
     });
 
     it('sends custom webhook with json format', async () => {
@@ -278,21 +278,21 @@ describe('NotificationManager', () => {
       await manager.notifyServerDown('Plex Server', settings);
 
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('https://api.pushover.net/1/messages.json'),
+        'https://api.pushover.net/1/messages.json',
         expect.objectContaining({
           method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         })
       );
 
-      // Verify pushover url
+      // Verify pushover POST body
       const callArgs = mockFetch.mock.calls[0]!;
-      const url = new URL(callArgs[0]);
-      const searchParams = url.searchParams;
-      expect(searchParams.get('user')).toBe('pushover-user-key');
-      expect(searchParams.get('token')).toBe('pushover-api-token');
-      expect(searchParams.get('title')).toBe('Server Offline');
-      expect(searchParams.get('message')).toContain('Plex Server');
-      expect(searchParams.get('priority')).toBe('1'); // High priority for server down
+      const body = new URLSearchParams(callArgs[1].body);
+      expect(body.get('user')).toBe('pushover-user-key');
+      expect(body.get('token')).toBe('pushover-api-token');
+      expect(body.get('title')).toBe('Server Offline');
+      expect(body.get('message')).toContain('Plex Server');
+      expect(body.get('priority')).toBe('1'); // High priority for server down
     });
   });
 
@@ -337,21 +337,21 @@ describe('NotificationManager', () => {
       await manager.notifyServerUp('Plex Server', settings);
 
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('https://api.pushover.net/1/messages.json'),
+        'https://api.pushover.net/1/messages.json',
         expect.objectContaining({
           method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         })
       );
 
-      // Verify pushover url
+      // Verify pushover POST body
       const callArgs = mockFetch.mock.calls[0]!;
-      const url = new URL(callArgs[0]);
-      const searchParams = url.searchParams;
-      expect(searchParams.get('user')).toBe('pushover-user-key');
-      expect(searchParams.get('token')).toBe('pushover-api-token');
-      expect(searchParams.get('title')).toBe('Server Online');
-      expect(searchParams.get('message')).toContain('Plex Server');
-      expect(searchParams.get('priority')).toBe('1');
+      const body = new URLSearchParams(callArgs[1].body);
+      expect(body.get('user')).toBe('pushover-user-key');
+      expect(body.get('token')).toBe('pushover-api-token');
+      expect(body.get('title')).toBe('Server Online');
+      expect(body.get('message')).toContain('Plex Server');
+      expect(body.get('priority')).toBe('1');
     });
   });
 
@@ -415,22 +415,22 @@ describe('NotificationManager', () => {
       );
 
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('https://api.pushover.net/1/messages.json'),
+        'https://api.pushover.net/1/messages.json',
         expect.objectContaining({
           method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         })
       );
 
-      // Verify pushover url
+      // Verify pushover POST body
       const callArgs = mockFetch.mock.calls[0]!;
-      const url = new URL(callArgs[0]);
-      const searchParams = url.searchParams;
-      expect(searchParams.get('user')).toBe('pushover-user-key');
-      expect(searchParams.get('token')).toBe('pushover-api-token');
-      expect(searchParams.get('title')).toBe('Stream Started');
-      expect(searchParams.get('message')).toContain('Test User');
-      expect(searchParams.get('message')).toContain('Test Movie');
-      expect(searchParams.get('priority')).toBe('-1');
+      const body = new URLSearchParams(callArgs[1].body);
+      expect(body.get('user')).toBe('pushover-user-key');
+      expect(body.get('token')).toBe('pushover-api-token');
+      expect(body.get('title')).toBe('Stream Started');
+      expect(body.get('message')).toContain('Test User');
+      expect(body.get('message')).toContain('Test Movie');
+      expect(body.get('priority')).toBe('-1');
     });
   });
 });
