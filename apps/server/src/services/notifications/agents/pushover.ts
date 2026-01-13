@@ -206,14 +206,19 @@ export class PushoverAgent extends BaseAgent {
     message: string,
     priority: string
   ): Promise<void> {
-    const url = new URL(this.PUSHOVER_API_URL);
-    url.searchParams.set('token', apiToken);
-    url.searchParams.set('user', userKey);
-    url.searchParams.set('title', title);
-    url.searchParams.set('message', message);
-    url.searchParams.set('priority', priority);
+    const body = new URLSearchParams({
+      token: apiToken,
+      user: userKey,
+      title,
+      message,
+      priority,
+    });
 
-    const response = await fetch(url.toString(), { method: 'POST' });
+    const response = await fetch(this.PUSHOVER_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');

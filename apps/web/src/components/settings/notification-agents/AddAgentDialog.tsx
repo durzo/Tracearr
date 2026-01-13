@@ -233,10 +233,10 @@ export function AddAgentDialog({
           <DialogDescription>Choose a notification service and configure it.</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 overflow-hidden py-2">
+        <div className="flex flex-col gap-4 py-2">
           {/* Agent type selector */}
           {!selectedType && (
-            <div className="space-y-4">
+            <div className="flex flex-col gap-4">
               {/* Discord - standalone */}
               {discord && (
                 <AgentOptionButton
@@ -286,7 +286,7 @@ export function AddAgentDialog({
 
           {/* Configuration fields */}
           {selectedConfig && (
-            <div className="space-y-4">
+            <div className="flex flex-col gap-4">
               <div className="flex items-center gap-3 border-b pb-3">
                 <Button
                   variant="ghost"

@@ -149,7 +149,7 @@ export function EditAgentDialog({ open, onOpenChange, agentType, settings }: Edi
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
+        <div className="flex flex-col gap-4 py-2">
           {config.fields.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               No configuration available for this agent.
