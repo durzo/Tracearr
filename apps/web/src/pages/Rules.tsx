@@ -33,6 +33,7 @@ import {
   Zap,
   Users,
   Globe,
+  Clock,
   Power,
   PowerOff,
 } from 'lucide-react';
@@ -89,6 +90,12 @@ const RULE_TYPES: { value: RuleType; label: string; icon: React.ReactNode; descr
       icon: <Globe className="h-4 w-4" />,
       description: 'Block streaming from specific countries',
     },
+    {
+      value: 'account_inactivity',
+      label: 'Account Inactivity',
+      icon: <Clock className="h-4 w-4" />,
+      description: 'Get notified when users have not watched anything for a specified period',
+    },
   ];
 
 const DEFAULT_PARAMS: Record<RuleType, RuleParams> = {
@@ -97,6 +104,10 @@ const DEFAULT_PARAMS: Record<RuleType, RuleParams> = {
   device_velocity: { maxIps: 5, windowHours: 24, excludePrivateIps: false, groupByDevice: false },
   concurrent_streams: { maxStreams: 3, excludePrivateIps: false },
   geo_restriction: { mode: 'blocklist', countries: [], excludePrivateIps: false },
+  account_inactivity: {
+    inactivityValue: 30,
+    inactivityUnit: 'days',
+  },
 };
 
 interface RuleFormData {
@@ -352,6 +363,52 @@ function RuleParamsForm({
           onChange={onChange}
         />
       );
+    case 'account_inactivity': {
+      const inactivityParams = params as {
+        inactivityValue: number;
+        inactivityUnit: 'days' | 'weeks' | 'months';
+      };
+      return (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="inactivityValue">Inactivity Period</Label>
+              <Input
+                id="inactivityValue"
+                type="number"
+                min={1}
+                value={inactivityParams.inactivityValue}
+                onChange={(e) => {
+                  onChange({ ...params, inactivityValue: parseInt(e.target.value) || 1 });
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="inactivityUnit">Unit</Label>
+              <Select
+                value={inactivityParams.inactivityUnit}
+                onValueChange={(v) => {
+                  onChange({ ...params, inactivityUnit: v as 'days' | 'weeks' | 'months' });
+                }}
+              >
+                <SelectTrigger id="inactivityUnit">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="days">Days</SelectItem>
+                  <SelectItem value="weeks">Weeks</SelectItem>
+                  <SelectItem value="months">Months</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <p className="text-muted-foreground text-xs">
+            Creates an alert when a user has not watched anything for this period. Checks run
+            hourly.
+          </p>
+        </div>
+      );
+    }
     default:
       return null;
   }
@@ -562,6 +619,18 @@ function RuleCard({
                       <span>
                         {mode === 'allowlist' ? 'Allowed' : 'Blocked'}:{' '}
                         {countryNames.join(', ') || 'None'}
+                      </span>
+                    );
+                  })()}
+                {rule.type === 'account_inactivity' &&
+                  (() => {
+                    const p = rule.params as {
+                      inactivityValue: number;
+                      inactivityUnit: string;
+                    };
+                    return (
+                      <span>
+                        Inactive for {p.inactivityValue} {p.inactivityUnit}
                       </span>
                     );
                   })()}
