@@ -31,7 +31,7 @@ export function LibraryQuality() {
       case 'year':
         return '1y';
       case 'all':
-        return '1y'; // Default to 1y for "all" since API has limits
+        return 'all';
       default:
         return '30d';
     }

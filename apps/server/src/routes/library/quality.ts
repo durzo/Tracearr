@@ -1,12 +1,15 @@
 /**
  * Library Quality Evolution Route
  *
- * GET /quality - Quality distribution over time from library_stats_daily aggregate
+ * GET /quality - Quality distribution over time from library_items
+ *
+ * Uses library_items.video_resolution and created_at for accurate quality tracking
+ * based on when items were actually added to the media server.
  *
  * Supports filtering by media type:
  * - 'all': All video content (movies + TV)
- * - 'movies': Only movie libraries
- * - 'shows': Only TV libraries
+ * - 'movies': Only movies
+ * - 'shows': Only episodes
  */
 
 import type { FastifyPluginAsync } from 'fastify';
@@ -20,7 +23,7 @@ import {
 } from '@tracearr/shared';
 import { db } from '../../db/client.js';
 import { validateServerAccess } from '../../utils/serverFiltering.js';
-import { buildLibraryServerFilter, buildLibraryCacheKey } from './utils.js';
+import { buildLibraryCacheKey } from './utils.js';
 
 /** Single data point in quality timeline */
 interface QualityDataPoint {
@@ -121,49 +124,107 @@ export const libraryQualityRoute: FastifyPluginAsync = async (app) => {
 
       // Calculate date range
       const startDate = getStartDate(period);
+      const endDate = new Date();
 
-      // Build server filter
-      const serverFilter = buildLibraryServerFilter(serverId, authUser);
+      // Build server filter for library_items table
+      const serverFilter = serverId
+        ? sql`AND li.server_id = ${serverId}::uuid`
+        : authUser.serverIds?.length
+          ? sql`AND li.server_id = ANY(${authUser.serverIds}::uuid[])`
+          : sql``;
 
-      // Date filter (only if not 'all')
-      const dateFilter = startDate ? sql`AND day >= ${startDate.toISOString()}::date` : sql``;
-
-      // Media type filter - determines which libraries to include
-      // Libraries are classified by their content:
-      // - Movie libraries: movie_count > 0 AND episode_count = 0
-      // - TV libraries: episode_count > 0 (may have some movies as specials)
-      // - Music libraries: excluded (no video quality metrics)
+      // Media type filter - filter by item type
       let mediaTypeFilter: ReturnType<typeof sql>;
       switch (mediaType) {
         case 'movies':
-          mediaTypeFilter = sql`AND movie_count > 0 AND episode_count = 0`;
+          mediaTypeFilter = sql`AND li.media_type = 'movie'`;
           break;
         case 'shows':
-          mediaTypeFilter = sql`AND episode_count > 0`;
+          mediaTypeFilter = sql`AND li.media_type = 'episode'`;
           break;
         case 'all':
         default:
-          // Exclude music-only libraries (no video quality data)
-          mediaTypeFilter = sql`AND (movie_count > 0 OR episode_count > 0)`;
+          // Include movies and episodes (video content only)
+          mediaTypeFilter = sql`AND li.media_type IN ('movie', 'episode')`;
           break;
       }
 
-      // Query library_stats_daily aggregate with media type filtering
-      // This aggregate has per-library data, allowing us to filter by library type
+      // For 'all' period, find the earliest item date from the database
+      // Match storage route exactly - use file_size filter, no media type filter
+      // This ensures date range is consistent across all library charts
+      let effectiveStartDate: Date;
+      if (startDate) {
+        effectiveStartDate = startDate;
+      } else {
+        const earliestResult = await db.execute(sql`
+          SELECT MIN(created_at)::date AS earliest
+          FROM library_items li
+          WHERE li.file_size IS NOT NULL
+            ${serverFilter}
+        `);
+        const earliest = (earliestResult.rows[0] as { earliest: string | null })?.earliest;
+        effectiveStartDate = earliest ? new Date(earliest) : new Date('2020-01-01');
+      }
+
+      // Query with continuous date series for cumulative quality calculation
       const result = await db.execute(sql`
+        WITH date_series AS (
+          -- Generate all dates in the range
+          SELECT d::date AS day
+          FROM generate_series(
+            ${effectiveStartDate.toISOString()}::date,
+            ${endDate.toISOString()}::date,
+            '1 day'::interval
+          ) d
+        ),
+        quality_before_period AS (
+          -- Count of items by quality BEFORE the period
+          SELECT
+            COALESCE(SUM(CASE WHEN li.video_resolution = '4k' THEN 1 ELSE 0 END), 0)::int AS count_4k_before,
+            COALESCE(SUM(CASE WHEN li.video_resolution = '1080p' THEN 1 ELSE 0 END), 0)::int AS count_1080p_before,
+            COALESCE(SUM(CASE WHEN li.video_resolution = '720p' THEN 1 ELSE 0 END), 0)::int AS count_720p_before,
+            COALESCE(SUM(CASE WHEN li.video_resolution IN ('480p', 'sd') OR (li.video_resolution IS NOT NULL AND li.video_resolution NOT IN ('4k', '1080p', '720p')) THEN 1 ELSE 0 END), 0)::int AS count_sd_before
+          FROM library_items li
+          WHERE li.video_resolution IS NOT NULL
+            ${serverFilter}
+            ${mediaTypeFilter}
+            AND li.created_at < ${effectiveStartDate.toISOString()}::timestamptz
+        ),
+        daily_additions AS (
+          -- Count of items added per day by quality
+          SELECT
+            DATE(li.created_at AT TIME ZONE ${tz}) AS day,
+            COALESCE(SUM(CASE WHEN li.video_resolution = '4k' THEN 1 ELSE 0 END), 0)::int AS added_4k,
+            COALESCE(SUM(CASE WHEN li.video_resolution = '1080p' THEN 1 ELSE 0 END), 0)::int AS added_1080p,
+            COALESCE(SUM(CASE WHEN li.video_resolution = '720p' THEN 1 ELSE 0 END), 0)::int AS added_720p,
+            COALESCE(SUM(CASE WHEN li.video_resolution IN ('480p', 'sd') OR (li.video_resolution IS NOT NULL AND li.video_resolution NOT IN ('4k', '1080p', '720p')) THEN 1 ELSE 0 END), 0)::int AS added_sd
+          FROM library_items li
+          WHERE li.video_resolution IS NOT NULL
+            ${serverFilter}
+            ${mediaTypeFilter}
+            AND li.created_at >= ${effectiveStartDate.toISOString()}::timestamptz
+          GROUP BY 1
+        ),
+        filled_data AS (
+          -- Join grid with actual data, fill nulls with 0
+          SELECT
+            ds.day,
+            COALESCE(da.added_4k, 0)::int AS added_4k,
+            COALESCE(da.added_1080p, 0)::int AS added_1080p,
+            COALESCE(da.added_720p, 0)::int AS added_720p,
+            COALESCE(da.added_sd, 0)::int AS added_sd
+          FROM date_series ds
+          LEFT JOIN daily_additions da ON da.day = ds.day
+        )
         SELECT
-          day::text AS day,
-          COALESCE(SUM(count_4k), 0)::int AS count_4k,
-          COALESCE(SUM(count_1080p), 0)::int AS count_1080p,
-          COALESCE(SUM(count_720p), 0)::int AS count_720p,
-          COALESCE(SUM(count_sd), 0)::int AS count_sd
-        FROM library_stats_daily
-        WHERE true
-          ${serverFilter}
-          ${dateFilter}
-          ${mediaTypeFilter}
-        GROUP BY day
-        ORDER BY day ASC
+          fd.day::text,
+          (qbp.count_4k_before + SUM(fd.added_4k) OVER (ORDER BY fd.day))::int AS count_4k,
+          (qbp.count_1080p_before + SUM(fd.added_1080p) OVER (ORDER BY fd.day))::int AS count_1080p,
+          (qbp.count_720p_before + SUM(fd.added_720p) OVER (ORDER BY fd.day))::int AS count_720p,
+          (qbp.count_sd_before + SUM(fd.added_sd) OVER (ORDER BY fd.day))::int AS count_sd
+        FROM filled_data fd
+        CROSS JOIN quality_before_period qbp
+        ORDER BY fd.day ASC
       `);
 
       const rows = result.rows as Array<{
