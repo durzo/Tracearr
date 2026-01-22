@@ -19,18 +19,8 @@ let isSetup = false;
 export async function setupTestDb(): Promise<void> {
   if (isSetup) return;
 
-  const pool = getTestPool();
-
-  // Verify connection
-  try {
-    const client = await pool.connect();
-    await client.query('SELECT 1');
-    client.release();
-  } catch (error) {
-    throw new Error(
-      `Failed to connect to test database. Ensure TimescaleDB is running. Error: ${error instanceof Error ? error.message : error}`
-    );
-  }
+  // Wait for database to be ready (handles CI startup delays)
+  await waitForTestDb(30, 1000);
 
   // Enable TimescaleDB extension (if available)
   try {
