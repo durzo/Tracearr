@@ -410,11 +410,19 @@ async function continuousAggregateExists(name: string): Promise<boolean> {
  * continuous aggregates - it throws "invalid continuous aggregate view"
  * instead of being a no-op when the view already exists.
  */
+// Library aggregates that require library_snapshots to be a hypertable
+const LIBRARY_AGGREGATES = ['library_stats_daily', 'content_quality_daily'];
+
 async function createAggregate(def: AggregateDefinition, hasToolkit: boolean): Promise<void> {
   // Check if aggregate already exists - skip if so
   const exists = await continuousAggregateExists(def.name);
   if (exists) {
     return;
+  }
+
+  // Library aggregates require library_snapshots to be a hypertable
+  if (LIBRARY_AGGREGATES.includes(def.name)) {
+    await initLibrarySnapshotsHypertable();
   }
 
   const sqlStatement = hasToolkit ? def.toolkitSql : def.fallbackSql;
@@ -1113,15 +1121,6 @@ export async function initTimescaleDB(): Promise<{
     actions.push('Content indexes: some may already exist');
   }
 
-  // Initialize library_snapshots hypertable (for library statistics feature)
-  try {
-    const librarySnapshotsResult = await initLibrarySnapshotsHypertable();
-    actions.push(...librarySnapshotsResult.actions);
-  } catch (err) {
-    console.warn('Failed to initialize library_snapshots hypertable:', err);
-    actions.push('library_snapshots hypertable: initialization skipped (table may not exist yet)');
-  }
-
   // Ensure engagement views exist (fixes broken installs and fresh installs)
   // These views depend on daily_content_engagement continuous aggregate
   try {
@@ -1434,14 +1433,12 @@ export async function rebuildTimescaleViews(
       await db.execute(sql.raw(`DROP MATERIALIZED VIEW IF EXISTS ${def.name} CASCADE`));
     }
 
-    // Step 2: Check for toolkit and ensure prerequisites
-    report(2, 'Checking prerequisites...');
+    // Step 2: Check for toolkit
+    report(2, 'Checking TimescaleDB Toolkit availability...');
     const hasToolkit = await isToolkitInstalled();
 
-    // Ensure library_snapshots is a hypertable before creating library aggregates
-    await initLibrarySnapshotsHypertable();
-
     // Step 3: Recreate all continuous aggregates with current definitions
+    // Note: createAggregate() ensures library_snapshots hypertable exists for library aggregates
     report(3, 'Creating continuous aggregates with updated definitions...');
     for (const def of definitions) {
       await createAggregate(def, hasToolkit);
