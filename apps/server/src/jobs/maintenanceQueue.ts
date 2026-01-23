@@ -1481,6 +1481,24 @@ async function processBackfillLibrarySnapshotsJob(
       }
     }
 
+    // Clean up empty snapshots (from bad dates like 1969/1970 or gaps before real data)
+    activeJobProgress.message = 'Cleaning up empty snapshots...';
+    await publishProgress();
+
+    const cleanupResult = await db.execute(sql`
+      DELETE FROM library_snapshots
+      WHERE (item_count = 0
+        AND movie_count = 0
+        AND episode_count = 0
+        AND show_count = 0
+        AND music_count = 0)
+        OR total_size = 0
+    `);
+    const cleanedUp = Number(cleanupResult.rowCount ?? 0);
+    if (cleanedUp > 0) {
+      console.log(`[Maintenance] Cleaned up ${cleanedUp} empty snapshots`);
+    }
+
     // Refresh the continuous aggregate to include backfilled data
     activeJobProgress.message = 'Refreshing library_stats_daily continuous aggregate...';
     await publishProgress();
@@ -1500,7 +1518,8 @@ async function processBackfillLibrarySnapshotsJob(
     const durationMs = Date.now() - startTime;
     activeJobProgress.status = 'complete';
     activeJobProgress.processedRecords = totalProcessed;
-    activeJobProgress.message = `Completed! Created ${totalSnapshotsCreated.toLocaleString()} snapshots for ${totalProcessed} libraries in ${Math.round(durationMs / 1000)}s`;
+    activeJobProgress.skippedRecords = cleanedUp;
+    activeJobProgress.message = `Completed! Created ${totalSnapshotsCreated.toLocaleString()} snapshots for ${totalProcessed} libraries${cleanedUp > 0 ? `, cleaned up ${cleanedUp} empty` : ''} in ${Math.round(durationMs / 1000)}s`;
     activeJobProgress.completedAt = new Date().toISOString();
     await publishProgress();
 
@@ -1511,10 +1530,10 @@ async function processBackfillLibrarySnapshotsJob(
       type: 'backfill_library_snapshots',
       processed: totalProcessed,
       updated: totalSnapshotsCreated,
-      skipped: 0,
+      skipped: cleanedUp,
       errors: totalErrors,
       durationMs,
-      message: `Created ${totalSnapshotsCreated.toLocaleString()} snapshots for ${totalProcessed} libraries`,
+      message: `Created ${totalSnapshotsCreated.toLocaleString()} snapshots for ${totalProcessed} libraries${cleanedUp > 0 ? `, cleaned up ${cleanedUp} empty` : ''}`,
     };
   } catch (error) {
     if (activeJobProgress) {
