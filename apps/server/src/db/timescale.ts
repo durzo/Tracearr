@@ -937,20 +937,61 @@ async function enableCompression(): Promise<void> {
 }
 
 /**
- * Manually refresh all continuous aggregates
- * Call this after bulk data imports (e.g., Tautulli import) to make the data immediately available
+ * Options for refreshing continuous aggregates
  */
-export async function refreshAggregates(): Promise<void> {
+export interface RefreshAggregatesOptions {
+  /**
+   * If true, refresh entire aggregate history (expensive - scans all chunks).
+   * Use for bulk imports or backfill scenarios.
+   * Default: false (uses time-bounded refresh for recent data only)
+   */
+  fullRefresh?: boolean;
+  /**
+   * Start of time range to refresh. Only used if fullRefresh is false.
+   * Default: 7 days ago
+   */
+  startTime?: Date;
+  /**
+   * End of time range to refresh. Only used if fullRefresh is false.
+   * Default: now + 1 day (to include today's data)
+   */
+  endTime?: Date;
+}
+
+/**
+ * Manually refresh all continuous aggregates
+ *
+ * By default, uses time-bounded refresh (last 7 days) to avoid lock exhaustion.
+ * For bulk imports/backfill, pass { fullRefresh: true } to refresh entire history.
+ *
+ * @param options - Refresh options (fullRefresh, startTime, endTime)
+ */
+export async function refreshAggregates(options?: RefreshAggregatesOptions): Promise<void> {
   const hasExtension = await isTimescaleInstalled();
   if (!hasExtension) return;
 
   const aggregates = await getContinuousAggregates();
+  const fullRefresh = options?.fullRefresh ?? false;
+
+  // Default time bounds: last 7 days to tomorrow
+  const defaultStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const defaultEnd = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const startTime = options?.startTime ?? defaultStart;
+  const endTime = options?.endTime ?? defaultEnd;
 
   for (const aggregate of aggregates) {
     try {
-      // Refresh the entire aggregate (no time bounds = full refresh)
-      // Note: aggregate names come from pg_catalog query, safe to use in identifier position
-      await db.execute(sql`CALL refresh_continuous_aggregate(${aggregate}::regclass, NULL, NULL)`);
+      if (fullRefresh) {
+        // Full refresh - scans all chunks (expensive, use for backfill)
+        await db.execute(
+          sql`CALL refresh_continuous_aggregate(${aggregate}::regclass, NULL, NULL)`
+        );
+      } else {
+        // Time-bounded refresh - only scans relevant chunks (default)
+        await db.execute(
+          sql`CALL refresh_continuous_aggregate(${aggregate}::regclass, ${startTime}, ${endTime})`
+        );
+      }
     } catch (err) {
       // Log but don't fail - aggregate might not have data yet
       console.warn(`Failed to refresh aggregate ${aggregate}:`, err);

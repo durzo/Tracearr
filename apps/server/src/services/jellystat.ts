@@ -40,6 +40,7 @@ import {
   queryExistingByExternalIds,
   flushInsertBatch,
   createSimpleProgressPublisher,
+  type TimeBounds,
 } from './import/index.js';
 
 const BATCH_SIZE = 500;
@@ -679,8 +680,24 @@ export async function importJellystatBackup(
       const chunk = activities.slice(chunkStart, chunkStart + DEDUP_BATCH_SIZE);
 
       const chunkIds = chunk.map((a) => a.Id).filter(Boolean);
+
+      // Compute time bounds for this chunk to enable TimescaleDB chunk exclusion
+      // ActivityDateInserted is the end time; we use it directly for bounds
+      const chunkTimestamps = chunk
+        .map((a) => new Date(a.ActivityDateInserted).getTime())
+        .filter((t) => !isNaN(t));
+      const chunkTimeBounds: TimeBounds | undefined =
+        chunkTimestamps.length > 0
+          ? {
+              minTime: new Date(Math.min(...chunkTimestamps)),
+              maxTime: new Date(Math.max(...chunkTimestamps)),
+            }
+          : undefined;
+
       const existingMap =
-        chunkIds.length > 0 ? await queryExistingByExternalIds(serverId, chunkIds) : new Map();
+        chunkIds.length > 0
+          ? await queryExistingByExternalIds(serverId, chunkIds, chunkTimeBounds)
+          : new Map();
 
       const insertBatch: (typeof sessions.$inferInsert)[] = [];
       const updateBatch: Array<{ id: string; data: Partial<typeof sessions.$inferInsert> }> = [];
@@ -812,7 +829,8 @@ export async function importJellystatBackup(
     progress.message = 'Refreshing aggregates...';
     publishProgress(progress);
     try {
-      await refreshAggregates();
+      // Full refresh needed after bulk import to recalculate all historical data
+      await refreshAggregates({ fullRefresh: true });
     } catch (err) {
       console.warn('[Jellystat] Failed to refresh aggregates after import:', err);
     }

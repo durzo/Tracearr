@@ -736,13 +736,18 @@ export async function getUserWithStats(userId: string): Promise<UserWithStats | 
     const serverUserIdArray = sql.raw(
       `ARRAY[${serverUserIds.map((id) => `'${id}'::uuid`).join(',')}]`
     );
+    // Add time bounds to enable TimescaleDB chunk exclusion (prevents full hypertable scan)
+    // 10-year window covers all realistic historical data while enabling query optimization
+    const tenYearsAgo = new Date(Date.now() - 10 * 365 * 24 * 60 * 60 * 1000);
+    const now = new Date();
     const statsResult = await db
       .select({
         totalSessions: sql<number>`count(*)::int`,
         totalWatchTime: sql<number>`coalesce(sum(duration_ms), 0)::bigint`,
       })
-      .from(sessions)
-      .where(sql`${sessions.serverUserId} = ANY(${serverUserIdArray})`);
+      .from(sessions).where(sql`${sessions.serverUserId} = ANY(${serverUserIdArray})
+        AND ${sessions.startedAt} >= ${tenYearsAgo}
+        AND ${sessions.startedAt} <= ${now}`);
 
     const stats = statsResult[0];
     totalSessions = stats?.totalSessions ?? 0;

@@ -65,22 +65,61 @@ export interface DeduplicationConfig<T, TExternalId extends string | number> {
 }
 
 /**
+ * Time bounds for limiting chunk scans in TimescaleDB queries.
+ * Adding time bounds enables chunk exclusion, dramatically reducing locks.
+ */
+export interface TimeBounds {
+  minTime: Date;
+  maxTime: Date;
+}
+
+/**
+ * Default buffer to add around time bounds (1 day in milliseconds).
+ * This handles timezone edge cases and ensures we don't miss matches.
+ */
+const TIME_BOUNDS_BUFFER_MS = 24 * 60 * 60 * 1000;
+
+/**
  * Query existing sessions by external IDs
  *
  * Chunks the query to avoid PostgreSQL lock exhaustion with large IN clauses.
  * Each chunk runs in a separate query to minimize lock contention on TimescaleDB.
+ *
+ * IMPORTANT: Pass timeBounds when available to enable TimescaleDB chunk exclusion.
+ * Without time bounds, the query must scan indexes on ALL chunks.
  */
 export async function queryExistingByExternalIds(
   serverId: string,
-  externalIds: string[]
+  externalIds: string[],
+  timeBounds?: TimeBounds
 ): Promise<Map<string, ExistingSession>> {
   if (externalIds.length === 0) return new Map();
 
   const map = new Map<string, ExistingSession>();
 
+  // Add buffer to time bounds for safety
+  const minTime = timeBounds
+    ? new Date(timeBounds.minTime.getTime() - TIME_BOUNDS_BUFFER_MS)
+    : undefined;
+  const maxTime = timeBounds
+    ? new Date(timeBounds.maxTime.getTime() + TIME_BOUNDS_BUFFER_MS)
+    : undefined;
+
   // Process in chunks to avoid lock exhaustion
   for (let i = 0; i < externalIds.length; i += DEDUP_CHUNK_SIZE) {
     const chunk = externalIds.slice(i, i + DEDUP_CHUNK_SIZE);
+
+    // Build WHERE conditions
+    const conditions = [
+      eq(sessions.serverId, serverId),
+      inArray(sessions.externalSessionId, chunk),
+    ];
+
+    // Add time bounds if provided (enables TimescaleDB chunk exclusion)
+    if (minTime && maxTime) {
+      conditions.push(gte(sessions.startedAt, minTime));
+      conditions.push(lte(sessions.startedAt, maxTime));
+    }
 
     const existing = await db
       .select({
@@ -97,7 +136,7 @@ export async function queryExistingByExternalIds(
         sourceVideoCodec: sessions.sourceVideoCodec,
       })
       .from(sessions)
-      .where(and(eq(sessions.serverId, serverId), inArray(sessions.externalSessionId, chunk)));
+      .where(and(...conditions));
 
     for (const s of existing) {
       if (s.externalSessionId) {

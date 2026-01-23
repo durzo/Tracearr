@@ -225,32 +225,37 @@ async function processServerSessions(
     }
 
     // Batch create new server users (and their identity users)
+    // Wrapped in transaction to prevent orphan identity users if server user insert fails
     if (serverUsersToCreate.length > 0) {
-      // First, create identity users for each new server user
-      const newIdentityUsers = await db
-        .insert(users)
-        .values(
-          serverUsersToCreate.map((u) => ({
-            username: u.username, // Login identifier
-            name: u.username, // Use username as initial display name
-            thumbnail: u.thumbUrl,
-          }))
-        )
-        .returning();
+      const { newIdentityUsers, newServerUsers } = await db.transaction(async (tx) => {
+        // First, create identity users for each new server user
+        const identityUsers = await tx
+          .insert(users)
+          .values(
+            serverUsersToCreate.map((u) => ({
+              username: u.username, // Login identifier
+              name: u.username, // Use username as initial display name
+              thumbnail: u.thumbUrl,
+            }))
+          )
+          .returning();
 
-      // Then create server users linked to the identity users
-      const newServerUsers = await db
-        .insert(serverUsers)
-        .values(
-          serverUsersToCreate.map((u, idx) => ({
-            userId: newIdentityUsers[idx]!.id,
-            serverId: server.id,
-            externalId: u.externalId,
-            username: u.username,
-            thumbUrl: u.thumbUrl,
-          }))
-        )
-        .returning();
+        // Then create server users linked to the identity users
+        const serverUserRows = await tx
+          .insert(serverUsers)
+          .values(
+            serverUsersToCreate.map((u, idx) => ({
+              userId: identityUsers[idx]!.id,
+              serverId: server.id,
+              externalId: u.externalId,
+              username: u.username,
+              thumbUrl: u.thumbUrl,
+            }))
+          )
+          .returning();
+
+        return { newIdentityUsers: identityUsers, newServerUsers: serverUserRows };
+      });
 
       // Update sessionServerUserIds with newly created server user IDs
       for (let i = 0; i < serverUsersToCreate.length; i++) {

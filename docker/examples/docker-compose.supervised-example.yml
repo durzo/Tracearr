@@ -4,7 +4,7 @@
 # Secrets are auto-generated on first run — no configuration required.
 #
 # REQUIREMENTS:
-#   - Minimum 2GB RAM (container runs PostgreSQL + Redis + Node.js)
+#   - Minimum 3GB RAM (container runs PostgreSQL + Redis + Node.js)
 #   - Containers with less memory will crash with exit code 137 (OOM killed)
 #
 # DEPLOY:
@@ -23,7 +23,7 @@ services:
     image: ghcr.io/connorgallopo/tracearr:supervised
     container_name: tracearr
     shm_size: 512mb  # Required for PostgreSQL shared memory (increase for large imports)
-    mem_limit: 2g    # Minimum 2GB required (PostgreSQL + Redis + Node.js)
+    mem_limit: 3g    # Minimum 3GB required (PostgreSQL + Redis + Node.js)
     ports:
       - "${PORT:-3000}:3000"
     environment:

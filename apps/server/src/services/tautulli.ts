@@ -2,7 +2,7 @@
  * Tautulli API integration and import service
  */
 
-import { eq, and, isNull, isNotNull, sql } from 'drizzle-orm';
+import { eq, and, isNull, isNotNull, sql, gte } from 'drizzle-orm';
 import { z } from 'zod';
 import type { TautulliImportProgress, TautulliImportResult } from '@tracearr/shared';
 import { db } from '../db/client.js';
@@ -20,6 +20,7 @@ import {
   flushInsertBatch,
   flushUpdateBatch,
   type SessionUpdate,
+  type TimeBounds,
   createSimpleProgressPublisher,
 } from './import/index.js';
 import { normalizePlatformName } from '../utils/platformNormalizer.js';
@@ -613,7 +614,12 @@ export class TautulliService {
 
     // Track sessions that need referenceId linking (child → parent external IDs)
     // group_ids from Tautulli contains comma-separated session IDs in the same viewing chain
-    const sessionGroupLinks: Array<{ childExternalId: string; parentExternalId: string }> = [];
+    // startedAt is stored to enable time-bounded queries in the linking phase
+    const sessionGroupLinks: Array<{
+      childExternalId: string;
+      parentExternalId: string;
+      startedAt: Date;
+    }> = [];
 
     // Track skipped users using shared module
     const skippedUserTracker = createSkippedUserTracker();
@@ -683,11 +689,15 @@ export class TautulliService {
       // === Per-page dedup queries using shared modules ===
       const pageRefIds: string[] = [];
       const pageTimeKeys: Array<{ serverUserId: string; ratingKey: string; startedAt: Date }> = [];
+      const pageTimestamps: number[] = [];
 
       for (const record of validRecords) {
         if (record.reference_id !== null) {
           pageRefIds.push(String(record.reference_id));
         }
+        // Collect timestamps for time bounds
+        pageTimestamps.push(record.started * 1000);
+
         const serverUserId = userMap.get(record.user_id);
         const ratingKey = typeof record.rating_key === 'number' ? String(record.rating_key) : null;
         if (serverUserId && ratingKey) {
@@ -699,8 +709,21 @@ export class TautulliService {
         }
       }
 
+      // Compute time bounds for this page to enable TimescaleDB chunk exclusion
+      const pageTimeBounds: TimeBounds | undefined =
+        pageTimestamps.length > 0
+          ? {
+              minTime: new Date(Math.min(...pageTimestamps)),
+              maxTime: new Date(Math.max(...pageTimestamps)),
+            }
+          : undefined;
+
       // Query existing sessions for this page using shared modules
-      const sessionByExternalId = await queryExistingByExternalIds(serverId, pageRefIds);
+      const sessionByExternalId = await queryExistingByExternalIds(
+        serverId,
+        pageRefIds,
+        pageTimeBounds
+      );
       const sessionByTimeKey = await queryExistingByTimeKeys(serverId, pageTimeKeys);
 
       for (const record of validRecords) {
@@ -781,6 +804,7 @@ export class TautulliService {
                 sessionGroupLinks.push({
                   childExternalId: referenceIdStr,
                   parentExternalId,
+                  startedAt: new Date(record.started * 1000),
                 });
               }
             }
@@ -840,6 +864,7 @@ export class TautulliService {
                   sessionGroupLinks.push({
                     childExternalId: referenceIdStr,
                     parentExternalId,
+                    startedAt,
                   });
                 }
               }
@@ -970,6 +995,7 @@ export class TautulliService {
               sessionGroupLinks.push({
                 childExternalId: referenceIdStr,
                 parentExternalId,
+                startedAt,
               });
             }
           }
@@ -1018,8 +1044,19 @@ export class TautulliService {
         const chunkParentIds = [...new Set(megaChunk.map((l) => l.parentExternalId))];
         const chunkChildIds = megaChunk.map((l) => l.childExternalId);
 
-        const parentMap = await queryExistingByExternalIds(serverId, chunkParentIds);
-        const childMap = await queryExistingByExternalIds(serverId, chunkChildIds);
+        // Compute time bounds for this chunk to enable TimescaleDB chunk exclusion
+        const chunkTimestamps = megaChunk.map((l) => l.startedAt.getTime());
+        const chunkTimeBounds: TimeBounds = {
+          minTime: new Date(Math.min(...chunkTimestamps)),
+          maxTime: new Date(Math.max(...chunkTimestamps)),
+        };
+
+        const parentMap = await queryExistingByExternalIds(
+          serverId,
+          chunkParentIds,
+          chunkTimeBounds
+        );
+        const childMap = await queryExistingByExternalIds(serverId, chunkChildIds, chunkTimeBounds);
 
         // Batch updates within this mega-chunk
         for (let j = 0; j < megaChunk.length; j += UPDATE_BATCH_SIZE) {
@@ -1051,7 +1088,8 @@ export class TautulliService {
       progress.message = 'Refreshing aggregates...';
       publishProgress(progress);
       try {
-        await refreshAggregates();
+        // Full refresh needed after bulk import to recalculate all historical data
+        await refreshAggregates({ fullRefresh: true });
       } catch (err) {
         console.warn('Failed to refresh aggregates after import:', err);
       }
@@ -1059,17 +1097,18 @@ export class TautulliService {
 
     // Update joinedAt for users based on their earliest session
     // Always update to earliest session date (reflects first activity on this server)
+    // Uses DISTINCT ON instead of MIN() to leverage index and avoid full hypertable scan
     progress.message = 'Updating user join dates...';
     publishProgress(progress);
     try {
       const joinDateUpdates = await db.execute(sql`
         UPDATE server_users su
-        SET joined_at = earliest.min_started
+        SET joined_at = earliest.started_at
         FROM (
-          SELECT server_user_id, MIN(started_at) as min_started
+          SELECT DISTINCT ON (server_user_id) server_user_id, started_at
           FROM sessions
           WHERE server_id = ${serverId}
-          GROUP BY server_user_id
+          ORDER BY server_user_id, started_at ASC
         ) earliest
         WHERE su.id = earliest.server_user_id
           AND su.server_id = ${serverId}
@@ -1206,7 +1245,9 @@ export class TautulliService {
       // Query sessions missing quality data that have an externalSessionId
       // Only enrich sessions where sourceVideoCodec is NULL (indicates no stream data)
       // Order by externalSessionId DESC to process recent sessions first (higher row_id = more recent)
-      // Tautulli may have purged stream data for older sessions
+      // Tautulli may have purged stream data for older sessions, so limit to last 90 days
+      // Time bounds enable TimescaleDB chunk exclusion to avoid lock exhaustion
+      const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
       const sessionsToEnrich = await db
         .select({
           id: sessions.id,
@@ -1218,7 +1259,9 @@ export class TautulliService {
           and(
             eq(sessions.serverId, serverId),
             isNotNull(sessions.externalSessionId),
-            isNull(sessions.sourceVideoCodec)
+            isNull(sessions.sourceVideoCodec),
+            // Time bounds for TimescaleDB chunk exclusion
+            gte(sessions.startedAt, ninetyDaysAgo)
           )
         )
         .orderBy(sql`CAST(${sessions.externalSessionId} AS INTEGER) DESC`)
@@ -1333,7 +1376,8 @@ export class TautulliService {
       progress.message = 'Refreshing aggregates...';
       publishProgress(progress);
       try {
-        await refreshAggregates();
+        // Full refresh needed after enrichment to recalculate bandwidth aggregates
+        await refreshAggregates({ fullRefresh: true });
       } catch (err) {
         console.warn('[Tautulli] Failed to refresh aggregates after enrichment:', err);
       }
