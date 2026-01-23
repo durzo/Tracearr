@@ -1251,7 +1251,8 @@ export type MaintenanceJobType =
   | 'fix_imported_progress'
   | 'rebuild_timescale_views'
   | 'normalize_codecs'
-  | 'backfill_user_dates';
+  | 'backfill_user_dates'
+  | 'backfill_library_snapshots';
 
 export type MaintenanceJobStatus = 'idle' | 'running' | 'complete' | 'error';
 

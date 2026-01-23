@@ -163,6 +163,8 @@ async function processMaintenanceJob(job: Job<MaintenanceJobData>): Promise<Main
       return processNormalizeCodecsJob(job);
     case 'backfill_user_dates':
       return processBackfillUserDatesJob(job);
+    case 'backfill_library_snapshots':
+      return processBackfillLibrarySnapshotsJob(job);
     default:
       throw new Error(`Unknown maintenance job type: ${job.data.type}`);
   }
@@ -271,7 +273,8 @@ async function processNormalizePlayersJob(
       }
 
       // Update cursor to last record in batch
-      lastId = batch[batch.length - 1]!.id;
+      const lastRecord = batch[batch.length - 1];
+      if (lastRecord) lastId = lastRecord.id;
 
       // Collect updates for batch processing
       const updates: Array<{ id: string; device: string; platform: string }> = [];
@@ -491,7 +494,8 @@ async function processNormalizeCountriesJob(
       }
 
       // Update cursor to last record in batch
-      lastId = batch[batch.length - 1]!.id;
+      const lastRecord = batch[batch.length - 1];
+      if (lastRecord) lastId = lastRecord.id;
 
       // Collect updates for batch processing
       const updates: Array<{ id: string; geoCity: string | null; geoCountry: string }> = [];
@@ -726,7 +730,8 @@ async function processFixImportedProgressJob(
       }
 
       // Update cursor to last record in batch
-      lastId = batch[batch.length - 1]!.id;
+      const lastRecord = batch[batch.length - 1];
+      if (lastRecord) lastId = lastRecord.id;
 
       // Collect updates for batch processing
       const updates: Array<{ id: string; progressMs: number; totalDurationMs: number }> = [];
@@ -1241,6 +1246,275 @@ async function processBackfillUserDatesJob(
       errors: totalErrors,
       durationMs,
       message: `Updated joinedAt for ${joinedAtUpdated} users, lastActivityAt for ${lastActivityUpdated} users`,
+    };
+  } catch (error) {
+    if (activeJobProgress) {
+      activeJobProgress.status = 'error';
+      activeJobProgress.message = error instanceof Error ? error.message : 'Unknown error';
+      await publishProgress();
+      activeJobProgress = null;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Backfill library snapshots from library_items.created_at
+ *
+ * Creates historical snapshots by reconstructing library state over time using
+ * cumulative window functions on item creation dates. This enables proper
+ * deletion/upgrade tracking in charts by preserving historical state.
+ *
+ * Process:
+ * 1. Get all server+library combinations with their date ranges
+ * 2. For each library, generate daily snapshots using window functions
+ * 3. Skip days that already have snapshots (idempotent)
+ */
+async function processBackfillLibrarySnapshotsJob(
+  job: Job<MaintenanceJobData>
+): Promise<MaintenanceJobResult> {
+  const startTime = Date.now();
+  const pubSubService = getPubSubService();
+
+  // Initialize progress
+  activeJobProgress = {
+    type: 'backfill_library_snapshots',
+    status: 'running',
+    totalRecords: 0,
+    processedRecords: 0,
+    updatedRecords: 0,
+    skippedRecords: 0,
+    errorRecords: 0,
+    message: 'Analyzing libraries...',
+    startedAt: new Date().toISOString(),
+  };
+
+  const publishProgress = async () => {
+    if (pubSubService && activeJobProgress) {
+      await pubSubService.publish(WS_EVENTS.MAINTENANCE_PROGRESS, activeJobProgress);
+    }
+  };
+
+  try {
+    await publishProgress();
+
+    // Get all server+library combinations with their date ranges
+    const librariesResult = await db.execute(sql`
+      SELECT
+        server_id,
+        library_id,
+        MIN(created_at)::date AS start_date,
+        CURRENT_DATE AS end_date,
+        COUNT(*) AS item_count
+      FROM library_items
+      WHERE created_at IS NOT NULL
+      GROUP BY server_id, library_id
+    `);
+
+    const libraries = librariesResult.rows as Array<{
+      server_id: string;
+      library_id: string;
+      start_date: string;
+      end_date: string;
+      item_count: string;
+    }>;
+
+    if (libraries.length === 0) {
+      activeJobProgress.status = 'complete';
+      activeJobProgress.message = 'No libraries found to backfill';
+      activeJobProgress.completedAt = new Date().toISOString();
+      await publishProgress();
+      activeJobProgress = null;
+
+      return {
+        success: true,
+        type: 'backfill_library_snapshots',
+        processed: 0,
+        updated: 0,
+        skipped: 0,
+        errors: 0,
+        durationMs: Date.now() - startTime,
+        message: 'No libraries found to backfill',
+      };
+    }
+
+    activeJobProgress.totalRecords = libraries.length;
+    activeJobProgress.message = `Processing ${libraries.length} libraries...`;
+    await publishProgress();
+
+    let totalProcessed = 0;
+    let totalSnapshotsCreated = 0;
+    let totalErrors = 0;
+
+    for (const lib of libraries) {
+      try {
+        // Insert daily snapshots for this library using window functions
+        // This reconstructs historical state from item creation dates
+        const result = await db.execute(sql`
+          INSERT INTO library_snapshots (
+            server_id, library_id, snapshot_time,
+            item_count, total_size,
+            movie_count, episode_count, season_count, show_count, music_count,
+            count_4k, count_1080p, count_720p, count_sd,
+            hevc_count, h264_count, av1_count,
+            enrichment_pending, enrichment_complete
+          )
+          WITH daily_additions AS (
+            -- Get per-day additions with all metrics
+            SELECT
+              DATE(created_at) AS day,
+              COUNT(*) AS items,
+              COALESCE(SUM(file_size), 0) AS size,
+              COUNT(*) FILTER (WHERE media_type = 'movie') AS movies,
+              COUNT(*) FILTER (WHERE media_type = 'episode') AS episodes,
+              COUNT(*) FILTER (WHERE media_type = 'season') AS seasons,
+              COUNT(*) FILTER (WHERE media_type = 'show') AS shows,
+              COUNT(*) FILTER (WHERE media_type IN ('artist', 'album', 'track')) AS music,
+              COUNT(*) FILTER (WHERE video_resolution = '4k') AS c4k,
+              COUNT(*) FILTER (WHERE video_resolution = '1080p') AS c1080p,
+              COUNT(*) FILTER (WHERE video_resolution = '720p') AS c720p,
+              COUNT(*) FILTER (WHERE video_resolution IN ('480p', 'sd')
+                                OR (video_resolution IS NOT NULL
+                                    AND video_resolution NOT IN ('4k', '1080p', '720p'))) AS csd,
+              COUNT(*) FILTER (WHERE video_codec IN ('hevc', 'h265', 'x265', 'HEVC', 'H265', 'X265')) AS hevc,
+              COUNT(*) FILTER (WHERE video_codec IN ('h264', 'avc', 'x264', 'H264', 'AVC', 'X264')) AS h264,
+              COUNT(*) FILTER (WHERE video_codec IN ('av1', 'AV1')) AS av1
+            FROM library_items
+            WHERE server_id = ${lib.server_id}::uuid
+              AND library_id = ${lib.library_id}
+            GROUP BY DATE(created_at)
+          ),
+          date_series AS (
+            SELECT d::date AS day FROM generate_series(
+              ${lib.start_date}::date, ${lib.end_date}::date, '1 day'
+            ) d
+          ),
+          filled AS (
+            SELECT ds.day,
+              COALESCE(da.items, 0) AS items, COALESCE(da.size, 0) AS size,
+              COALESCE(da.movies, 0) AS movies, COALESCE(da.episodes, 0) AS episodes,
+              COALESCE(da.seasons, 0) AS seasons, COALESCE(da.shows, 0) AS shows,
+              COALESCE(da.music, 0) AS music,
+              COALESCE(da.c4k, 0) AS c4k, COALESCE(da.c1080p, 0) AS c1080p,
+              COALESCE(da.c720p, 0) AS c720p, COALESCE(da.csd, 0) AS csd,
+              COALESCE(da.hevc, 0) AS hevc, COALESCE(da.h264, 0) AS h264,
+              COALESCE(da.av1, 0) AS av1
+            FROM date_series ds
+            LEFT JOIN daily_additions da ON da.day = ds.day
+          ),
+          cumulative AS (
+            SELECT
+              f.day,
+              -- Cumulative counts using window functions
+              SUM(items) OVER w AS item_count,
+              SUM(size) OVER w AS total_size,
+              SUM(movies) OVER w AS movie_count,
+              SUM(episodes) OVER w AS episode_count,
+              SUM(seasons) OVER w AS season_count,
+              SUM(shows) OVER w AS show_count,
+              SUM(music) OVER w AS music_count,
+              SUM(c4k) OVER w AS count_4k,
+              SUM(c1080p) OVER w AS count_1080p,
+              SUM(c720p) OVER w AS count_720p,
+              SUM(csd) OVER w AS count_sd,
+              SUM(hevc) OVER w AS hevc_count,
+              SUM(h264) OVER w AS h264_count,
+              SUM(av1) OVER w AS av1_count
+            FROM filled f
+            WINDOW w AS (ORDER BY day ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+          )
+          SELECT
+            ${lib.server_id}::uuid,
+            ${lib.library_id},
+            (c.day + INTERVAL '23 hours 59 minutes 59 seconds')::timestamptz,
+            c.item_count::int,
+            c.total_size::bigint,
+            c.movie_count::int,
+            c.episode_count::int,
+            c.season_count::int,
+            c.show_count::int,
+            c.music_count::int,
+            c.count_4k::int,
+            c.count_1080p::int,
+            c.count_720p::int,
+            c.count_sd::int,
+            c.hevc_count::int,
+            c.h264_count::int,
+            c.av1_count::int,
+            0,  -- enrichment_pending: all historical items already enriched
+            c.item_count::int  -- enrichment_complete
+          FROM cumulative c
+          -- Skip days that already have snapshots (idempotent)
+          WHERE NOT EXISTS (
+            SELECT 1 FROM library_snapshots ls
+            WHERE ls.server_id = ${lib.server_id}::uuid
+              AND ls.library_id = ${lib.library_id}
+              AND DATE(ls.snapshot_time) = c.day
+          )
+        `);
+
+        const snapshotsCreated = Number(result.rowCount ?? 0);
+        totalSnapshotsCreated += snapshotsCreated;
+        totalProcessed++;
+
+        activeJobProgress.processedRecords = totalProcessed;
+        activeJobProgress.updatedRecords = totalSnapshotsCreated;
+        activeJobProgress.message = `Processed ${totalProcessed} of ${libraries.length} libraries (${totalSnapshotsCreated} snapshots created)...`;
+
+        const percent = Math.round((totalProcessed / libraries.length) * 100);
+        await job.updateProgress(percent);
+        await publishProgress();
+
+        // Extend lock to prevent stalled job detection
+        try {
+          await job.extendLock(job.token ?? '', 10 * 60 * 1000);
+        } catch {
+          console.warn(`[Maintenance] Failed to extend lock for job ${job.id}`);
+        }
+      } catch (error) {
+        console.error(
+          `[Maintenance] Error processing library ${lib.server_id}/${lib.library_id}:`,
+          error
+        );
+        totalErrors++;
+        activeJobProgress.errorRecords = totalErrors;
+      }
+    }
+
+    // Refresh the continuous aggregate to include backfilled data
+    activeJobProgress.message = 'Refreshing library_stats_daily continuous aggregate...';
+    await publishProgress();
+
+    // Get the earliest snapshot date to refresh from
+    const earliestResult = await db.execute(sql`
+      SELECT MIN(snapshot_time)::date AS earliest FROM library_snapshots
+    `);
+    const earliestDate = (earliestResult.rows[0] as { earliest: string | null })?.earliest;
+
+    if (earliestDate) {
+      await db.execute(sql`
+        CALL refresh_continuous_aggregate('library_stats_daily', ${earliestDate}::date, NOW()::date + INTERVAL '1 day')
+      `);
+    }
+
+    const durationMs = Date.now() - startTime;
+    activeJobProgress.status = 'complete';
+    activeJobProgress.processedRecords = totalProcessed;
+    activeJobProgress.message = `Completed! Created ${totalSnapshotsCreated.toLocaleString()} snapshots for ${totalProcessed} libraries in ${Math.round(durationMs / 1000)}s`;
+    activeJobProgress.completedAt = new Date().toISOString();
+    await publishProgress();
+
+    activeJobProgress = null;
+
+    return {
+      success: true,
+      type: 'backfill_library_snapshots',
+      processed: totalProcessed,
+      updated: totalSnapshotsCreated,
+      skipped: 0,
+      errors: totalErrors,
+      durationMs,
+      message: `Created ${totalSnapshotsCreated.toLocaleString()} snapshots for ${totalProcessed} libraries`,
     };
   } catch (error) {
     if (activeJobProgress) {

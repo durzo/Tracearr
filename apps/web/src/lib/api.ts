@@ -1332,6 +1332,38 @@ class ApiClient {
           };
         }>;
       }>('/maintenance/history'),
+    getSnapshots: (params?: { suspicious?: boolean; date?: string; libraryId?: string }) => {
+      const queryParams = new URLSearchParams();
+      if (params?.suspicious) queryParams.set('suspicious', 'true');
+      if (params?.date) queryParams.set('date', params.date);
+      if (params?.libraryId) queryParams.set('libraryId', params.libraryId);
+      const query = queryParams.toString();
+      return this.request<{
+        snapshots: Array<{
+          id: string;
+          server_id: string;
+          server_name: string | null;
+          library_id: string;
+          library_type: string;
+          snapshot_time: string;
+          item_count: number;
+          total_size: string;
+          movie_count: number;
+          episode_count: number;
+          music_count: number;
+          is_suspicious: boolean;
+        }>;
+        count: number;
+      }>(`/maintenance/snapshots${query ? `?${query}` : ''}`);
+    },
+    deleteSnapshots: (params: {
+      ids?: string[];
+      criteria?: { suspicious?: boolean; date?: string; libraryId?: string };
+    }) =>
+      this.request<{ deleted: number; message: string }>('/maintenance/snapshots', {
+        method: 'DELETE',
+        body: JSON.stringify(params),
+      }),
   };
 
   // Mobile access

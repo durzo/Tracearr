@@ -129,14 +129,43 @@ export const debugRoutes: FastifyPluginAsync = async (app) => {
       SELECT pg_size_pretty(pg_database_size(current_database())) as size
     `);
 
-    // Get table sizes
-    const tableSizes = await db.execute(sql`
+    // Get table sizes - split into application tables and system/aggregate tables
+    const appTables = await db.execute(sql`
       SELECT
         relname as table_name,
-        pg_size_pretty(pg_total_relation_size(relid)) as total_size
+        pg_size_pretty(pg_total_relation_size(relid)) as total_size,
+        pg_total_relation_size(relid) as size_bytes
       FROM pg_catalog.pg_statio_user_tables
+      WHERE relname IN (
+        'sessions', 'users', 'servers', 'server_users', 'rules', 'violations',
+        'termination_logs', 'plex_accounts', 'settings',
+        'notification_preferences', 'notification_channel_routing',
+        'mobile_sessions', 'mobile_tokens',
+        'library_items', 'library_snapshots'
+      )
       ORDER BY pg_total_relation_size(relid) DESC
-      LIMIT 10
+    `);
+
+    // Get continuous aggregates and materialized views
+    const aggregateTables = await db.execute(sql`
+      SELECT
+        view_name as table_name,
+        pg_size_pretty(
+          COALESCE(
+            (SELECT pg_total_relation_size(format('_timescaledb_internal.%I', materialization_hypertable_name)::regclass)
+             FROM timescaledb_information.continuous_aggregates ca2
+             WHERE ca2.view_name = ca.view_name),
+            0
+          )
+        ) as total_size,
+        COALESCE(
+          (SELECT pg_total_relation_size(format('_timescaledb_internal.%I', materialization_hypertable_name)::regclass)
+           FROM timescaledb_information.continuous_aggregates ca2
+           WHERE ca2.view_name = ca.view_name),
+          0
+        ) as size_bytes
+      FROM timescaledb_information.continuous_aggregates ca
+      ORDER BY size_bytes DESC
     `);
 
     return {
@@ -152,7 +181,8 @@ export const debugRoutes: FastifyPluginAsync = async (app) => {
       },
       database: {
         size: (dbSize.rows[0] as { size: string })?.size ?? 'unknown',
-        tables: tableSizes.rows as { table_name: string; total_size: string }[],
+        tables: appTables.rows as { table_name: string; total_size: string }[],
+        aggregates: aggregateTables.rows as { table_name: string; total_size: string }[],
       },
     };
   });

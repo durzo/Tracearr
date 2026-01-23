@@ -10,12 +10,14 @@
 
 import { Queue, Worker, type Job, type ConnectionOptions } from 'bullmq';
 import { Redis } from 'ioredis';
+import { sql } from 'drizzle-orm';
 import { WS_EVENTS, REDIS_KEYS } from '@tracearr/shared';
 import type { LibrarySyncProgress } from '@tracearr/shared';
 import { db } from '../db/client.js';
 import { servers } from '../db/schema.js';
 import { librarySyncService } from '../services/librarySync.js';
 import { getPubSubService } from '../services/cache.js';
+import { enqueueMaintenanceJob } from './maintenanceQueue.js';
 
 // Job data interface
 export interface LibrarySyncJobData {
@@ -210,7 +212,71 @@ export function startLibrarySyncWorker(): void {
     console.error('[LibrarySync] Worker error:', error);
   });
 
+  // After sync completes, check if snapshot backfill is needed
+  librarySyncWorker.on('completed', () => {
+    void checkAndTriggerSnapshotBackfill();
+  });
+
   console.log('Library sync worker started');
+}
+
+/**
+ * Check if library snapshots need backfilling and trigger if so.
+ * Compares earliest library_items.created_at with earliest snapshot_time.
+ * Runs non-blocking - errors are logged but don't affect other operations.
+ */
+async function checkAndTriggerSnapshotBackfill(): Promise<void> {
+  try {
+    // Get earliest item date and earliest snapshot date
+    const result = await db.execute(sql`
+      SELECT
+        (SELECT MIN(created_at)::date FROM library_items) AS earliest_item,
+        (SELECT MIN(snapshot_time)::date FROM library_snapshots) AS earliest_snapshot,
+        (SELECT COUNT(*) FROM library_items) AS item_count,
+        (SELECT COUNT(*) FROM library_snapshots) AS snapshot_count
+    `);
+
+    const row = result.rows[0] as {
+      earliest_item: string | null;
+      earliest_snapshot: string | null;
+      item_count: string;
+      snapshot_count: string;
+    };
+
+    const itemCount = parseInt(row.item_count, 10);
+    const snapshotCount = parseInt(row.snapshot_count, 10);
+
+    // No items = nothing to backfill
+    if (itemCount === 0) {
+      return;
+    }
+
+    // No snapshots yet, or snapshots start after items - need backfill
+    const needsBackfill =
+      snapshotCount === 0 ||
+      (row.earliest_item &&
+        row.earliest_snapshot &&
+        new Date(row.earliest_item) < new Date(row.earliest_snapshot));
+
+    if (needsBackfill) {
+      console.log(
+        `[LibrarySync] Snapshot backfill needed: items from ${row.earliest_item}, snapshots from ${row.earliest_snapshot || 'none'}`
+      );
+
+      // Trigger backfill job (non-blocking, will be queued)
+      // Use a system user ID since this is automated
+      await enqueueMaintenanceJob('backfill_library_snapshots', 'system');
+      console.log('[LibrarySync] Snapshot backfill job queued');
+    }
+  } catch (error) {
+    // Log but don't throw - this is a non-critical background task
+    if (error instanceof Error && error.message.includes('already in progress')) {
+      // Backfill already running, that's fine
+      console.log('[LibrarySync] Snapshot backfill already in progress');
+    } else {
+      console.error('[LibrarySync] Failed to check/trigger snapshot backfill:', error);
+    }
+  }
 }
 
 /**
@@ -254,6 +320,36 @@ export async function scheduleAutoSync(): Promise<void> {
   }
 
   console.log(`[LibrarySync] Scheduled auto-sync for ${allServers.length} server(s) every 6 hours`);
+
+  // Queue an immediate sync on boot (non-blocking, staggered to avoid overwhelming startup)
+  // Check for any pending/delayed jobs first to avoid duplicates after rapid restarts
+  const pendingJobs = await librarySyncQueue.getJobs(['delayed', 'waiting']);
+  const pendingServerIds = new Set(pendingJobs.map((j) => j.data.serverId));
+
+  for (let i = 0; i < allServers.length; i++) {
+    const server = allServers[i];
+    if (!server) continue;
+
+    // Skip if there's already a pending job for this server
+    if (pendingServerIds.has(server.id)) {
+      console.log(`[LibrarySync] Skipping boot sync for ${server.name} - job already pending`);
+      continue;
+    }
+
+    await librarySyncQueue.add(
+      `boot-sync-${server.id}`,
+      {
+        serverId: server.id,
+        triggeredBy: 'scheduled',
+      },
+      {
+        delay: (i + 1) * 10000, // Stagger by 10 seconds per server
+        jobId: `boot-sync-${server.id}-${Date.now()}`,
+      }
+    );
+  }
+
+  console.log(`[LibrarySync] Queued boot sync for ${allServers.length} server(s)`);
 }
 
 /**

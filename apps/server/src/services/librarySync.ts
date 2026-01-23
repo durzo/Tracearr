@@ -29,7 +29,7 @@ export interface SyncResult {
   itemsProcessed: number;
   itemsAdded: number;
   itemsRemoved: number;
-  snapshotId: string;
+  snapshotId: string | null; // null when snapshot skipped due to incomplete sync
 }
 
 /**
@@ -385,6 +385,43 @@ export class LibrarySyncService {
     // Mark removed items (delete from database)
     if (removedKeys.length > 0) {
       await this.markItemsRemoved(serverId, libraryId, removedKeys);
+    }
+
+    // Validate sync completeness before creating snapshot
+    // TV libraries with shows should have episodes, Music libraries with artists should have tracks
+    const showCount = allItems.filter((i) => i.mediaType === 'show').length;
+    const episodeCount = allItems.filter((i) => i.mediaType === 'episode').length;
+    const artistCount = allItems.filter((i) => i.mediaType === 'artist').length;
+    const trackCount = allItems.filter((i) => i.mediaType === 'track').length;
+
+    if (showCount > 0 && episodeCount === 0) {
+      console.warn(
+        `[LibrarySync] Skipping snapshot for ${libraryName}: has ${showCount} shows but no episodes (likely incomplete sync)`
+      );
+      return {
+        serverId,
+        libraryId,
+        libraryName,
+        itemsProcessed: processedItems,
+        itemsAdded: addedKeys.length,
+        itemsRemoved: removedKeys.length,
+        snapshotId: null,
+      };
+    }
+
+    if (artistCount > 0 && trackCount === 0) {
+      console.warn(
+        `[LibrarySync] Skipping snapshot for ${libraryName}: has ${artistCount} artists but no tracks (likely incomplete sync)`
+      );
+      return {
+        serverId,
+        libraryId,
+        libraryName,
+        itemsProcessed: processedItems,
+        itemsAdded: addedKeys.length,
+        itemsRemoved: removedKeys.length,
+        snapshotId: null,
+      };
     }
 
     // Create snapshot

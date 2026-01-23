@@ -213,26 +213,26 @@ export const libraryStorageRoute: FastifyPluginAsync = async (app) => {
       const startDate = getStartDate(period);
       const endDate = new Date();
 
-      // Build server filter for library_items table
+      // Build server filter for library_stats_daily
       const serverFilter = serverId
-        ? sql`AND li.server_id = ${serverId}::uuid`
+        ? sql`AND lsd.server_id = ${serverId}::uuid`
         : authUser.serverIds?.length
-          ? sql`AND li.server_id = ANY(${authUser.serverIds}::uuid[])`
+          ? sql`AND lsd.server_id = ANY(${authUser.serverIds}::uuid[])`
           : sql``;
 
       // Optional library filter
-      const libraryFilter = libraryId ? sql`AND li.library_id = ${libraryId}` : sql``;
+      const libraryFilter = libraryId ? sql`AND lsd.library_id = ${libraryId}` : sql``;
 
-      // For 'all' period, find the earliest item date from the database
+      // For 'all' period, find the earliest snapshot date from library_stats_daily
       let effectiveStartDate: Date;
       if (startDate) {
         effectiveStartDate = startDate;
       } else {
-        // Query for the earliest created_at date
+        // Query for the earliest snapshot date
         const earliestResult = await db.execute(sql`
-          SELECT MIN(created_at)::date AS earliest
-          FROM library_items li
-          WHERE li.file_size IS NOT NULL
+          SELECT MIN(day)::date AS earliest
+          FROM library_stats_daily lsd
+          WHERE 1=1
             ${serverFilter}
             ${libraryFilter}
         `);
@@ -240,8 +240,8 @@ export const libraryStorageRoute: FastifyPluginAsync = async (app) => {
         effectiveStartDate = earliest ? new Date(earliest) : new Date('2020-01-01');
       }
 
-      // Query with continuous date series for cumulative storage calculation
-      // Similar to library growth, but summing file_size instead of counting items
+      // Query library_stats_daily continuous aggregate
+      // This uses pre-computed daily snapshots that already contain cumulative totals
       const result = await db.execute(sql`
         WITH date_series AS (
           -- Generate all dates in the range
@@ -252,44 +252,43 @@ export const libraryStorageRoute: FastifyPluginAsync = async (app) => {
             '1 day'::interval
           ) d
         ),
-        storage_before_period AS (
-          -- Sum of file sizes for items added BEFORE the period
-          SELECT COALESCE(SUM(li.file_size), 0)::bigint AS bytes_before
-          FROM library_items li
-          WHERE li.file_size IS NOT NULL
-            ${serverFilter}
-            ${libraryFilter}
-            AND li.created_at < ${effectiveStartDate.toISOString()}::timestamptz
-        ),
-        daily_additions AS (
-          -- Sum of file sizes added per day
+        daily_stats AS (
+          -- Aggregate storage across all matching libraries per day
+          -- library_stats_daily already has cumulative totals per library per day
           SELECT
-            DATE(li.created_at AT TIME ZONE ${tz}) AS day,
-            SUM(li.file_size)::bigint AS bytes_added,
-            COUNT(*)::int AS items_added
-          FROM library_items li
-          WHERE li.file_size IS NOT NULL
+            lsd.day::date AS day,
+            COALESCE(SUM(lsd.total_size_bytes), 0)::bigint AS total_size_bytes,
+            COALESCE(SUM(lsd.total_items), 0)::int AS total_items
+          FROM library_stats_daily lsd
+          WHERE lsd.day >= ${effectiveStartDate.toISOString()}::date
+            AND lsd.day <= ${endDate.toISOString()}::date
             ${serverFilter}
             ${libraryFilter}
-            AND li.created_at >= ${effectiveStartDate.toISOString()}::timestamptz
-          GROUP BY 1
+          GROUP BY lsd.day::date
         ),
         filled_data AS (
-          -- Join grid with actual data, fill nulls with 0
+          -- Join date series with actual stats
+          -- Use subquery to carry forward last known value for gaps
           SELECT
             ds.day,
-            COALESCE(da.bytes_added, 0)::bigint AS bytes_added,
-            COALESCE(da.items_added, 0)::int AS items_added
+            COALESCE(dst.total_size_bytes, (
+              SELECT total_size_bytes FROM daily_stats dst2
+              WHERE dst2.day < ds.day ORDER BY dst2.day DESC LIMIT 1
+            ), 0)::bigint AS total_size_bytes,
+            COALESCE(dst.total_items, (
+              SELECT total_items FROM daily_stats dst2
+              WHERE dst2.day < ds.day ORDER BY dst2.day DESC LIMIT 1
+            ), 0)::int AS total_items
           FROM date_series ds
-          LEFT JOIN daily_additions da ON da.day = ds.day
+          LEFT JOIN daily_stats dst ON dst.day = ds.day
         )
         SELECT
           fd.day::text,
-          (sbp.bytes_before + SUM(fd.bytes_added) OVER (ORDER BY fd.day))::bigint AS total_size_bytes,
-          fd.bytes_added,
-          fd.items_added
+          fd.total_size_bytes,
+          0::bigint AS bytes_added,
+          0::int AS items_added,
+          fd.total_items
         FROM filled_data fd
-        CROSS JOIN storage_before_period sbp
         ORDER BY fd.day ASC
       `);
 
@@ -298,6 +297,7 @@ export const libraryStorageRoute: FastifyPluginAsync = async (app) => {
         total_size_bytes: string;
         bytes_added: string;
         items_added: number;
+        total_items: number;
       }>;
 
       // Build history array
@@ -309,15 +309,8 @@ export const libraryStorageRoute: FastifyPluginAsync = async (app) => {
       // Get current stats (latest day)
       const latestRow = rows.length > 0 ? rows[rows.length - 1] : null;
 
-      // Get total item count (current library size with file_size)
-      const countResult = await db.execute(sql`
-        SELECT COUNT(*)::int AS total_items
-        FROM library_items li
-        WHERE li.file_size IS NOT NULL
-          ${serverFilter}
-          ${libraryFilter}
-      `);
-      const totalItems = (countResult.rows[0] as { total_items: number })?.total_items ?? 0;
+      // Total items comes from the latest snapshot's cumulative total
+      const totalItems = latestRow?.total_items ?? 0;
 
       const current = {
         totalSizeBytes: latestRow?.total_size_bytes ?? '0',

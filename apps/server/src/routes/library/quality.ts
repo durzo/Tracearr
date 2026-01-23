@@ -126,47 +126,50 @@ export const libraryQualityRoute: FastifyPluginAsync = async (app) => {
       const startDate = getStartDate(period);
       const endDate = new Date();
 
-      // Build server filter for library_items table
+      // Build server filter for library_stats_daily
       const serverFilter = serverId
-        ? sql`AND li.server_id = ${serverId}::uuid`
+        ? sql`AND lsd.server_id = ${serverId}::uuid`
         : authUser.serverIds?.length
-          ? sql`AND li.server_id = ANY(${authUser.serverIds}::uuid[])`
+          ? sql`AND lsd.server_id = ANY(${authUser.serverIds}::uuid[])`
           : sql``;
 
-      // Media type filter - filter by item type
+      // Media type filter - filter by library type (movie-only vs TV vs all video)
+      // Libraries are typically homogeneous in Plex, so we filter based on content counts
       let mediaTypeFilter: ReturnType<typeof sql>;
       switch (mediaType) {
         case 'movies':
-          mediaTypeFilter = sql`AND li.media_type = 'movie'`;
+          // Movie-only libraries: have movies but no episodes
+          mediaTypeFilter = sql`AND lsd.movie_count > 0 AND lsd.episode_count = 0`;
           break;
         case 'shows':
-          mediaTypeFilter = sql`AND li.media_type = 'episode'`;
+          // TV libraries: have episodes
+          mediaTypeFilter = sql`AND lsd.episode_count > 0`;
           break;
         case 'all':
         default:
-          // Include movies and episodes (video content only)
-          mediaTypeFilter = sql`AND li.media_type IN ('movie', 'episode')`;
+          // All video libraries: have either movies or episodes
+          mediaTypeFilter = sql`AND (lsd.movie_count > 0 OR lsd.episode_count > 0)`;
           break;
       }
 
-      // For 'all' period, find the earliest item date from the database
-      // Match storage route exactly - use file_size filter, no media type filter
-      // This ensures date range is consistent across all library charts
+      // For 'all' period, find the earliest snapshot date from library_stats_daily
       let effectiveStartDate: Date;
       if (startDate) {
         effectiveStartDate = startDate;
       } else {
         const earliestResult = await db.execute(sql`
-          SELECT MIN(created_at)::date AS earliest
-          FROM library_items li
-          WHERE li.file_size IS NOT NULL
+          SELECT MIN(day)::date AS earliest
+          FROM library_stats_daily lsd
+          WHERE 1=1
             ${serverFilter}
         `);
         const earliest = (earliestResult.rows[0] as { earliest: string | null })?.earliest;
         effectiveStartDate = earliest ? new Date(earliest) : new Date('2020-01-01');
       }
 
-      // Query with continuous date series for cumulative quality calculation
+      // Query library_stats_daily continuous aggregate
+      // This uses pre-computed daily snapshots that already contain cumulative totals
+      // After backfill, every day should have a snapshot, so gaps are unlikely
       const result = await db.execute(sql`
         WITH date_series AS (
           -- Generate all dates in the range
@@ -177,53 +180,62 @@ export const libraryQualityRoute: FastifyPluginAsync = async (app) => {
             '1 day'::interval
           ) d
         ),
-        quality_before_period AS (
-          -- Count of items by quality BEFORE the period
+        filtered_libraries AS (
+          -- Pre-filter libraries by media type before aggregating
           SELECT
-            COALESCE(SUM(CASE WHEN li.video_resolution = '4k' THEN 1 ELSE 0 END), 0)::int AS count_4k_before,
-            COALESCE(SUM(CASE WHEN li.video_resolution = '1080p' THEN 1 ELSE 0 END), 0)::int AS count_1080p_before,
-            COALESCE(SUM(CASE WHEN li.video_resolution = '720p' THEN 1 ELSE 0 END), 0)::int AS count_720p_before,
-            COALESCE(SUM(CASE WHEN li.video_resolution IN ('480p', 'sd') OR (li.video_resolution IS NOT NULL AND li.video_resolution NOT IN ('4k', '1080p', '720p')) THEN 1 ELSE 0 END), 0)::int AS count_sd_before
-          FROM library_items li
-          WHERE li.video_resolution IS NOT NULL
+            lsd.day,
+            lsd.count_4k,
+            lsd.count_1080p,
+            lsd.count_720p,
+            lsd.count_sd
+          FROM library_stats_daily lsd
+          WHERE lsd.day >= ${effectiveStartDate.toISOString()}::date
+            AND lsd.day <= ${endDate.toISOString()}::date
             ${serverFilter}
             ${mediaTypeFilter}
-            AND li.created_at < ${effectiveStartDate.toISOString()}::timestamptz
         ),
-        daily_additions AS (
-          -- Count of items added per day by quality
+        daily_stats AS (
+          -- Aggregate quality counts across all matching libraries per day
           SELECT
-            DATE(li.created_at AT TIME ZONE ${tz}) AS day,
-            COALESCE(SUM(CASE WHEN li.video_resolution = '4k' THEN 1 ELSE 0 END), 0)::int AS added_4k,
-            COALESCE(SUM(CASE WHEN li.video_resolution = '1080p' THEN 1 ELSE 0 END), 0)::int AS added_1080p,
-            COALESCE(SUM(CASE WHEN li.video_resolution = '720p' THEN 1 ELSE 0 END), 0)::int AS added_720p,
-            COALESCE(SUM(CASE WHEN li.video_resolution IN ('480p', 'sd') OR (li.video_resolution IS NOT NULL AND li.video_resolution NOT IN ('4k', '1080p', '720p')) THEN 1 ELSE 0 END), 0)::int AS added_sd
-          FROM library_items li
-          WHERE li.video_resolution IS NOT NULL
-            ${serverFilter}
-            ${mediaTypeFilter}
-            AND li.created_at >= ${effectiveStartDate.toISOString()}::timestamptz
-          GROUP BY 1
+            fl.day::date AS day,
+            COALESCE(SUM(fl.count_4k), 0)::int AS count_4k,
+            COALESCE(SUM(fl.count_1080p), 0)::int AS count_1080p,
+            COALESCE(SUM(fl.count_720p), 0)::int AS count_720p,
+            COALESCE(SUM(fl.count_sd), 0)::int AS count_sd
+          FROM filtered_libraries fl
+          GROUP BY fl.day::date
         ),
         filled_data AS (
-          -- Join grid with actual data, fill nulls with 0
+          -- Join date series with actual stats
+          -- Use subquery to carry forward last known value for gaps
           SELECT
             ds.day,
-            COALESCE(da.added_4k, 0)::int AS added_4k,
-            COALESCE(da.added_1080p, 0)::int AS added_1080p,
-            COALESCE(da.added_720p, 0)::int AS added_720p,
-            COALESCE(da.added_sd, 0)::int AS added_sd
+            COALESCE(dst.count_4k, (
+              SELECT count_4k FROM daily_stats dst2
+              WHERE dst2.day < ds.day ORDER BY dst2.day DESC LIMIT 1
+            ), 0)::int AS count_4k,
+            COALESCE(dst.count_1080p, (
+              SELECT count_1080p FROM daily_stats dst2
+              WHERE dst2.day < ds.day ORDER BY dst2.day DESC LIMIT 1
+            ), 0)::int AS count_1080p,
+            COALESCE(dst.count_720p, (
+              SELECT count_720p FROM daily_stats dst2
+              WHERE dst2.day < ds.day ORDER BY dst2.day DESC LIMIT 1
+            ), 0)::int AS count_720p,
+            COALESCE(dst.count_sd, (
+              SELECT count_sd FROM daily_stats dst2
+              WHERE dst2.day < ds.day ORDER BY dst2.day DESC LIMIT 1
+            ), 0)::int AS count_sd
           FROM date_series ds
-          LEFT JOIN daily_additions da ON da.day = ds.day
+          LEFT JOIN daily_stats dst ON dst.day = ds.day
         )
         SELECT
           fd.day::text,
-          (qbp.count_4k_before + SUM(fd.added_4k) OVER (ORDER BY fd.day))::int AS count_4k,
-          (qbp.count_1080p_before + SUM(fd.added_1080p) OVER (ORDER BY fd.day))::int AS count_1080p,
-          (qbp.count_720p_before + SUM(fd.added_720p) OVER (ORDER BY fd.day))::int AS count_720p,
-          (qbp.count_sd_before + SUM(fd.added_sd) OVER (ORDER BY fd.day))::int AS count_sd
+          fd.count_4k,
+          fd.count_1080p,
+          fd.count_720p,
+          fd.count_sd
         FROM filled_data fd
-        CROSS JOIN quality_before_period qbp
         ORDER BY fd.day ASC
       `);
 

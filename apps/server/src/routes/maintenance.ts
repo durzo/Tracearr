@@ -3,6 +3,7 @@
  */
 
 import type { FastifyPluginAsync } from 'fastify';
+import { sql } from 'drizzle-orm';
 import type { MaintenanceJobType } from '@tracearr/shared';
 import {
   enqueueMaintenanceJob,
@@ -11,6 +12,7 @@ import {
   getMaintenanceQueueStats,
   getMaintenanceJobHistory,
 } from '../jobs/maintenanceQueue.js';
+import { db } from '../db/client.js';
 
 export const maintenanceRoutes: FastifyPluginAsync = async (app) => {
   /**
@@ -67,6 +69,13 @@ export const maintenanceRoutes: FastifyPluginAsync = async (app) => {
             'Populates joinedAt and lastActivityAt for users from session history. ' +
             'Run this if users show "Unknown" join dates or missing last activity timestamps.',
         },
+        {
+          type: 'backfill_library_snapshots',
+          name: 'Backfill Library Snapshots',
+          description:
+            'Creates historical library snapshots from library_items.created_at for proper deletion/upgrade tracking. ' +
+            'Run this once after upgrading to enable accurate Storage Trend and Quality Evolution charts.',
+        },
       ],
     };
   });
@@ -93,6 +102,7 @@ export const maintenanceRoutes: FastifyPluginAsync = async (app) => {
         'rebuild_timescale_views',
         'normalize_codecs',
         'backfill_user_dates',
+        'backfill_library_snapshots',
       ];
       if (!validTypes.includes(type as MaintenanceJobType)) {
         return reply.badRequest(`Invalid job type: ${type}`);
@@ -185,5 +195,164 @@ export const maintenanceRoutes: FastifyPluginAsync = async (app) => {
 
     const history = await getMaintenanceJobHistory(10);
     return { history };
+  });
+
+  /**
+   * GET /maintenance/snapshots - List snapshots, optionally filtered
+   *
+   * Query params:
+   * - suspicious: boolean - only show snapshots with total_size=0 for video libraries
+   * - date: string - filter by specific date (YYYY-MM-DD)
+   * - libraryId: string - filter by library
+   * - limit: number - max results (default 100)
+   */
+  app.get<{
+    Querystring: { suspicious?: string; date?: string; libraryId?: string; limit?: string };
+  }>('/snapshots', { preHandler: [app.authenticate] }, async (request, reply) => {
+    const authUser = request.user;
+    if (authUser.role !== 'owner') {
+      return reply.forbidden('Only server owners can access snapshots');
+    }
+
+    const { suspicious, date, libraryId, limit } = request.query;
+    const maxResults = Math.min(parseInt(limit || '100', 10), 500);
+
+    // Build filters
+    const suspiciousFilter =
+      suspicious === 'true'
+        ? sql`AND ls.total_size = 0 AND (ls.episode_count > 0 OR ls.movie_count > 0 OR ls.item_count > 100)`
+        : sql``;
+
+    const dateFilter = date ? sql`AND ls.snapshot_time::date = ${date}::date` : sql``;
+
+    const libraryFilter = libraryId ? sql`AND ls.library_id = ${libraryId}` : sql``;
+
+    const result = await db.execute(sql`
+      SELECT
+        ls.id,
+        ls.server_id,
+        s.name as server_name,
+        ls.library_id,
+        ls.snapshot_time,
+        ls.item_count,
+        ls.total_size,
+        ls.movie_count,
+        ls.episode_count,
+        ls.music_count,
+        CASE
+          WHEN ls.movie_count > 0 AND ls.episode_count = 0 AND ls.music_count = 0 THEN 'Movies'
+          WHEN ls.episode_count > 0 THEN 'TV Shows'
+          WHEN ls.music_count > 0 THEN 'Music'
+          ELSE 'Unknown'
+        END as library_type,
+        CASE
+          WHEN ls.total_size = 0 AND (ls.episode_count > 0 OR ls.movie_count > 0 OR ls.item_count > 100)
+          THEN true
+          ELSE false
+        END as is_suspicious
+      FROM library_snapshots ls
+      LEFT JOIN servers s ON s.id = ls.server_id
+      WHERE 1=1
+        ${suspiciousFilter}
+        ${dateFilter}
+        ${libraryFilter}
+      ORDER BY ls.snapshot_time DESC
+      LIMIT ${maxResults}
+    `);
+
+    return {
+      snapshots: result.rows,
+      count: result.rows.length,
+    };
+  });
+
+  /**
+   * DELETE /maintenance/snapshots - Delete snapshots by criteria
+   *
+   * Body params:
+   * - ids: string[] - specific snapshot IDs to delete
+   * - OR criteria object:
+   *   - suspicious: boolean - delete all suspicious snapshots
+   *   - date: string - delete all snapshots for a date
+   *   - libraryId: string - combined with date, delete for specific library
+   */
+  app.delete<{
+    Body: {
+      ids?: string[];
+      criteria?: { suspicious?: boolean; date?: string; libraryId?: string };
+    };
+  }>('/snapshots', { preHandler: [app.authenticate] }, async (request, reply) => {
+    const authUser = request.user;
+    if (authUser.role !== 'owner') {
+      return reply.forbidden('Only server owners can delete snapshots');
+    }
+
+    const { ids, criteria } = request.body || {};
+
+    if (!ids && !criteria) {
+      return reply.badRequest('Must provide either ids array or criteria object');
+    }
+
+    let deletedCount = 0;
+
+    if (ids && ids.length > 0) {
+      // Validate IDs are UUIDs
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!ids.every((id) => uuidRegex.test(id))) {
+        return reply.badRequest('Invalid snapshot ID format');
+      }
+
+      const result = await db.execute(sql`
+        DELETE FROM library_snapshots
+        WHERE id = ANY(${ids}::uuid[])
+        RETURNING id
+      `);
+      deletedCount = result.rows.length;
+    } else if (criteria) {
+      // Build delete query based on criteria
+      if (criteria.suspicious) {
+        const result = await db.execute(sql`
+          DELETE FROM library_snapshots
+          WHERE total_size = 0
+            AND (episode_count > 0 OR movie_count > 0 OR item_count > 100)
+          RETURNING id
+        `);
+        deletedCount = result.rows.length;
+      } else if (criteria.date) {
+        const libraryFilter = criteria.libraryId
+          ? sql`AND library_id = ${criteria.libraryId}`
+          : sql``;
+
+        const result = await db.execute(sql`
+          DELETE FROM library_snapshots
+          WHERE snapshot_time::date = ${criteria.date}::date
+            ${libraryFilter}
+          RETURNING id
+        `);
+        deletedCount = result.rows.length;
+      } else {
+        return reply.badRequest('Criteria must include suspicious=true or a date');
+      }
+    }
+
+    // Refresh continuous aggregate after deletion
+    if (deletedCount > 0) {
+      try {
+        await db.execute(sql`
+          CALL refresh_continuous_aggregate(
+            'library_stats_daily',
+            (SELECT MIN(snapshot_time)::date FROM library_snapshots),
+            NOW()::date + INTERVAL '1 day'
+          )
+        `);
+      } catch (error) {
+        console.error('[Maintenance] Failed to refresh continuous aggregate:', error);
+      }
+    }
+
+    return {
+      deleted: deletedCount,
+      message: `Deleted ${deletedCount} snapshot(s)`,
+    };
   });
 };
