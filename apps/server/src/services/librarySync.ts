@@ -542,7 +542,10 @@ export class LibrarySyncService {
     let showCount = 0;
     let musicCount = 0;
 
-    for (const item of items) {
+    // Filter to only items with valid file size to match backfill behavior.
+    const validItems = items.filter((item) => item.fileSize && item.fileSize > 0);
+
+    for (const item of validItems) {
       // Resolution counts
       const res = item.videoResolution?.toLowerCase();
       if (res === '4k' || res === '2160p' || res === 'uhd') {
@@ -566,9 +569,7 @@ export class LibrarySyncService {
       }
 
       // File size
-      if (item.fileSize) {
-        totalSize += item.fileSize;
-      }
+      totalSize += item.fileSize!;
 
       // Media type counts
       switch (item.mediaType) {
@@ -618,12 +619,12 @@ export class LibrarySyncService {
       .limit(1);
 
     // Update existing snapshot if this one has more/better data, otherwise insert
-    if (existing && items.length >= existing.itemCount) {
+    if (existing && validItems.length >= existing.itemCount) {
       await db
         .update(librarySnapshots)
         .set({
           snapshotTime: new Date(),
-          itemCount: items.length,
+          itemCount: validItems.length,
           totalSize,
           movieCount,
           episodeCount,
@@ -637,7 +638,7 @@ export class LibrarySyncService {
           hevcCount,
           h264Count,
           av1Count,
-          enrichmentPending: items.length,
+          enrichmentPending: validItems.length,
           enrichmentComplete: 0,
         })
         .where(eq(librarySnapshots.id, existing.id));
@@ -655,7 +656,7 @@ export class LibrarySyncService {
         serverId,
         libraryId,
         snapshotTime: new Date(),
-        itemCount: items.length,
+        itemCount: validItems.length,
         totalSize,
         movieCount,
         episodeCount,
@@ -669,7 +670,7 @@ export class LibrarySyncService {
         hevcCount,
         h264Count,
         av1Count,
-        enrichmentPending: items.length, // All items need enrichment initially
+        enrichmentPending: validItems.length, // Valid items need enrichment
         enrichmentComplete: 0,
       })
       .returning({ id: librarySnapshots.id });
