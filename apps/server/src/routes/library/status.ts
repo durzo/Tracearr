@@ -25,11 +25,11 @@ interface LibraryStatusResponse {
   backfillState: 'active' | 'waiting' | 'delayed' | null;
   /** Total library items count */
   itemCount: number;
-  /** Total snapshots count */
+  /** Total aggregate data points (days with data in library_stats_daily) */
   snapshotCount: number;
   /** Earliest item date (when first content was added) */
   earliestItemDate: string | null;
-  /** Earliest snapshot date */
+  /** Earliest date with aggregate data (from library_stats_daily) */
   earliestSnapshotDate: string | null;
   /** Days of history that could be backfilled */
   backfillDays: number | null;
@@ -51,18 +51,19 @@ export const libraryStatusRoute: FastifyPluginAsync = async (app) => {
       // Build WHERE clause for server filtering
       const serverFilter = serverId ? sql`AND li.server_id = ${serverId}::uuid` : sql``;
       const serverFilterWhere = serverId ? sql`WHERE li.server_id = ${serverId}::uuid` : sql``;
-      const snapshotServerFilter = serverId ? sql`WHERE ls.server_id = ${serverId}::uuid` : sql``;
+      const aggregateServerFilter = serverId ? sql`WHERE lsd.server_id = ${serverId}::uuid` : sql``;
 
       // Get library status in a single query
-      // Note: earliest_item only considers items with valid file_size since items without
-      // size data can't produce meaningful snapshots (see snapshotValidation.ts)
+      // Note: We check library_stats_daily (continuous aggregate) instead of raw library_snapshots
+      // because charts query the aggregate. This ensures the banner reflects actual chart data availability.
+      // The aggregate persists even after raw snapshots are cleaned up.
       const result = await db.execute(sql`
         SELECT
           (SELECT MIN(li.created_at)::date FROM library_items li
            WHERE ${validLibraryItemCondition('li')} ${serverFilter}) AS earliest_item,
-          (SELECT MIN(ls.snapshot_time)::date FROM library_snapshots ls ${snapshotServerFilter}) AS earliest_snapshot,
+          (SELECT MIN(lsd.day)::date FROM library_stats_daily lsd ${aggregateServerFilter}) AS earliest_snapshot,
           (SELECT COUNT(*)::int FROM library_items li ${serverFilterWhere}) AS item_count,
-          (SELECT COUNT(*)::int FROM library_snapshots ls ${snapshotServerFilter}) AS snapshot_count
+          (SELECT COUNT(DISTINCT lsd.day)::int FROM library_stats_daily lsd ${aggregateServerFilter}) AS snapshot_count
       `);
 
       const row = result.rows[0] as {

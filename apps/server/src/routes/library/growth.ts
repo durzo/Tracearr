@@ -3,8 +3,8 @@
  *
  * GET /growth - Time-series library growth data points
  *
- * Uses pre-computed library_snapshots for efficient growth tracking.
- * Snapshots are created daily by the maintenance job.
+ * Uses library_stats_daily continuous aggregate for efficient growth tracking.
+ * This avoids lock exhaustion from scanning 1000+ raw library_snapshots chunks.
  */
 
 import type { FastifyPluginAsync } from 'fastify';
@@ -59,8 +59,7 @@ export const libraryGrowthRoute: FastifyPluginAsync = async (app) => {
   /**
    * GET /growth - Library growth timeline
    *
-   * Returns time-series data from pre-computed library_snapshots.
-   * Much more efficient than computing growth from library_items on the fly.
+   * Returns time-series data from library_stats_daily continuous aggregate.
    */
   app.get<{ Querystring: LibraryGrowthQueryInput }>(
     '/growth',
@@ -99,28 +98,28 @@ export const libraryGrowthRoute: FastifyPluginAsync = async (app) => {
         }
       }
 
-      // Build server filter for snapshots table
+      // Build server filter for library_stats_daily aggregate
       const serverFilter = serverId
-        ? sql`AND ls.server_id = ${serverId}::uuid`
+        ? sql`AND lsd.server_id = ${serverId}::uuid`
         : authUser.serverIds?.length
-          ? sql`AND ls.server_id = ANY(${authUser.serverIds}::uuid[])`
+          ? sql`AND lsd.server_id = ANY(${authUser.serverIds}::uuid[])`
           : sql``;
 
       // Optional library filter
-      const libraryFilter = libraryId ? sql`AND ls.library_id = ${libraryId}` : sql``;
+      const libraryFilter = libraryId ? sql`AND lsd.library_id = ${libraryId}` : sql``;
 
       // Calculate date range
       const startDate = getStartDate(period);
       const endDate = new Date();
 
-      // For 'all' period, find the earliest snapshot date from library_snapshots
+      // For 'all' period, find the earliest date from library_stats_daily aggregate
       let effectiveStartDate: Date;
       if (startDate) {
         effectiveStartDate = startDate;
       } else {
         const earliestResult = await db.execute(sql`
-          SELECT MIN(snapshot_time)::date AS earliest
-          FROM library_snapshots ls
+          SELECT MIN(day)::date AS earliest
+          FROM library_stats_daily lsd
           WHERE 1=1
             ${serverFilter}
             ${libraryFilter}
@@ -129,34 +128,22 @@ export const libraryGrowthRoute: FastifyPluginAsync = async (app) => {
         effectiveStartDate = earliest ? new Date(earliest) : new Date('2020-01-01');
       }
 
-      // Query from library_snapshots - much more efficient than generate_series
-      // Snapshots are point-in-time markers - use MAX per library per day, then SUM across libraries
+      // Query from library_stats_daily continuous aggregate
+      // This avoids lock exhaustion from scanning 1000+ raw library_snapshots chunks
       const result = await db.execute(sql`
-        WITH library_daily AS (
-          -- Get MAX counts per library per day (handles multiple snapshots per day)
+        WITH daily_totals AS (
+          -- Sum across all libraries for each day (aggregate already has MAX per library)
           SELECT
-            DATE(ls.snapshot_time AT TIME ZONE ${tz}) AS day,
-            ls.server_id,
-            ls.library_id,
-            MAX(ls.movie_count) AS movies,
-            MAX(ls.episode_count) AS episodes,
-            MAX(ls.music_count) AS music
-          FROM library_snapshots ls
-          WHERE ls.snapshot_time >= ${effectiveStartDate.toISOString()}::timestamptz
-            AND ls.snapshot_time <= ${endDate.toISOString()}::timestamptz
+            lsd.day::date AS day,
+            COALESCE(SUM(lsd.movie_count), 0)::int AS movies,
+            COALESCE(SUM(lsd.episode_count), 0)::int AS episodes,
+            COALESCE(SUM(lsd.music_count), 0)::int AS music
+          FROM library_stats_daily lsd
+          WHERE lsd.day >= ${effectiveStartDate.toISOString()}::date
+            AND lsd.day <= ${endDate.toISOString()}::date
             ${serverFilter}
             ${libraryFilter}
-          GROUP BY 1, ls.server_id, ls.library_id
-        ),
-        daily_totals AS (
-          -- Sum across all libraries for each day
-          SELECT
-            day,
-            SUM(movies)::int AS movies,
-            SUM(episodes)::int AS episodes,
-            SUM(music)::int AS music
-          FROM library_daily
-          GROUP BY day
+          GROUP BY lsd.day::date
         ),
         with_additions AS (
           -- Calculate additions as difference from previous day

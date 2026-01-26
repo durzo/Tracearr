@@ -19,8 +19,9 @@ import { PRIMARY_MEDIA_TYPES_SQL_LITERAL } from '../constants/mediaTypes.js';
  * - 2: Added media_type IN ('movie', 'episode') filter to all aggregates
  * - 3: Added daily_bandwidth_by_user aggregate for bandwidth analytics
  * - 4: Added library_stats_daily and content_quality_daily aggregates for library statistics
+ * - 5: Added music_count to library_stats_daily for /growth route optimization
  */
-const AGGREGATE_SCHEMA_VERSION = 4;
+const AGGREGATE_SCHEMA_VERSION = 5;
 
 /** Config for a continuous aggregate view */
 interface AggregateDefinition {
@@ -304,6 +305,7 @@ function getAggregateDefinitions(): AggregateDefinition[] {
           MAX(movie_count) AS movie_count,
           MAX(episode_count) AS episode_count,
           MAX(show_count) AS show_count,
+          MAX(music_count) AS music_count,
           MAX(count_4k) AS count_4k,
           MAX(count_1080p) AS count_1080p,
           MAX(count_720p) AS count_720p,
@@ -324,6 +326,7 @@ function getAggregateDefinitions(): AggregateDefinition[] {
           MAX(movie_count) AS movie_count,
           MAX(episode_count) AS episode_count,
           MAX(show_count) AS show_count,
+          MAX(music_count) AS music_count,
           MAX(count_4k) AS count_4k,
           MAX(count_1080p) AS count_1080p,
           MAX(count_720p) AS count_720p,
@@ -1673,8 +1676,10 @@ async function enableLibrarySnapshotsCompression(): Promise<void> {
  * Drops chunks older than 1 year automatically.
  */
 async function addLibrarySnapshotsRetention(): Promise<void> {
+  // 90 days retention for raw snapshots - aggregates (library_stats_daily) preserve
+  // summarized history indefinitely. Matches manual cleanup_old_chunks job.
   await db.execute(sql`
-    SELECT add_retention_policy('library_snapshots', INTERVAL '1 year', if_not_exists => true)
+    SELECT add_retention_policy('library_snapshots', INTERVAL '90 days', if_not_exists => true)
   `);
 }
 
