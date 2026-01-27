@@ -34,10 +34,8 @@ services:
       - tracearr_postgres:/data/postgres
       - tracearr_redis:/data/redis
       - tracearr_data:/data/tracearr
-      # Bind mount alternative (uncomment and adjust paths):
-      # - ./data/postgres:/data/postgres
-      # - ./data/redis:/data/redis
-      # - ./data/tracearr:/data/tracearr
+      # Bind mounts are not recommended for supervised installs
+      # due to permission issues with PostgreSQL and Redis
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/health"]
