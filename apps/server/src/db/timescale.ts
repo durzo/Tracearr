@@ -308,7 +308,12 @@ async function createAggregate(
   }
 
   const sqlStatement = hasToolkit ? def.toolkitSql : def.fallbackSql;
-  await db.execute(sql.raw(sqlStatement));
+  try {
+    await db.execute(sql.raw(sqlStatement));
+  } catch (error) {
+    console.error(`[TimescaleDB] Failed to create aggregate ${def.name}:`, error);
+    throw error; // Re-throw to allow caller to handle
+  }
 }
 
 /**
@@ -1085,7 +1090,7 @@ export async function checkAggregateNeedsRebuild(): Promise<{
     const result = await db.execute(sql`
       SELECT
         (SELECT MIN(started_at) FROM sessions) AS earliest_session,
-        (SELECT MIN(bucket) FROM daily_content_engagement) AS earliest_aggregate,
+        (SELECT MIN(day) FROM daily_content_engagement) AS earliest_aggregate,
         (SELECT COUNT(*) FROM sessions) AS session_count
     `);
 
@@ -1364,10 +1369,14 @@ const ENGAGEMENT_VIEWS = [
  */
 async function engagementViewsExist(): Promise<boolean> {
   try {
+    const viewNames = sql.join(
+      ENGAGEMENT_VIEWS.map((v) => sql`${v}`),
+      sql`, `
+    );
     const result = await db.execute(sql`
       SELECT COUNT(*)::int as count FROM information_schema.views
       WHERE table_schema = 'public'
-        AND table_name = ANY(${ENGAGEMENT_VIEWS})
+        AND table_name IN (${viewNames})
     `);
     return (result.rows[0] as { count: number })?.count === ENGAGEMENT_VIEWS.length;
   } catch {
@@ -1860,7 +1869,7 @@ async function isLibrarySnapshotsCompressionEnabled(): Promise<boolean> {
  * This function is idempotent and safe to run multiple times:
  * - Converts table to hypertable with 1-day chunks
  * - Enables compression after 3-day window (allows enrichment to complete)
- * - Adds 1-year retention policy
+ * - Adds 90-day retention policy
  *
  * Called from initTimescaleDB() on server startup.
  */
@@ -1914,7 +1923,7 @@ export async function initLibrarySnapshotsHypertable(): Promise<{
 
   // Add retention policy (idempotent via if_not_exists)
   await addLibrarySnapshotsRetention();
-  actions.push('Ensured 1-year retention policy on library_snapshots');
+  actions.push('Ensured 90-day retention policy on library_snapshots');
 
   // Check and create library continuous aggregates
   const existingLibraryAggregates = await getLibrarySnapshotAggregates();

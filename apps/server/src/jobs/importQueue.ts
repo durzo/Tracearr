@@ -19,6 +19,7 @@ import type {
 import { TautulliService } from '../services/tautulli.js';
 import { importJellystatBackup } from '../services/jellystat.js';
 import { getPubSubService } from '../services/cache.js';
+import { extendJobLock } from './lockUtils.js';
 
 // Job data types
 export interface TautulliImportJobData {
@@ -221,14 +222,8 @@ async function processTautulliImportJob(
         : 0;
     await job.updateProgress(percent);
 
-    // Extend lock to prevent stalled job detection during long imports
-    // This is critical for large imports (300k+ records) that can take hours
-    try {
-      await job.extendLock(job.token ?? '', 5 * 60 * 1000); // Extend by 5 minutes
-    } catch {
-      // Lock extension can fail if job was already moved to another state
-      console.warn(`[Import] Failed to extend lock for job ${job.id}`);
-    }
+    // Extend lock - fails fast if lock is lost to avoid wasted work on large imports
+    await extendJobLock(job, 5 * 60 * 1000);
 
     // Publish to WebSocket for UI
     if (pubSubService) {

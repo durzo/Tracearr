@@ -11,6 +11,7 @@
  */
 
 import { Queue, Worker, type Job, type ConnectionOptions } from 'bullmq';
+import { extendJobLock } from './lockUtils.js';
 import type {
   MaintenanceJobProgress,
   MaintenanceJobResult,
@@ -403,12 +404,8 @@ async function processNormalizePlayersJob(
       await job.updateProgress(percent);
       await publishProgress();
 
-      // Extend lock to prevent stalled job detection
-      try {
-        await job.extendLock(job.token ?? '', 10 * 60 * 1000);
-      } catch {
-        console.warn(`[Maintenance] Failed to extend lock for job ${job.id}`);
-      }
+      // Extend lock - fails fast if lock is lost to avoid wasted work
+      await extendJobLock(job);
 
       // Brief pause between batches to let other operations through
       if (totalProcessed < totalRecords) {
@@ -635,11 +632,8 @@ async function processNormalizeCountriesJob(
       await job.updateProgress(percent);
       await publishProgress();
 
-      try {
-        await job.extendLock(job.token ?? '', 10 * 60 * 1000);
-      } catch {
-        console.warn(`[Maintenance] Failed to extend lock for job ${job.id}`);
-      }
+      // Extend lock - fails fast if lock is lost to avoid wasted work
+      await extendJobLock(job);
 
       if (totalProcessed < totalRecords) {
         await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
@@ -870,11 +864,8 @@ async function processFixImportedProgressJob(
       await job.updateProgress(percent);
       await publishProgress();
 
-      try {
-        await job.extendLock(job.token ?? '', 10 * 60 * 1000);
-      } catch {
-        console.warn(`[Maintenance] Failed to extend lock for job ${job.id}`);
-      }
+      // Extend lock - fails fast if lock is lost to avoid wasted work
+      await extendJobLock(job);
 
       if (totalProcessed < totalRecords) {
         await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
@@ -946,6 +937,10 @@ async function processRebuildTimescaleViewsJob(
 
     const fullRefresh = job.data.options?.fullRefresh ?? false;
 
+    // Track last lock extension to avoid excessive Redis calls
+    let lastLockExtension = Date.now();
+    const LOCK_EXTENSION_INTERVAL = 60 * 1000; // Extend lock every 60 seconds
+
     // Call the rebuild function with options
     const result = await rebuildTimescaleViews({
       fullRefresh,
@@ -960,6 +955,12 @@ async function processRebuildTimescaleViewsJob(
         // Update job progress percentage
         const percent = Math.round((step / total) * 100);
         void job.updateProgress(percent);
+
+        // Extend lock periodically to prevent stalled job detection
+        if (Date.now() - lastLockExtension > LOCK_EXTENSION_INTERVAL) {
+          void extendJobLock(job);
+          lastLockExtension = Date.now();
+        }
       },
     });
 
@@ -1130,11 +1131,8 @@ async function processNormalizeCodecsJob(
       await job.updateProgress(percent);
       await publishProgress();
 
-      try {
-        await job.extendLock(job.token ?? '', 10 * 60 * 1000);
-      } catch {
-        console.warn(`[Maintenance] Failed to extend lock for job ${job.id}`);
-      }
+      // Extend lock - fails fast if lock is lost to avoid wasted work
+      await extendJobLock(job);
     }
 
     const durationMs = Date.now() - startTime;
@@ -1268,6 +1266,9 @@ async function processBackfillUserDatesJob(
     await job.updateProgress(50);
     await publishProgress();
 
+    // Extend lock after first bulk update - these can take time on large databases
+    await extendJobLock(job);
+
     // Step 2: Update lastActivityAt to most recent session for all users with sessions
     // We update even if not NULL to ensure it's the most recent activity
     try {
@@ -1287,6 +1288,9 @@ async function processBackfillUserDatesJob(
       console.error('[Maintenance] Error updating lastActivityAt:', error);
       totalErrors++;
     }
+
+    // Extend lock after second bulk update
+    await extendJobLock(job);
 
     const totalUpdated = joinedAtUpdated + lastActivityUpdated;
     const durationMs = Date.now() - startTime;
@@ -1562,6 +1566,9 @@ async function processBackfillLibrarySnapshotsJob(
 
           librarySnapshotsCreated += Number(result.rowCount ?? 0);
 
+          // Extend lock after each batch - large libraries can have many 90-day batches
+          await extendJobLock(job);
+
           // Move to next batch
           batchStart = new Date(batchEnd);
           batchStart.setDate(batchStart.getDate() + 1);
@@ -1578,12 +1585,8 @@ async function processBackfillLibrarySnapshotsJob(
         await job.updateProgress(percent);
         await publishProgress();
 
-        // Extend lock to prevent stalled job detection
-        try {
-          await job.extendLock(job.token ?? '', 10 * 60 * 1000);
-        } catch {
-          console.warn(`[Maintenance] Failed to extend lock for job ${job.id}`);
-        }
+        // Extend lock after each library as well
+        await extendJobLock(job);
       } catch (error) {
         console.error(
           `[Maintenance] Error processing library ${lib.server_id}/${lib.library_id}:`,
@@ -1742,7 +1745,7 @@ async function processCleanupOldChunksJob(
       SELECT COUNT(*) as count
       FROM timescaledb_information.chunks
       WHERE hypertable_name = 'library_snapshots'
-        AND range_end < NOW() - INTERVAL '${sql.raw(String(RETENTION_DAYS))} days'
+        AND range_end < NOW() - INTERVAL '90 days'
     `);
 
     const totalChunks = Number((countResult.rows[0] as { count: string })?.count ?? 0);
@@ -1842,13 +1845,6 @@ async function processCleanupOldChunksJob(
         const percent = Math.min(100, Math.round((totalDropped / totalChunks) * 100));
         await job.updateProgress(percent);
         await publishProgress();
-
-        // Extend lock
-        try {
-          await job.extendLock(job.token ?? '', 10 * 60 * 1000);
-        } catch {
-          console.warn(`[Maintenance] Failed to extend lock for job ${job.id}`);
-        }
       } catch (error) {
         console.error(
           `[Maintenance] Error dropping chunks for ${currentDate.toISOString()} to ${batchEnd.toISOString()}:`,
@@ -1863,6 +1859,9 @@ async function processCleanupOldChunksJob(
           break;
         }
       }
+
+      // Extend lock after each batch - fails fast if lock is lost
+      await extendJobLock(job);
 
       // Move to next batch
       currentDate = new Date(batchEnd);
