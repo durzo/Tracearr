@@ -77,6 +77,8 @@ export type {
   JellystatImportResult,
   // Library sync
   LibrarySyncProgress,
+  // Heavy ops coordination
+  HeavyOpsWaitingFor,
   // Maintenance jobs
   MaintenanceJobType,
   MaintenanceJobStatus,

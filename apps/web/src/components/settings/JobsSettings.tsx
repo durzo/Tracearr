@@ -205,8 +205,8 @@ export function JobsSettings() {
         if (result.progress) {
           const progressData = result.progress as MaintenanceJobProgress;
           setProgress(progressData);
-          // Only set as running if status is actually 'running'
-          if (progressData.status === 'running') {
+          // Set as running if status is 'running' or 'waiting'
+          if (progressData.status === 'running' || progressData.status === 'waiting') {
             setRunningJob(progressData.type);
           }
         }
@@ -224,7 +224,7 @@ export function JobsSettings() {
 
     const handleProgress = (data: MaintenanceJobProgress) => {
       setProgress(data);
-      setRunningJob(data.status === 'running' ? data.type : null);
+      setRunningJob(data.status === 'running' || data.status === 'waiting' ? data.type : null);
 
       if (data.status === 'complete') {
         toast.success(t('toast.success.jobCompleted.title'), {
@@ -410,10 +410,17 @@ export function JobsSettings() {
                     className="shrink-0 self-start sm:self-center"
                   >
                     {isRunning ? (
-                      <>
-                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                        Running
-                      </>
+                      progress?.status === 'waiting' ? (
+                        <>
+                          <Clock className="mr-1.5 h-3.5 w-3.5 animate-pulse" />
+                          Waiting
+                        </>
+                      ) : (
+                        <>
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          Running
+                        </>
+                      )
                     ) : (
                       <>
                         <Play className="mr-1.5 h-3.5 w-3.5" />
@@ -462,6 +469,16 @@ export function JobsSettings() {
                           errors
                         </span>
                       )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Inline Waiting Status */}
+                {isRunning && progress?.status === 'waiting' && (
+                  <div className="mt-4 border-t pt-4">
+                    <div className="flex items-center gap-2 text-sm">
+                      <Clock className="text-muted-foreground h-4 w-4 animate-pulse" />
+                      <span className="text-muted-foreground">{progress.message}</span>
                     </div>
                   </div>
                 )}

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Loader2, Clock, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Loader2, Clock, CheckCircle2, AlertCircle, Activity } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -19,6 +19,8 @@ function TaskIcon({ status }: { status: RunningTask['status'] }) {
   switch (status) {
     case 'running':
       return <Loader2 className="text-primary h-4 w-4 animate-spin" />;
+    case 'waiting':
+      return <Clock className="text-muted-foreground h-4 w-4 animate-pulse" />;
     case 'pending':
       return <Clock className="text-muted-foreground h-4 w-4" />;
     case 'complete':
@@ -34,10 +36,23 @@ function TaskItem({ task }: { task: RunningTask }) {
   const startedAt = new Date(task.startedAt);
   const timeAgo = formatDistanceToNow(startedAt, { addSuffix: true });
 
+  const getBadgeContent = () => {
+    switch (task.status) {
+      case 'running':
+        return 'Running';
+      case 'waiting':
+        return 'Waiting';
+      default:
+        return 'Queued';
+    }
+  };
+
   return (
     <div className="space-y-2 px-2 py-3">
       <div className="flex items-start gap-3">
-        <TaskIcon status={task.status} />
+        <div className="mt-0.5">
+          <TaskIcon status={task.status} />
+        </div>
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex items-center justify-between gap-2">
             <span className="truncate text-sm font-medium">{task.name}</span>
@@ -45,7 +60,7 @@ function TaskItem({ task }: { task: RunningTask }) {
               variant={task.status === 'running' ? 'default' : 'secondary'}
               className="shrink-0 text-xs"
             >
-              {task.status === 'running' ? 'Running' : 'Queued'}
+              {getBadgeContent()}
             </Badge>
           </div>
           {task.context && <p className="text-muted-foreground truncate text-xs">{task.context}</p>}
@@ -104,9 +119,12 @@ export function RunningTasksDropdown() {
     return () => clearInterval(interval);
   }, [fetchTasks]);
 
-  // Filter to show only active tasks (running or pending)
-  const activeTasks = tasks.filter((t) => t.status === 'running' || t.status === 'pending');
+  // Filter to show only active tasks (running, waiting, or pending)
+  const activeTasks = tasks.filter(
+    (t) => t.status === 'running' || t.status === 'waiting' || t.status === 'pending'
+  );
   const runningTasks = activeTasks.filter((t) => t.status === 'running');
+  const waitingTasks = activeTasks.filter((t) => t.status === 'waiting');
   const queuedTasks = activeTasks.filter((t) => t.status === 'pending');
 
   // Don't render anything if no active tasks
@@ -128,7 +146,7 @@ export function RunningTasksDropdown() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80">
         <DropdownMenuLabel className="flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin" />
+          <Activity className="h-4 w-4" />
           Running Tasks
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
@@ -141,9 +159,21 @@ export function RunningTasksDropdown() {
           </>
         )}
 
-        {queuedTasks.length > 0 && (
+        {waitingTasks.length > 0 && (
           <>
             {runningTasks.length > 0 && <DropdownMenuSeparator />}
+            <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+              Waiting
+            </DropdownMenuLabel>
+            {waitingTasks.map((task) => (
+              <TaskItem key={task.id} task={task} />
+            ))}
+          </>
+        )}
+
+        {queuedTasks.length > 0 && (
+          <>
+            {(runningTasks.length > 0 || waitingTasks.length > 0) && <DropdownMenuSeparator />}
             <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
               Queued
             </DropdownMenuLabel>

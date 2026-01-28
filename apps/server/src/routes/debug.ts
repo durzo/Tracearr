@@ -11,7 +11,10 @@ import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { getActiveAggregateNames } from '../db/timescale.js';
-import { clearStuckMaintenanceJobs } from '../jobs/maintenanceQueue.js';
+import { clearStuckMaintenanceJobs, obliterateMaintenanceQueue } from '../jobs/maintenanceQueue.js';
+import { obliterateImportQueue } from '../jobs/importQueue.js';
+import { obliterateLibrarySyncQueue } from '../jobs/librarySyncQueue.js';
+import { forceReleaseHeavyOpsLock } from '../jobs/heavyOpsLock.js';
 import {
   sessions,
   violations,
@@ -413,6 +416,38 @@ export const debugRoutes: FastifyPluginAsync = async (app) => {
       message:
         result.cleared > 0 ? `Cleared ${result.cleared} stuck job(s)` : 'No stuck jobs found',
       cleared: result.cleared,
+    };
+  });
+
+  /**
+   * POST /debug/obliterate-all-jobs - Nuclear option: clear ALL jobs from ALL queues
+   *
+   * Completely wipes maintenance, import, and library sync queues.
+   * Also releases any heavy operation locks.
+   * Use when job system is in an unrecoverable state.
+   */
+  app.post('/obliterate-all-jobs', async () => {
+    const results = await Promise.all([
+      obliterateMaintenanceQueue(),
+      obliterateImportQueue(),
+      obliterateLibrarySyncQueue(),
+    ]);
+
+    // Also release any heavy ops lock
+    await forceReleaseHeavyOpsLock();
+
+    const allSuccess = results.every((r) => r.success);
+
+    return {
+      success: allSuccess,
+      message: allSuccess
+        ? 'All job queues obliterated and locks released'
+        : 'Some queues failed to obliterate (check logs)',
+      queues: {
+        maintenance: results[0].success,
+        import: results[1].success,
+        librarySync: results[2].success,
+      },
     };
   });
 

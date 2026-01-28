@@ -20,6 +20,12 @@ import { TautulliService } from '../services/tautulli.js';
 import { importJellystatBackup } from '../services/jellystat.js';
 import { getPubSubService } from '../services/cache.js';
 import { extendJobLock } from './lockUtils.js';
+import {
+  acquireHeavyOpsLock,
+  releaseHeavyOpsLock,
+  extendHeavyOpsLock,
+  type HeavyOpsLockHolder,
+} from './heavyOpsLock.js';
 
 // Job data types
 export interface TautulliImportJobData {
@@ -53,6 +59,18 @@ let connectionOptions: ConnectionOptions | null = null;
 let importQueue: Queue<ImportJobData> | null = null;
 let importWorker: Worker<ImportJobData> | null = null;
 let dlqQueue: Queue<ImportJobData> | null = null;
+
+// Cached import progress for polling access (in addition to websocket broadcasts)
+interface CachedImportProgress {
+  jobId: string;
+  type: 'tautulli' | 'jellystat';
+  serverId: string;
+  status: 'waiting' | 'fetching' | 'processing' | 'complete' | 'error';
+  progress: TautulliImportProgress | null;
+  waitingFor?: HeavyOpsLockHolder;
+  startedAt: string;
+}
+let activeImportProgress: CachedImportProgress | null = null;
 
 /**
  * Initialize the import queue with Redis connection
@@ -115,11 +133,122 @@ export function startImportWorker(): void {
     return;
   }
 
+  // Recover any stuck jobs from a previous crash before starting the worker
+  if (importQueue) {
+    importQueue
+      .getJobs(['active'])
+      .then(async (stuckJobs) => {
+        if (stuckJobs.length > 0) {
+          console.log(
+            `[Import] Found ${stuckJobs.length} stuck job(s) from previous run, recovering...`
+          );
+          for (const job of stuckJobs) {
+            try {
+              // Move back to waiting so the new worker can pick it up
+              await job.retry('failed');
+              console.log(`[Import] Recovered stuck job ${job.id} - moved to waiting`);
+            } catch (err) {
+              console.warn(`[Import] Failed to recover job ${job.id}, removing:`, err);
+              try {
+                await job.remove();
+              } catch {
+                // Job might have already been handled
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('[Import] Failed to check for stuck jobs:', err);
+      });
+  }
+
   importWorker = new Worker<ImportJobData>(
     QUEUE_NAME,
     async (job: Job<ImportJobData>) => {
       const startTime = Date.now();
+      const jobDescription = job.data.type === 'tautulli' ? 'Tautulli import' : 'Jellystat import';
       console.log(`[Import] Starting job ${job.id} for server ${job.data.serverId}`);
+
+      // Initialize cached progress
+      activeImportProgress = {
+        jobId: job.id!,
+        type: job.data.type,
+        serverId: job.data.serverId,
+        status: 'waiting',
+        progress: null,
+        startedAt: new Date().toISOString(),
+      };
+
+      // Acquire heavy operations lock (waits if another heavy op is running)
+      let lockHolder: HeavyOpsLockHolder | null;
+      const pubSubService = getPubSubService();
+      const WAIT_INTERVAL_MS = 5000; // Check every 5 seconds
+      const MAX_WAIT_MS = 4 * 60 * 60 * 1000; // Max 4 hours wait
+      let waitedMs = 0;
+
+      while ((lockHolder = await acquireHeavyOpsLock('import', job.id!, jobDescription)) !== null) {
+        // Update cached progress with waiting status
+        activeImportProgress = {
+          jobId: job.id!,
+          type: job.data.type,
+          serverId: job.data.serverId,
+          status: 'waiting',
+          progress: null,
+          waitingFor: lockHolder,
+          startedAt: activeImportProgress.startedAt,
+        };
+
+        // Broadcast waiting status to frontend
+        if (pubSubService) {
+          void pubSubService.publish('import:progress', {
+            status: 'waiting',
+            totalRecords: 0,
+            fetchedRecords: 0,
+            processedRecords: 0,
+            importedRecords: 0,
+            updatedRecords: 0,
+            skippedRecords: 0,
+            duplicateRecords: 0,
+            unknownUserRecords: 0,
+            activeSessionRecords: 0,
+            errorRecords: 0,
+            currentPage: 0,
+            totalPages: 0,
+            message: `Waiting for ${lockHolder.description} to complete...`,
+            jobId: job.id,
+            waitingFor: {
+              jobType: lockHolder.jobType,
+              description: lockHolder.description,
+              startedAt: lockHolder.startedAt,
+            },
+          });
+        }
+
+        console.log(
+          `[Import] Job ${job.id} waiting for ${lockHolder.jobType} job: ${lockHolder.description}`
+        );
+
+        // Extend BullMQ job lock while waiting
+        await extendJobLock(job);
+
+        // Wait before retry
+        await new Promise((resolve) => setTimeout(resolve, WAIT_INTERVAL_MS));
+        waitedMs += WAIT_INTERVAL_MS;
+
+        if (waitedMs >= MAX_WAIT_MS) {
+          activeImportProgress = null;
+          throw new Error(
+            `Timed out waiting for ${lockHolder.description} after ${MAX_WAIT_MS / 1000 / 60} minutes`
+          );
+        }
+      }
+
+      // Update status to fetching now that we have the lock
+      activeImportProgress.status = 'fetching';
+      activeImportProgress.waitingFor = undefined;
+
+      console.log(`[Import] Job ${job.id} acquired heavy ops lock`);
 
       try {
         const result = await processImportJob(job);
@@ -130,6 +259,11 @@ export function startImportWorker(): void {
         const duration = Math.round((Date.now() - startTime) / 1000);
         console.error(`[Import] Job ${job.id} failed after ${duration}s:`, error);
         throw error;
+      } finally {
+        // Always release the heavy ops lock and clear cached progress
+        await releaseHeavyOpsLock(job.id!);
+        activeImportProgress = null;
+        console.log(`[Import] Job ${job.id} released heavy ops lock`);
       }
     },
     {
@@ -149,11 +283,13 @@ export function startImportWorker(): void {
   // Handle stalled jobs
   importWorker.on('stalled', (jobId) => {
     console.warn(`[Import] Job ${jobId} stalled - will be retried`);
+    activeImportProgress = null;
   });
 
   // Handle job failures - notify frontend and move to DLQ if retries exhausted
   importWorker.on('failed', (job, error) => {
     if (!job) return;
+    activeImportProgress = null;
 
     // Always notify frontend of failure
     const pubSubService = getPubSubService();
@@ -221,6 +357,12 @@ async function processTautulliImportJob(
         ? Math.round((progress.processedRecords / progress.totalRecords) * 100)
         : 0;
     await job.updateProgress(percent);
+
+    // Update cached progress for polling access
+    if (activeImportProgress && activeImportProgress.jobId === job.id) {
+      activeImportProgress.status = progress.status === 'fetching' ? 'fetching' : 'processing';
+      activeImportProgress.progress = progress;
+    }
 
     // Extend lock - fails fast if lock is lost to avoid wasted work on large imports
     await extendJobLock(job, 5 * 60 * 1000);
@@ -555,6 +697,13 @@ export async function cancelJellystatImport(jobId: string): Promise<boolean> {
 }
 
 /**
+ * Get cached import progress (for polling access in addition to websockets)
+ */
+export function getActiveImportProgress(): CachedImportProgress | null {
+  return activeImportProgress;
+}
+
+/**
  * Get all active/pending import jobs
  */
 export async function getAllActiveImports(): Promise<
@@ -587,6 +736,31 @@ export async function getAllActiveImports(): Promise<
       };
     })
   );
+}
+
+/**
+ * Obliterate the import queue - removes ALL jobs (nuclear option)
+ *
+ * This completely wipes the queue, including completed and failed jobs.
+ * Use when the queue is in an unrecoverable state.
+ */
+export async function obliterateImportQueue(): Promise<{ success: boolean }> {
+  if (!importQueue) {
+    return { success: false };
+  }
+
+  try {
+    await importQueue.obliterate({ force: true });
+    if (dlqQueue) {
+      await dlqQueue.obliterate({ force: true });
+    }
+    activeImportProgress = null;
+    console.log('[Import] Queue obliterated');
+    return { success: true };
+  } catch (error) {
+    console.error('[Import] Failed to obliterate queue:', error);
+    return { success: false };
+  }
 }
 
 /**

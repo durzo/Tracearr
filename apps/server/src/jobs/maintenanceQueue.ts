@@ -12,6 +12,11 @@
 
 import { Queue, Worker, type Job, type ConnectionOptions } from 'bullmq';
 import { extendJobLock } from './lockUtils.js';
+import {
+  acquireHeavyOpsLock,
+  releaseHeavyOpsLock,
+  type HeavyOpsLockHolder,
+} from './heavyOpsLock.js';
 import type {
   MaintenanceJobProgress,
   MaintenanceJobResult,
@@ -42,6 +47,22 @@ countries.registerLocale(countriesEn);
 // Handles common variations like "United States", "USA", "United Kingdom", etc.
 function getCountryCode(name: string): string | undefined {
   return countries.getAlpha2Code(name, 'en') ?? undefined;
+}
+
+// Human-readable descriptions for maintenance job types (used in "Waiting for X" messages)
+function getMaintenanceJobDescription(type: MaintenanceJobType): string {
+  const descriptions: Record<MaintenanceJobType, string> = {
+    normalize_players: 'Player normalization',
+    normalize_countries: 'Country normalization',
+    fix_imported_progress: 'Progress fix',
+    rebuild_timescale_views: 'TimescaleDB view rebuild',
+    normalize_codecs: 'Codec normalization',
+    backfill_user_dates: 'User dates backfill',
+    backfill_library_snapshots: 'Library snapshots backfill',
+    cleanup_old_chunks: 'Old chunks cleanup',
+    full_aggregate_rebuild: 'Full aggregate rebuild',
+  };
+  return descriptions[type] || type;
 }
 
 // Job data types
@@ -79,7 +100,7 @@ export function initMaintenanceQueue(redisUrl: string): void {
   maintenanceQueue = new Queue<MaintenanceJobData>(QUEUE_NAME, {
     connection: connectionOptions,
     defaultJobOptions: {
-      attempts: 1, // Maintenance jobs should not retry automatically
+      attempts: 3, // Allow retries for stalled job recovery after server restart
       removeOnComplete: {
         count: 50, // Keep last 50 completed jobs
         age: 7 * 24 * 60 * 60, // 7 days
@@ -107,7 +128,7 @@ export function startMaintenanceWorker(): void {
     return;
   }
 
-  // Clear any stuck jobs from a previous crash before starting the worker
+  // Recover any stuck jobs from a previous crash before starting the worker
   // If the server restarted, any "active" job is orphaned (worker died)
   if (maintenanceQueue) {
     maintenanceQueue
@@ -115,17 +136,21 @@ export function startMaintenanceWorker(): void {
       .then(async (stuckJobs) => {
         if (stuckJobs.length > 0) {
           console.log(
-            `[Maintenance] Found ${stuckJobs.length} stuck job(s) from previous run, clearing...`
+            `[Maintenance] Found ${stuckJobs.length} stuck job(s) from previous run, recovering...`
           );
           for (const job of stuckJobs) {
             try {
-              await job.moveToFailed(
-                new Error('Server restarted while job was running'),
-                'server-restart'
-              );
-              console.log(`[Maintenance] Moved stuck job ${job.id} to failed state`);
-            } catch {
-              // Job might have already been handled
+              // Move back to waiting so the new worker can pick it up
+              await job.retry('failed');
+              console.log(`[Maintenance] Recovered stuck job ${job.id} - moved to waiting`);
+            } catch (err) {
+              // If moveToWaiting fails, try removing and re-adding
+              console.warn(`[Maintenance] Failed to recover job ${job.id}, removing:`, err);
+              try {
+                await job.remove();
+              } catch {
+                // Job might have already been handled
+              }
             }
           }
         }
@@ -139,7 +164,81 @@ export function startMaintenanceWorker(): void {
     QUEUE_NAME,
     async (job: Job<MaintenanceJobData>) => {
       const startTime = Date.now();
+      const jobStartedAt = new Date().toISOString();
+      const jobDescription = getMaintenanceJobDescription(job.data.type);
       console.log(`[Maintenance] Starting job ${job.id} (${job.data.type})`);
+
+      // Initialize cached progress immediately so Running Tasks can show it
+      activeJobProgress = {
+        type: job.data.type,
+        status: 'waiting',
+        totalRecords: 0,
+        processedRecords: 0,
+        updatedRecords: 0,
+        skippedRecords: 0,
+        errorRecords: 0,
+        message: 'Starting...',
+        startedAt: jobStartedAt,
+      };
+
+      // Acquire heavy operations lock (waits if another heavy op is running)
+      let lockHolder: HeavyOpsLockHolder | null;
+      const pubSubService = getPubSubService();
+      const WAIT_INTERVAL_MS = 5000; // Check every 5 seconds
+      const MAX_WAIT_MS = 4 * 60 * 60 * 1000; // Max 4 hours wait
+      let waitedMs = 0;
+
+      while (
+        (lockHolder = await acquireHeavyOpsLock('maintenance', job.id!, jobDescription)) !== null
+      ) {
+        // Update cached progress with waiting status
+        activeJobProgress = {
+          type: job.data.type,
+          status: 'waiting',
+          totalRecords: 0,
+          processedRecords: 0,
+          updatedRecords: 0,
+          skippedRecords: 0,
+          errorRecords: 0,
+          message: `Waiting for ${lockHolder.description} to complete...`,
+          startedAt: jobStartedAt,
+          waitingFor: {
+            jobType: lockHolder.jobType,
+            description: lockHolder.description,
+            startedAt: lockHolder.startedAt,
+          },
+        };
+
+        // Broadcast waiting status to frontend
+        if (pubSubService) {
+          void pubSubService.publish(WS_EVENTS.MAINTENANCE_PROGRESS, activeJobProgress);
+        }
+
+        console.log(
+          `[Maintenance] Job ${job.id} waiting for ${lockHolder.jobType} job: ${lockHolder.description}`
+        );
+
+        // Extend BullMQ job lock while waiting
+        await extendJobLock(job);
+
+        // Wait before retry
+        await new Promise((resolve) => setTimeout(resolve, WAIT_INTERVAL_MS));
+        waitedMs += WAIT_INTERVAL_MS;
+
+        if (waitedMs >= MAX_WAIT_MS) {
+          activeJobProgress = null;
+          throw new Error(
+            `Timed out waiting for ${lockHolder.description} after ${MAX_WAIT_MS / 1000 / 60} minutes`
+          );
+        }
+      }
+
+      // Update status now that we have the lock
+      activeJobProgress.status = 'running';
+      activeJobProgress.message = 'Acquired lock, starting...';
+      activeJobProgress.waitingFor = undefined;
+
+      console.log(`[Maintenance] Job ${job.id} acquired heavy ops lock`);
 
       try {
         const result = await processMaintenanceJob(job);
@@ -150,6 +249,10 @@ export function startMaintenanceWorker(): void {
         const duration = Math.round((Date.now() - startTime) / 1000);
         console.error(`[Maintenance] Job ${job.id} failed after ${duration}s:`, error);
         throw error;
+      } finally {
+        // Always release the heavy ops lock
+        await releaseHeavyOpsLock(job.id!);
+        console.log(`[Maintenance] Job ${job.id} released heavy ops lock`);
       }
     },
     {
@@ -1334,10 +1437,10 @@ async function processBackfillUserDatesJob(
  * cumulative window functions on item creation dates. This enables proper
  * deletion/upgrade tracking in charts by preserving historical state.
  *
- * Process:
- * 1. Get all server+library combinations with their date ranges
- * 2. For each library, generate daily snapshots using window functions
- * 3. Skip days that already have snapshots (idempotent)
+ * OPTIMIZED: Single-pass algorithm (O(n) instead of O(n²))
+ *
+ * This maintains batch INSERTs for lock management while eliminating redundant
+ * cumulative recalculations that previously made each batch scan the entire history.
  */
 async function processBackfillLibrarySnapshotsJob(
   job: Job<MaintenanceJobData>
@@ -1436,9 +1539,134 @@ async function processBackfillLibrarySnapshotsJob(
         // Calculate date range for this library
         const libStartDate = new Date(lib.start_date);
         const libEndDate = new Date(lib.end_date);
+        const libStartStr = lib.start_date;
+        const libEndStr = libEndDate.toISOString().split('T')[0];
         let librarySnapshotsCreated = 0;
 
-        // Process in batches to avoid exhausting lock table
+        // Extend lock before the pre-computation phase
+        await extendJobLock(job);
+
+        // PHASE 1: Pre-compute cumulative data ONCE for the entire library
+        // Drop and recreate temp table for each library (Drizzle auto-commits each statement,
+        // so ON COMMIT DROP doesn't work across multiple libraries)
+        await db.execute(sql`DROP TABLE IF EXISTS backfill_cumulative`);
+        await db.execute(sql`
+          CREATE TEMP TABLE backfill_cumulative (
+            day date PRIMARY KEY,
+            item_count int,
+            total_size bigint,
+            movie_count int,
+            episode_count int,
+            season_count int,
+            show_count int,
+            music_count int,
+            count_4k int,
+            count_1080p int,
+            count_720p int,
+            count_sd int,
+            hevc_count int,
+            h264_count int,
+            av1_count int
+          )
+        `);
+
+        // Single scan of library_items + single window function pass
+        // This replaces the O(n²) approach where each batch rescanned the entire history
+        await db.execute(sql`
+          INSERT INTO backfill_cumulative
+          WITH daily_additions AS (
+            -- Single scan: Get per-day additions with all metrics for entire library
+            SELECT
+              DATE(created_at) AS day,
+              COUNT(*) AS items,
+              SUM(file_size) AS size,
+              COUNT(*) FILTER (WHERE media_type = 'movie') AS movies,
+              COUNT(*) FILTER (WHERE media_type = 'episode') AS episodes,
+              COUNT(*) FILTER (WHERE media_type = 'season') AS seasons,
+              COUNT(*) FILTER (WHERE media_type = 'show') AS shows,
+              COUNT(*) FILTER (WHERE media_type IN ('artist', 'album', 'track')) AS music,
+              COUNT(*) FILTER (WHERE video_resolution = '4k') AS c4k,
+              COUNT(*) FILTER (WHERE video_resolution = '1080p') AS c1080p,
+              COUNT(*) FILTER (WHERE video_resolution = '720p') AS c720p,
+              COUNT(*) FILTER (WHERE video_resolution IN ('480p', 'sd')
+                                OR (video_resolution IS NOT NULL
+                                    AND video_resolution NOT IN ('4k', '1080p', '720p'))) AS csd,
+              COUNT(*) FILTER (WHERE video_codec IN ('hevc', 'h265', 'x265', 'HEVC', 'H265', 'X265')) AS hevc,
+              COUNT(*) FILTER (WHERE video_codec IN ('h264', 'avc', 'x264', 'H264', 'AVC', 'X264')) AS h264,
+              COUNT(*) FILTER (WHERE video_codec IN ('av1', 'AV1')) AS av1
+            FROM library_items
+            WHERE server_id = ${lib.server_id}::uuid
+              AND library_id = ${lib.library_id}
+              AND ${VALID_LIBRARY_ITEM_CONDITION}
+            GROUP BY DATE(created_at)
+          ),
+          date_range AS (
+            -- Generate complete date series from first item to today
+            SELECT d::date AS day FROM generate_series(
+              ${libStartStr}::date, ${libEndStr}::date, '1 day'
+            ) d
+          ),
+          filled AS (
+            -- Fill in zeros for days with no additions
+            SELECT dr.day,
+              COALESCE(da.items, 0) AS items, COALESCE(da.size, 0) AS size,
+              COALESCE(da.movies, 0) AS movies, COALESCE(da.episodes, 0) AS episodes,
+              COALESCE(da.seasons, 0) AS seasons, COALESCE(da.shows, 0) AS shows,
+              COALESCE(da.music, 0) AS music,
+              COALESCE(da.c4k, 0) AS c4k, COALESCE(da.c1080p, 0) AS c1080p,
+              COALESCE(da.c720p, 0) AS c720p, COALESCE(da.csd, 0) AS csd,
+              COALESCE(da.hevc, 0) AS hevc, COALESCE(da.h264, 0) AS h264,
+              COALESCE(da.av1, 0) AS av1
+            FROM date_range dr
+            LEFT JOIN daily_additions da ON da.day = dr.day
+          ),
+          cumulative AS (
+            -- Single window function pass over entire date range
+            SELECT
+              f.day,
+              SUM(items) OVER w AS item_count,
+              SUM(size) OVER w AS total_size,
+              SUM(movies) OVER w AS movie_count,
+              SUM(episodes) OVER w AS episode_count,
+              SUM(seasons) OVER w AS season_count,
+              SUM(shows) OVER w AS show_count,
+              SUM(music) OVER w AS music_count,
+              SUM(c4k) OVER w AS count_4k,
+              SUM(c1080p) OVER w AS count_1080p,
+              SUM(c720p) OVER w AS count_720p,
+              SUM(csd) OVER w AS count_sd,
+              SUM(hevc) OVER w AS hevc_count,
+              SUM(h264) OVER w AS h264_count,
+              SUM(av1) OVER w AS av1_count
+            FROM filled f
+            WINDOW w AS (ORDER BY day ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+          )
+          SELECT
+            day,
+            item_count::int,
+            total_size::bigint,
+            movie_count::int,
+            episode_count::int,
+            season_count::int,
+            show_count::int,
+            music_count::int,
+            count_4k::int,
+            count_1080p::int,
+            count_720p::int,
+            count_sd::int,
+            hevc_count::int,
+            h264_count::int,
+            av1_count::int
+          FROM cumulative
+          -- Only include days with actual content (prevents empty leading snapshots)
+          WHERE item_count > 0 AND total_size > 0
+        `);
+
+        // Extend lock after pre-computation
+        await extendJobLock(job);
+
+        // Batch INSERT from pre-computed temp table
+        // Each batch is now a simple SELECT from the temp table
         let batchStart = libStartDate;
         while (batchStart <= libEndDate) {
           const batchEnd = new Date(batchStart);
@@ -1450,12 +1678,10 @@ async function processBackfillLibrarySnapshotsJob(
           const batchStartStr = batchStart.toISOString().split('T')[0];
           const batchEndStr = batchEnd.toISOString().split('T')[0];
 
-          // Extend lock BEFORE the heavy query - single batch can take 10+ minutes on large libraries
+          // Extend lock before each batch INSERT
           await extendJobLock(job);
 
-          // Insert daily snapshots for this batch using window functions
-          // This reconstructs historical state from item creation dates
-          // Only includes items with valid file_size to ensure total_size > 0
+          // Simple INSERT from pre-computed data
           const result = await db.execute(sql`
             INSERT INTO library_snapshots (
               server_id, library_id, snapshot_time,
@@ -1465,117 +1691,41 @@ async function processBackfillLibrarySnapshotsJob(
               hevc_count, h264_count, av1_count,
               enrichment_pending, enrichment_complete
             )
-            WITH all_daily_additions AS (
-              -- Get per-day additions with all metrics (up to batch end for accurate cumulative)
-              -- Only count items with valid file_size to ensure snapshots won't be cleaned up
-              SELECT
-                DATE(created_at) AS day,
-                COUNT(*) AS items,
-                SUM(file_size) AS size,
-                COUNT(*) FILTER (WHERE media_type = 'movie') AS movies,
-                COUNT(*) FILTER (WHERE media_type = 'episode') AS episodes,
-                COUNT(*) FILTER (WHERE media_type = 'season') AS seasons,
-                COUNT(*) FILTER (WHERE media_type = 'show') AS shows,
-                COUNT(*) FILTER (WHERE media_type IN ('artist', 'album', 'track')) AS music,
-                COUNT(*) FILTER (WHERE video_resolution = '4k') AS c4k,
-                COUNT(*) FILTER (WHERE video_resolution = '1080p') AS c1080p,
-                COUNT(*) FILTER (WHERE video_resolution = '720p') AS c720p,
-                COUNT(*) FILTER (WHERE video_resolution IN ('480p', 'sd')
-                                  OR (video_resolution IS NOT NULL
-                                      AND video_resolution NOT IN ('4k', '1080p', '720p'))) AS csd,
-                COUNT(*) FILTER (WHERE video_codec IN ('hevc', 'h265', 'x265', 'HEVC', 'H265', 'X265')) AS hevc,
-                COUNT(*) FILTER (WHERE video_codec IN ('h264', 'avc', 'x264', 'H264', 'AVC', 'X264')) AS h264,
-                COUNT(*) FILTER (WHERE video_codec IN ('av1', 'AV1')) AS av1
-              FROM library_items
-              WHERE server_id = ${lib.server_id}::uuid
-                AND library_id = ${lib.library_id}
-                AND ${VALID_LIBRARY_ITEM_CONDITION}
-                AND DATE(created_at) <= ${batchEndStr}::date
-              GROUP BY DATE(created_at)
-            ),
-            date_series AS (
-              SELECT d::date AS day FROM generate_series(
-                ${batchStartStr}::date, ${batchEndStr}::date, '1 day'
-              ) d
-            ),
-            all_dates AS (
-              -- All dates from library start to batch end for cumulative calculation
-              SELECT d::date AS day FROM generate_series(
-                ${lib.start_date}::date, ${batchEndStr}::date, '1 day'
-              ) d
-            ),
-            filled AS (
-              SELECT ad.day,
-                COALESCE(da.items, 0) AS items, COALESCE(da.size, 0) AS size,
-                COALESCE(da.movies, 0) AS movies, COALESCE(da.episodes, 0) AS episodes,
-                COALESCE(da.seasons, 0) AS seasons, COALESCE(da.shows, 0) AS shows,
-                COALESCE(da.music, 0) AS music,
-                COALESCE(da.c4k, 0) AS c4k, COALESCE(da.c1080p, 0) AS c1080p,
-                COALESCE(da.c720p, 0) AS c720p, COALESCE(da.csd, 0) AS csd,
-                COALESCE(da.hevc, 0) AS hevc, COALESCE(da.h264, 0) AS h264,
-                COALESCE(da.av1, 0) AS av1
-              FROM all_dates ad
-              LEFT JOIN all_daily_additions da ON da.day = ad.day
-            ),
-            cumulative AS (
-              SELECT
-                f.day,
-                -- Cumulative counts using window functions
-                SUM(items) OVER w AS item_count,
-                SUM(size) OVER w AS total_size,
-                SUM(movies) OVER w AS movie_count,
-                SUM(episodes) OVER w AS episode_count,
-                SUM(seasons) OVER w AS season_count,
-                SUM(shows) OVER w AS show_count,
-                SUM(music) OVER w AS music_count,
-                SUM(c4k) OVER w AS count_4k,
-                SUM(c1080p) OVER w AS count_1080p,
-                SUM(c720p) OVER w AS count_720p,
-                SUM(csd) OVER w AS count_sd,
-                SUM(hevc) OVER w AS hevc_count,
-                SUM(h264) OVER w AS h264_count,
-                SUM(av1) OVER w AS av1_count
-              FROM filled f
-              WINDOW w AS (ORDER BY day ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
-            )
             SELECT
               ${lib.server_id}::uuid,
               ${lib.library_id},
-              (c.day + INTERVAL '23 hours 59 minutes 59 seconds')::timestamptz,
-              c.item_count::int,
-              c.total_size::bigint,
-              c.movie_count::int,
-              c.episode_count::int,
-              c.season_count::int,
-              c.show_count::int,
-              c.music_count::int,
-              c.count_4k::int,
-              c.count_1080p::int,
-              c.count_720p::int,
-              c.count_sd::int,
-              c.hevc_count::int,
-              c.h264_count::int,
-              c.av1_count::int,
+              (bc.day + INTERVAL '23 hours 59 minutes 59 seconds')::timestamptz,
+              bc.item_count,
+              bc.total_size,
+              bc.movie_count,
+              bc.episode_count,
+              bc.season_count,
+              bc.show_count,
+              bc.music_count,
+              bc.count_4k,
+              bc.count_1080p,
+              bc.count_720p,
+              bc.count_sd,
+              bc.hevc_count,
+              bc.h264_count,
+              bc.av1_count,
               0,  -- enrichment_pending: all historical items already enriched
-              c.item_count::int  -- enrichment_complete
-            FROM cumulative c
-            -- Only insert for days in this batch's date_series
-            WHERE c.day IN (SELECT day FROM date_series)
-            -- Only insert if there's actual content (prevents empty leading snapshots)
-            AND c.item_count > 0
-            AND c.total_size > 0
-            -- Skip days that already have snapshots (idempotent)
-            AND NOT EXISTS (
-              SELECT 1 FROM library_snapshots ls
-              WHERE ls.server_id = ${lib.server_id}::uuid
-                AND ls.library_id = ${lib.library_id}
-                AND DATE(ls.snapshot_time) = c.day
-            )
+              bc.item_count  -- enrichment_complete
+            FROM backfill_cumulative bc
+            WHERE bc.day >= ${batchStartStr}::date
+              AND bc.day <= ${batchEndStr}::date
+              -- Skip days that already have snapshots (idempotent)
+              AND NOT EXISTS (
+                SELECT 1 FROM library_snapshots ls
+                WHERE ls.server_id = ${lib.server_id}::uuid
+                  AND ls.library_id = ${lib.library_id}
+                  AND DATE(ls.snapshot_time) = bc.day
+              )
           `);
 
           librarySnapshotsCreated += Number(result.rowCount ?? 0);
 
-          // Extend lock after each batch - large libraries can have many 90-day batches
+          // Extend lock after each batch
           await extendJobLock(job);
 
           // Move to next batch
@@ -1586,9 +1736,12 @@ async function processBackfillLibrarySnapshotsJob(
         totalSnapshotsCreated += librarySnapshotsCreated;
         totalProcessed++;
 
-        activeJobProgress.processedRecords = totalProcessed;
-        activeJobProgress.updatedRecords = totalSnapshotsCreated;
-        activeJobProgress.message = `Processed ${totalProcessed} of ${libraries.length} libraries (${totalSnapshotsCreated} snapshots created)...`;
+        // Null check: activeJobProgress can be null if job stalled and retry completed
+        if (activeJobProgress) {
+          activeJobProgress.processedRecords = totalProcessed;
+          activeJobProgress.updatedRecords = totalSnapshotsCreated;
+          activeJobProgress.message = `Processed ${totalProcessed} of ${libraries.length} libraries (${totalSnapshotsCreated} snapshots created)...`;
+        }
 
         const percent = Math.round((totalProcessed / libraries.length) * 100);
         await job.updateProgress(percent);
@@ -1602,14 +1755,19 @@ async function processBackfillLibrarySnapshotsJob(
           error
         );
         totalErrors++;
-        activeJobProgress.errorRecords = totalErrors;
+        // Null check: activeJobProgress can be null if job stalled and retry completed
+        if (activeJobProgress) {
+          activeJobProgress.errorRecords = totalErrors;
+        }
       }
     }
 
     // Clean up invalid snapshots in batches to avoid lock exhaustion
     // See snapshotValidation.ts for the definition: snapshots need both items AND size
     // Note: With the VALID_LIBRARY_ITEM_CONDITION filter, this should rarely find anything
-    activeJobProgress.message = 'Cleaning up invalid snapshots...';
+    if (activeJobProgress) {
+      activeJobProgress.message = 'Cleaning up invalid snapshots...';
+    }
     await publishProgress();
 
     let totalCleanedUp = 0;
@@ -1629,7 +1787,7 @@ async function processBackfillLibrarySnapshotsJob(
         cleanupBatchCount = Number(cleanupResult.rowCount ?? 0);
         totalCleanedUp += cleanupBatchCount;
 
-        if (cleanupBatchCount > 0) {
+        if (cleanupBatchCount > 0 && activeJobProgress) {
           activeJobProgress.skippedRecords = totalCleanedUp;
           await publishProgress();
         }
@@ -1645,8 +1803,10 @@ async function processBackfillLibrarySnapshotsJob(
     }
 
     // Refresh the continuous aggregate to include backfilled data
-    activeJobProgress.message = 'Refreshing library_stats_daily continuous aggregate...';
-    await publishProgress();
+    if (activeJobProgress) {
+      activeJobProgress.message = 'Refreshing library_stats_daily continuous aggregate...';
+      await publishProgress();
+    }
 
     // Get the earliest snapshot date to refresh from
     const earliestResult = await db.execute(sql`
@@ -1678,12 +1838,14 @@ async function processBackfillLibrarySnapshotsJob(
     }
 
     const durationMs = Date.now() - startTime;
-    activeJobProgress.status = 'complete';
-    activeJobProgress.processedRecords = totalProcessed;
-    activeJobProgress.skippedRecords = totalCleanedUp;
-    activeJobProgress.message = `Completed! Created ${totalSnapshotsCreated.toLocaleString()} snapshots for ${totalProcessed} libraries${totalCleanedUp > 0 ? `, cleaned up ${totalCleanedUp} invalid` : ''} in ${Math.round(durationMs / 1000)}s`;
-    activeJobProgress.completedAt = new Date().toISOString();
-    await publishProgress();
+    if (activeJobProgress) {
+      activeJobProgress.status = 'complete';
+      activeJobProgress.processedRecords = totalProcessed;
+      activeJobProgress.skippedRecords = totalCleanedUp;
+      activeJobProgress.message = `Completed! Created ${totalSnapshotsCreated.toLocaleString()} snapshots for ${totalProcessed} libraries${totalCleanedUp > 0 ? `, cleaned up ${totalCleanedUp} invalid` : ''} in ${Math.round(durationMs / 1000)}s`;
+      activeJobProgress.completedAt = new Date().toISOString();
+      await publishProgress();
+    }
 
     activeJobProgress = null;
 
@@ -1998,10 +2160,41 @@ async function processFullAggregateRebuildJob(
 }
 
 /**
- * Get current job progress (if any)
+ * Get current job progress (if any) - from in-memory cache
  */
 export function getMaintenanceProgress(): MaintenanceJobProgress | null {
   return activeJobProgress;
+}
+
+/**
+ * Get all active/pending maintenance jobs from BullMQ
+ * Used to show jobs in Running Tasks even before worker sets activeJobProgress
+ */
+export async function getAllActiveMaintenanceJobs(): Promise<
+  Array<{
+    jobId: string;
+    type: MaintenanceJobType;
+    state: string;
+    createdAt: number;
+  }>
+> {
+  if (!maintenanceQueue) {
+    return [];
+  }
+
+  const jobs = await maintenanceQueue.getJobs(['active', 'waiting', 'delayed']);
+
+  return Promise.all(
+    jobs.map(async (job) => {
+      const state = await job.getState();
+      return {
+        jobId: job.id ?? 'unknown',
+        type: job.data.type,
+        state,
+        createdAt: job.timestamp ?? Date.now(),
+      };
+    })
+  );
 }
 
 /**
@@ -2120,6 +2313,29 @@ export async function clearStuckMaintenanceJobs(): Promise<{ cleared: number }> 
   activeJobProgress = null;
 
   return { cleared };
+}
+
+/**
+ * Obliterate the maintenance queue - removes ALL jobs (nuclear option)
+ *
+ * This completely wipes the queue, including completed and failed jobs.
+ * Use when the queue is in an unrecoverable state.
+ */
+export async function obliterateMaintenanceQueue(): Promise<{ success: boolean }> {
+  if (!maintenanceQueue) {
+    return { success: false };
+  }
+
+  try {
+    // Obliterate removes all jobs and clears the queue completely
+    await maintenanceQueue.obliterate({ force: true });
+    activeJobProgress = null;
+    console.log('[Maintenance] Queue obliterated');
+    return { success: true };
+  } catch (error) {
+    console.error('[Maintenance] Failed to obliterate queue:', error);
+    return { success: false };
+  }
 }
 
 /**

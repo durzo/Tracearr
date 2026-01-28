@@ -7,9 +7,9 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import type { RunningTask } from '@tracearr/shared';
-import { getAllActiveImports } from '../jobs/importQueue.js';
+import { getAllActiveImports, getActiveImportProgress } from '../jobs/importQueue.js';
 import { getAllActiveLibrarySyncs } from '../jobs/librarySyncQueue.js';
-import { getMaintenanceProgress } from '../jobs/maintenanceQueue.js';
+import { getMaintenanceProgress, getAllActiveMaintenanceJobs } from '../jobs/maintenanceQueue.js';
 import { db } from '../db/client.js';
 import { servers } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
@@ -65,17 +65,44 @@ export const tasksRoutes: FastifyPluginAsync = async (app) => {
 
     // Get import tasks
     const imports = await getAllActiveImports();
+    const cachedImportProgress = getActiveImportProgress();
+
     for (const imp of imports) {
       const serverName = await getServerName(imp.serverId);
       const importType = imp.type === 'tautulli' ? 'Tautulli' : 'Jellystat';
 
-      // Extract progress percentage from progress object if available
+      // Use cached progress if available for this job (has more detail than BullMQ progress)
+      const isCachedJob = cachedImportProgress && cachedImportProgress.jobId === imp.jobId;
+
+      // Extract progress percentage and status
       let progressPct: number | null = null;
       let message = 'Starting import...';
+      let importStatus: RunningTask['status'] = imp.state === 'active' ? 'running' : 'pending';
+      let waitingFor: RunningTask['waitingFor'] = undefined;
 
+      if (isCachedJob) {
+        // Use cached progress which has waiting status
+        importStatus = cachedImportProgress.status === 'waiting' ? 'waiting' : importStatus;
+        if (cachedImportProgress.status === 'waiting' && cachedImportProgress.waitingFor) {
+          waitingFor = {
+            jobType: cachedImportProgress.waitingFor.jobType,
+            description: cachedImportProgress.waitingFor.description,
+            startedAt: cachedImportProgress.waitingFor.startedAt,
+          };
+          message = `Waiting for ${cachedImportProgress.waitingFor.description}...`;
+        } else if (cachedImportProgress.status === 'fetching') {
+          message = 'Fetching records...';
+        } else if (cachedImportProgress.status === 'processing') {
+          message = 'Processing records...';
+        }
+      }
+
+      // Get progress percentage from BullMQ job progress
       if (typeof imp.progress === 'number') {
         progressPct = imp.progress;
-        message = `Importing... ${imp.progress}%`;
+        if (!isCachedJob || cachedImportProgress?.status !== 'waiting') {
+          message = `Importing... ${imp.progress}%`;
+        }
       } else if (imp.progress && typeof imp.progress === 'object') {
         const p = imp.progress as {
           processedRecords?: number;
@@ -85,7 +112,7 @@ export const tasksRoutes: FastifyPluginAsync = async (app) => {
         if (p.totalRecords && p.totalRecords > 0 && p.processedRecords !== undefined) {
           progressPct = Math.round((p.processedRecords / p.totalRecords) * 100);
         }
-        if (p.message) {
+        if (p.message && !isCachedJob) {
           message = p.message;
         }
       }
@@ -94,42 +121,73 @@ export const tasksRoutes: FastifyPluginAsync = async (app) => {
         id: imp.jobId,
         type: imp.type === 'tautulli' ? 'tautulli_import' : 'jellystat_import',
         name: `${importType} Import`,
-        status: imp.state === 'active' ? 'running' : 'pending',
+        status: importStatus,
         progress: progressPct,
         message,
-        startedAt: new Date(imp.createdAt).toISOString(),
+        startedAt: isCachedJob
+          ? cachedImportProgress.startedAt
+          : new Date(imp.createdAt).toISOString(),
         context: serverName,
+        waitingFor,
       });
     }
 
-    // Get maintenance task
-    const maintenance = getMaintenanceProgress();
-    if (maintenance && (maintenance.status === 'running' || maintenance.status === 'idle')) {
-      const progressPct =
-        maintenance.totalRecords > 0
-          ? Math.round((maintenance.processedRecords / maintenance.totalRecords) * 100)
-          : null;
+    // Get maintenance tasks - query BullMQ directly, then merge with in-memory progress
+    const maintenanceJobs = await getAllActiveMaintenanceJobs();
+    const cachedMaintenanceProgress = getMaintenanceProgress();
 
-      // Format maintenance job type for display
-      const typeNames: Record<string, string> = {
-        normalize_players: 'Normalize Players',
-        normalize_countries: 'Normalize Countries',
-        fix_imported_progress: 'Fix Import Progress',
-        rebuild_timescale_views: 'Rebuild Analytics',
-        normalize_codecs: 'Normalize Codecs',
-        backfill_user_dates: 'Backfill User Dates',
-        backfill_library_snapshots: 'Generate Library History',
-      };
+    // Format maintenance job type for display
+    const typeNames: Record<string, string> = {
+      normalize_players: 'Normalize Players',
+      normalize_countries: 'Normalize Countries',
+      fix_imported_progress: 'Fix Import Progress',
+      rebuild_timescale_views: 'Rebuild Analytics',
+      normalize_codecs: 'Normalize Codecs',
+      backfill_user_dates: 'Backfill User Dates',
+      backfill_library_snapshots: 'Generate Library History',
+    };
+
+    for (const job of maintenanceJobs) {
+      // Check if we have in-memory progress for this job (has waiting/running status)
+      const hasCachedProgress =
+        cachedMaintenanceProgress && cachedMaintenanceProgress.type === job.type;
+
+      let taskStatus: RunningTask['status'] = job.state === 'active' ? 'running' : 'pending';
+      let message = 'Starting...';
+      let progressPct: number | null = null;
+      let waitingFor: RunningTask['waitingFor'] = undefined;
+      let startedAt = new Date(job.createdAt).toISOString();
+
+      if (hasCachedProgress) {
+        // Use cached progress which has detailed status
+        if (cachedMaintenanceProgress.status === 'running') {
+          taskStatus = 'running';
+        } else if (cachedMaintenanceProgress.status === 'waiting') {
+          taskStatus = 'waiting';
+        }
+
+        message = cachedMaintenanceProgress.message;
+        waitingFor = cachedMaintenanceProgress.waitingFor;
+        startedAt = cachedMaintenanceProgress.startedAt ?? startedAt;
+
+        if (cachedMaintenanceProgress.totalRecords > 0) {
+          progressPct = Math.round(
+            (cachedMaintenanceProgress.processedRecords / cachedMaintenanceProgress.totalRecords) *
+              100
+          );
+        }
+      }
 
       tasks.push({
-        id: `maintenance-${maintenance.type}`,
+        id: job.jobId,
         type: 'maintenance',
-        name: typeNames[maintenance.type] ?? 'Maintenance',
-        status: maintenance.status === 'running' ? 'running' : 'pending',
+        name: typeNames[job.type] ?? 'Maintenance',
+        status: taskStatus,
         progress: progressPct,
-        message: maintenance.message,
-        startedAt: maintenance.startedAt ?? new Date().toISOString(),
-        context: maintenance.type,
+        message,
+        startedAt,
+        context: job.type,
+        waitingFor,
       });
     }
 

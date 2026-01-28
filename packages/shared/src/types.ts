@@ -649,9 +649,16 @@ export interface Settings {
   primaryAuthMethod: 'jellyfin' | 'local';
 }
 
+// Heavy operations lock info (for "Waiting for X" display)
+export interface HeavyOpsWaitingFor {
+  jobType: 'import' | 'maintenance';
+  description: string;
+  startedAt: string;
+}
+
 // Tautulli import types
 export interface TautulliImportProgress {
-  status: 'idle' | 'fetching' | 'processing' | 'complete' | 'error';
+  status: 'idle' | 'waiting' | 'fetching' | 'processing' | 'complete' | 'error';
   /** Expected total from API (may differ from actual if API count is stale) */
   totalRecords: number;
   /** Actual records fetched from API so far */
@@ -675,6 +682,8 @@ export interface TautulliImportProgress {
   currentPage: number;
   totalPages: number;
   message: string;
+  /** Present when status='waiting' - what this job is waiting for */
+  waitingFor?: HeavyOpsWaitingFor;
 }
 
 export interface TautulliImportResult {
@@ -696,7 +705,7 @@ export interface TautulliImportResult {
 
 // Jellystat import types
 export interface JellystatImportProgress {
-  status: 'idle' | 'parsing' | 'enriching' | 'processing' | 'complete' | 'error';
+  status: 'idle' | 'waiting' | 'parsing' | 'enriching' | 'processing' | 'complete' | 'error';
   totalRecords: number;
   processedRecords: number;
   importedRecords: number;
@@ -706,6 +715,8 @@ export interface JellystatImportProgress {
   enrichedRecords: number;
   /** Current phase message */
   message: string;
+  /** Present when status='waiting' - what this job is waiting for */
+  waitingFor?: HeavyOpsWaitingFor;
 }
 
 export interface JellystatImportResult {
@@ -1266,7 +1277,7 @@ export type MaintenanceJobType =
   | 'cleanup_old_chunks'
   | 'full_aggregate_rebuild';
 
-export type MaintenanceJobStatus = 'idle' | 'running' | 'complete' | 'error';
+export type MaintenanceJobStatus = 'idle' | 'waiting' | 'running' | 'complete' | 'error';
 
 export interface MaintenanceJobProgress {
   type: MaintenanceJobType;
@@ -1279,6 +1290,8 @@ export interface MaintenanceJobProgress {
   message: string;
   startedAt?: string;
   completedAt?: string;
+  /** Present when status='waiting' - what this job is waiting for */
+  waitingFor?: HeavyOpsWaitingFor;
 }
 
 export interface MaintenanceJobResult {
@@ -1310,7 +1323,7 @@ export interface RunningTask {
   /** Human-readable task name */
   name: string;
   /** Current status */
-  status: 'pending' | 'running' | 'complete' | 'error';
+  status: 'pending' | 'waiting' | 'running' | 'complete' | 'error';
   /** Progress percentage (0-100), null if indeterminate */
   progress: number | null;
   /** Current status message */
@@ -1319,6 +1332,8 @@ export interface RunningTask {
   startedAt: string;
   /** Additional context (e.g., server name, job type) */
   context?: string;
+  /** What the task is waiting for (only when status is 'waiting') */
+  waitingFor?: HeavyOpsWaitingFor;
 }
 
 export interface RunningTasksResponse {

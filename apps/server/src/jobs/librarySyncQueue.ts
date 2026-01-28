@@ -482,6 +482,27 @@ export async function getAllActiveLibrarySyncs(): Promise<
 }
 
 /**
+ * Obliterate the library sync queue - removes ALL jobs (nuclear option)
+ *
+ * This completely wipes the queue, including completed and failed jobs.
+ * Use when the queue is in an unrecoverable state.
+ */
+export async function obliterateLibrarySyncQueue(): Promise<{ success: boolean }> {
+  if (!librarySyncQueue) {
+    return { success: false };
+  }
+
+  try {
+    await librarySyncQueue.obliterate({ force: true });
+    console.log('[LibrarySync] Queue obliterated');
+    return { success: true };
+  } catch (error) {
+    console.error('[LibrarySync] Failed to obliterate queue:', error);
+    return { success: false };
+  }
+}
+
+/**
  * Gracefully shutdown the library sync queue
  */
 export async function shutdownLibrarySyncQueue(): Promise<void> {

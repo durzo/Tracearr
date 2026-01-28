@@ -1,8 +1,9 @@
-import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
+import { CheckCircle2, Clock, Loader2, XCircle } from 'lucide-react';
 import { Progress } from '../ui/progress';
 import { cn } from '@/lib/utils';
+import type { HeavyOpsWaitingFor } from '@tracearr/shared';
 
-export type ImportStatus = 'idle' | 'fetching' | 'processing' | 'complete' | 'error';
+export type ImportStatus = 'idle' | 'waiting' | 'fetching' | 'processing' | 'complete' | 'error';
 
 export interface ImportProgressData {
   status: ImportStatus;
@@ -17,6 +18,8 @@ export interface ImportProgressData {
   totalPages?: number;
   // Jellystat-specific
   enrichedRecords?: number;
+  // Heavy ops coordination
+  waitingFor?: HeavyOpsWaitingFor;
 }
 
 interface ImportProgressCardProps {
@@ -28,6 +31,7 @@ export function ImportProgressCard({
   progress,
   showPageProgress = false,
 }: ImportProgressCardProps) {
+  const isWaiting = progress.status === 'waiting';
   const isActive = progress.status === 'fetching' || progress.status === 'processing';
   const isComplete = progress.status === 'complete';
   const isError = progress.status === 'error';
@@ -37,7 +41,13 @@ export function ImportProgressCard({
       ? Math.min(100, Math.round((progress.processedRecords / progress.totalRecords) * 100))
       : 0;
 
-  const statusLabel = isComplete ? 'Import Complete' : isError ? 'Import Failed' : 'Importing...';
+  const statusLabel = isWaiting
+    ? 'Waiting...'
+    : isComplete
+      ? 'Import Complete'
+      : isError
+        ? 'Import Failed'
+        : 'Importing...';
 
   return (
     <div className="space-y-3 rounded-lg border p-4">
@@ -46,6 +56,7 @@ export function ImportProgressCard({
         <span className="text-sm font-medium">{statusLabel}</span>
         {isComplete && <CheckCircle2 className="h-5 w-5 text-green-600" />}
         {isError && <XCircle className="text-destructive h-5 w-5" />}
+        {isWaiting && <Clock className="text-muted-foreground h-5 w-5 animate-pulse" />}
         {isActive && <Loader2 className="text-muted-foreground h-5 w-5 animate-spin" />}
       </div>
 
