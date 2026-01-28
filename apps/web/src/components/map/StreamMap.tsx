@@ -9,6 +9,42 @@ import { useTheme } from '@/components/theme-provider';
 
 export type MapViewMode = 'heatmap' | 'circles';
 
+/**
+ * Generate HSL color string from hue, saturation, and lightness values
+ */
+function hsl(h: number, s: number, l: number, a?: number): string {
+  if (a !== undefined) {
+    return `hsla(${h}, ${s}%, ${l}%, ${a})`;
+  }
+  return `hsl(${h}, ${s}%, ${l}%)`;
+}
+
+/**
+ * Generate a heatmap gradient based on the accent hue
+ * Transitions from transparent → accent color → white hotspots
+ */
+function generateHeatmapGradient(hue: number): Record<number, string> {
+  return {
+    0.0: hsl(hue, 85, 31, 0), // transparent (fade from nothing)
+    0.2: hsl(hue, 85, 31, 0.8), // dark accent
+    0.4: hsl(hue, 86, 42), // medium-dark accent
+    0.6: hsl(hue, 80, 50), // core accent
+    0.8: hsl(hue, 80, 60), // lighter accent
+    0.95: hsl(hue, 80, 70), // very light accent
+    1.0: '#ffffff', // white for hotspots
+  };
+}
+
+/**
+ * Generate circle marker colors based on the accent hue
+ */
+function generateCircleColors(hue: number): { stroke: string; fill: string } {
+  return {
+    stroke: hsl(hue, 80, 50), // core accent for border
+    fill: hsl(hue, 80, 60), // lighter accent for fill
+  };
+}
+
 // Custom styles for dark theme, zoom control, and z-index fixes
 const mapStyles = `
   /* Ensure map container doesn't overlap sidebars/modals */
@@ -61,19 +97,8 @@ interface StreamMapProps {
   viewMode?: MapViewMode;
 }
 
-// Heatmap configuration optimized for streaming location data
+// Heatmap configuration (gradient generated dynamically from accent color)
 const HEATMAP_CONFIG = {
-  // Gradient: dark cyan base → bright cyan → white hotspots
-  // Designed for dark map tiles with good contrast
-  gradient: {
-    0.0: 'rgba(14, 116, 144, 0)', // cyan-700 transparent (fade from nothing)
-    0.2: 'rgba(14, 116, 144, 0.8)', // cyan-700
-    0.4: '#0891b2', // cyan-600
-    0.6: '#06b6d4', // cyan-500
-    0.8: '#22d3ee', // cyan-400
-    0.95: '#67e8f9', // cyan-300
-    1.0: '#ffffff', // white for hotspots
-  },
   // Radius: larger for world view, heatmap auto-adjusts with zoom
   radius: 30,
   // Blur: soft edges for smooth transitions
@@ -84,8 +109,13 @@ const HEATMAP_CONFIG = {
   maxZoom: 12,
 };
 
+interface CircleMarkersLayerProps {
+  locations: LocationStats[];
+  colors: { stroke: string; fill: string };
+}
+
 // Circle markers layer component
-function CircleMarkersLayer({ locations }: { locations: LocationStats[] }) {
+function CircleMarkersLayer({ locations, colors }: CircleMarkersLayerProps) {
   const maxCount = useMemo(() => Math.max(...locations.map((l) => l.count), 1), [locations]);
 
   // Calculate radius based on count (scaled logarithmically)
@@ -114,8 +144,8 @@ function CircleMarkersLayer({ locations }: { locations: LocationStats[] }) {
             center={[location.lat, location.lon]}
             radius={getRadius(location.count)}
             pathOptions={{
-              color: '#06b6d4', // cyan-500
-              fillColor: '#22d3ee', // cyan-400
+              color: colors.stroke,
+              fillColor: colors.fill,
               fillOpacity: getOpacity(location.count),
               weight: 1,
             }}
@@ -178,7 +208,7 @@ export function StreamMap({
   viewMode = 'heatmap',
 }: StreamMapProps) {
   const hasData = locations.length > 0;
-  const { theme } = useTheme();
+  const { theme, accentHue } = useTheme();
   const resolvedTheme =
     theme === 'system'
       ? window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -186,6 +216,10 @@ export function StreamMap({
         : 'light'
       : theme;
   const tileUrl = TILE_URLS[resolvedTheme];
+
+  // Generate accent-colored gradient and circle colors
+  const heatmapGradient = useMemo(() => generateHeatmapGradient(accentHue), [accentHue]);
+  const circleColors = useMemo(() => generateCircleColors(accentHue), [accentHue]);
 
   return (
     <div className={cn('relative h-full w-full', className)}>
@@ -214,7 +248,7 @@ export function StreamMap({
             longitudeExtractor={(l: LocationStats) => l.lon}
             // Logarithmic intensity: prevents high-count locations from dominating
             intensityExtractor={(l: LocationStats) => Math.log10(l.count + 1)}
-            gradient={HEATMAP_CONFIG.gradient}
+            gradient={heatmapGradient}
             radius={HEATMAP_CONFIG.radius}
             blur={HEATMAP_CONFIG.blur}
             minOpacity={HEATMAP_CONFIG.minOpacity}
@@ -223,7 +257,9 @@ export function StreamMap({
             max={Math.log10(Math.max(...locations.map((l) => l.count), 1) + 1)}
           />
         )}
-        {hasData && viewMode === 'circles' && <CircleMarkersLayer locations={locations} />}
+        {hasData && viewMode === 'circles' && (
+          <CircleMarkersLayer locations={locations} colors={circleColors} />
+        )}
       </MapContainer>
 
       {/* Loading overlay */}
