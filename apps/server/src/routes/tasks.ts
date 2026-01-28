@@ -72,7 +72,7 @@ export const tasksRoutes: FastifyPluginAsync = async (app) => {
       const importType = imp.type === 'tautulli' ? 'Tautulli' : 'Jellystat';
 
       // Use cached progress if available for this job (has more detail than BullMQ progress)
-      const isCachedJob = cachedImportProgress && cachedImportProgress.jobId === imp.jobId;
+      const isCachedJob = cachedImportProgress?.jobId === imp.jobId;
 
       // Extract progress percentage and status
       let progressPct: number | null = null;
@@ -149,8 +149,7 @@ export const tasksRoutes: FastifyPluginAsync = async (app) => {
 
     for (const job of maintenanceJobs) {
       // Check if we have in-memory progress for this job (has waiting/running status)
-      const hasCachedProgress =
-        cachedMaintenanceProgress && cachedMaintenanceProgress.type === job.type;
+      const hasCachedProgress = cachedMaintenanceProgress?.type === job.type;
 
       let taskStatus: RunningTask['status'] = job.state === 'active' ? 'running' : 'pending';
       let message = 'Starting...';
