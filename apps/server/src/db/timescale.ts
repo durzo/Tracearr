@@ -482,6 +482,79 @@ async function isCompressionEnabled(): Promise<boolean> {
 }
 
 /**
+ * Check if compression orderby settings are correct
+ * Returns true if orderby is explicitly set (not auto-detected)
+
+ */
+async function isCompressionOrderbyCorrect(): Promise<boolean> {
+  try {
+    const result = await db.execute(sql`
+      SELECT attname, orderby_column_index
+      FROM timescaledb_information.compression_settings
+      WHERE hypertable_name = 'sessions'
+        AND orderby_column_index IS NOT NULL
+      ORDER BY orderby_column_index
+    `);
+
+    // If no rows have orderby set, TimescaleDB will auto-detect (causes 32-column error)
+    if (result.rows.length === 0) {
+      return false;
+    }
+
+    // Check that started_at is the first orderby column
+    const firstOrderby = (result.rows[0] as { attname: string })?.attname;
+    return firstOrderby === 'started_at';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Update compression settings to fix orderby column limit issue
+ * This is safe to run even if compression is already enabled
+ */
+async function fixCompressionSettings(): Promise<void> {
+  console.log('[TimescaleDB] Fixing compression settings (orderby column limit issue)...');
+
+  // Check for existing compressed chunks that may have old settings
+  const compressedResult = await db.execute(sql`
+    SELECT COUNT(*)::int as count
+    FROM timescaledb_information.chunks
+    WHERE hypertable_name = 'sessions' AND is_compressed = true
+  `);
+  const compressedCount = (compressedResult.rows[0] as { count: number })?.count ?? 0;
+
+  if (compressedCount > 0) {
+    console.warn(
+      `[TimescaleDB] Warning: ${compressedCount} compressed chunks exist with old settings. ` +
+        'New chunks will use correct settings. If you see compression errors for old chunks, ' +
+        "run: SELECT decompress_chunk(c) FROM show_chunks('sessions') c WHERE is_compressed;"
+    );
+  }
+
+  // Remove existing policy first
+  await db.execute(sql`
+    SELECT remove_compression_policy('sessions', if_exists => true)
+  `);
+
+  // Update compression settings with explicit orderby
+  await db.execute(sql`
+    ALTER TABLE sessions SET (
+      timescaledb.compress,
+      timescaledb.compress_segmentby = 'server_user_id, server_id',
+      timescaledb.compress_orderby = 'started_at DESC, id'
+    )
+  `);
+
+  // Re-add compression policy
+  await db.execute(sql`
+    SELECT add_compression_policy('sessions', INTERVAL '7 days', if_not_exists => true)
+  `);
+
+  console.log('[TimescaleDB] Compression settings fixed successfully');
+}
+
+/**
  * Get chunk count for sessions hypertable
  */
 async function getChunkCount(): Promise<number> {
@@ -805,10 +878,13 @@ async function setupRefreshPolicies(): Promise<void> {
  */
 async function enableCompression(): Promise<void> {
   // Enable compression settings
+  // Note: compress_orderby is explicitly set to avoid TimescaleDB auto-detecting
+  // too many columns (>32), which fails with "cannot use more than 32 columns in an index"
   await db.execute(sql`
     ALTER TABLE sessions SET (
       timescaledb.compress,
-      timescaledb.compress_segmentby = 'server_user_id, server_id'
+      timescaledb.compress_segmentby = 'server_user_id, server_id',
+      timescaledb.compress_orderby = 'started_at DESC, id'
     )
   `);
 
@@ -1317,7 +1393,14 @@ export async function initTimescaleDB(): Promise<{
     await enableCompression();
     actions.push('Enabled compression on sessions');
   } else {
-    actions.push('Compression already enabled');
+    // Check if compression settings need to be fixed (orderby column limit issue)
+    const orderbyCorrect = await isCompressionOrderbyCorrect();
+    if (!orderbyCorrect) {
+      await fixCompressionSettings();
+      actions.push('Fixed compression settings (orderby column limit)');
+    } else {
+      actions.push('Compression already enabled with correct settings');
+    }
   }
 
   // Create partial indexes for optimized filtered queries
