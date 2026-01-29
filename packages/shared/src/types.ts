@@ -414,6 +414,180 @@ export interface Rule {
   updatedAt: Date;
 }
 
+// ============================================
+// Rules Builder V2 - Condition/Action System
+// ============================================
+
+// Condition operators
+export type ComparisonOperator = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte';
+export type ArrayOperator = 'in' | 'not_in';
+export type StringOperator = 'contains' | 'not_contains';
+export type Operator = ComparisonOperator | ArrayOperator | StringOperator;
+
+// Condition field categories
+export type SessionBehaviorField =
+  | 'concurrent_streams'
+  | 'active_session_distance_km'
+  | 'travel_speed_kmh'
+  | 'unique_ips_in_window'
+  | 'unique_devices_in_window'
+  | 'inactive_days';
+
+export type StreamQualityField =
+  | 'source_resolution'
+  | 'output_resolution'
+  | 'is_transcoding'
+  | 'is_transcode_downgrade'
+  | 'source_bitrate_mbps';
+
+export type UserAttributeField = 'user_id' | 'trust_score' | 'account_age_days';
+
+export type DeviceClientField = 'device_type' | 'client_name' | 'platform';
+
+export type NetworkLocationField = 'is_local_network' | 'country' | 'ip_in_range';
+
+export type ScopeField = 'server_id' | 'library_id' | 'media_type';
+
+export type ConditionField =
+  | SessionBehaviorField
+  | StreamQualityField
+  | UserAttributeField
+  | DeviceClientField
+  | NetworkLocationField
+  | ScopeField;
+
+// Resolution enum for stream quality
+export type VideoResolution = '4k' | '1080p' | '720p' | '480p' | 'sd' | 'unknown';
+
+// Device type enum
+export type DeviceType = 'mobile' | 'tablet' | 'tv' | 'desktop' | 'browser' | 'unknown';
+
+// Platform enum
+export type Platform =
+  | 'ios'
+  | 'android'
+  | 'windows'
+  | 'macos'
+  | 'linux'
+  | 'tvos'
+  | 'androidtv'
+  | 'roku'
+  | 'webos'
+  | 'tizen'
+  | 'unknown';
+
+// Media type enum (already exists but adding for clarity)
+export type MediaTypeEnum = 'movie' | 'episode' | 'track' | 'photo' | 'live' | 'trailer';
+
+// Condition value types
+export type ConditionValue = string | number | boolean | string[] | number[];
+
+// Single condition
+export interface Condition {
+  field: ConditionField;
+  operator: Operator;
+  value: ConditionValue;
+  params?: {
+    window_hours?: number; // for velocity checks
+  };
+}
+
+// Condition group (OR logic within group)
+export interface ConditionGroup {
+  conditions: Condition[];
+}
+
+// Rule conditions (AND logic between groups)
+export interface RuleConditions {
+  groups: ConditionGroup[];
+}
+
+// Action types
+export type ActionType =
+  | 'create_violation'
+  | 'log_only'
+  | 'notify'
+  | 'adjust_trust'
+  | 'set_trust'
+  | 'reset_trust'
+  | 'kill_stream'
+  | 'message_client';
+
+// Notification channels
+export type NotificationChannelV2 = 'push' | 'discord' | 'email' | 'webhook';
+
+// Action definitions
+export interface CreateViolationAction {
+  type: 'create_violation';
+  severity: ViolationSeverity;
+  cooldown_minutes?: number;
+}
+
+export interface LogOnlyAction {
+  type: 'log_only';
+  message?: string;
+}
+
+export interface NotifyAction {
+  type: 'notify';
+  channels: NotificationChannelV2[];
+  cooldown_minutes?: number;
+}
+
+export interface AdjustTrustAction {
+  type: 'adjust_trust';
+  amount: number; // positive or negative
+}
+
+export interface SetTrustAction {
+  type: 'set_trust';
+  value: number;
+}
+
+export interface ResetTrustAction {
+  type: 'reset_trust';
+}
+
+export interface KillStreamAction {
+  type: 'kill_stream';
+  delay_seconds?: number;
+  require_confirmation?: boolean;
+  cooldown_minutes?: number;
+}
+
+export interface MessageClientAction {
+  type: 'message_client';
+  message: string;
+}
+
+export type Action =
+  | CreateViolationAction
+  | LogOnlyAction
+  | NotifyAction
+  | AdjustTrustAction
+  | SetTrustAction
+  | ResetTrustAction
+  | KillStreamAction
+  | MessageClientAction;
+
+// Rule actions container
+export interface RuleActions {
+  actions: Action[];
+}
+
+// New Rule interface (V2)
+export interface RuleV2 {
+  id: string;
+  name: string;
+  description: string | null;
+  serverId: string | null;
+  isActive: boolean;
+  conditions: RuleConditions;
+  actions: RuleActions;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 // Violation types
 export type ViolationSeverity = 'low' | 'warning' | 'high';
 
