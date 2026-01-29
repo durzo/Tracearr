@@ -24,7 +24,7 @@ import {
   type TimeBounds,
   createSimpleProgressPublisher,
 } from './import/index.js';
-import { normalizePlatformName } from '../utils/platformNormalizer.js';
+import { normalizeClient } from '../utils/platformNormalizer.js';
 import { normalizeStreamDecisions } from '../utils/transcodeNormalizer.js';
 
 const PAGE_SIZE = 5000; // Larger batches = fewer API calls (tested up to 10k, scales linearly)
@@ -968,7 +968,19 @@ export class TautulliService {
             playerName: record.player || record.product,
             deviceId: record.machine_id || null,
             product: record.product || null,
-            platform: normalizePlatformName(record.platform || ''),
+            // Use normalizeClient with product info to detect Android TV vs Android
+            // product contains context like "Plex for Android (TV)" that platform alone lacks
+            ...(() => {
+              const normalized = normalizeClient(
+                record.product || record.platform || '',
+                record.player ?? undefined,
+                'plex'
+              );
+              return {
+                platform: normalized.platform,
+                device: normalized.device,
+              };
+            })(),
             // Tautulli uses single transcode_decision for both video/audio
             ...(() => {
               const { videoDecision, audioDecision, isTranscode } = normalizeStreamDecisions(
