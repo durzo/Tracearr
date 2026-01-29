@@ -274,6 +274,9 @@ export {
   createRuleSchema,
   updateRuleSchema,
   ruleIdParamSchema,
+  // Rule V2
+  createRuleV2Schema,
+  updateRuleV2Schema,
   // Violation
   violationSortFieldSchema,
   violationQuerySchema,
@@ -327,6 +330,9 @@ export type {
   HistoryAggregatesQueryInput,
   CreateRuleInput,
   UpdateRuleInput,
+  // Rule V2 types
+  CreateRuleV2Input,
+  UpdateRuleV2Input,
   ViolationQueryInput,
   ViolationSortField,
   ServerIdFilterInput,

@@ -1,14 +1,30 @@
 /**
  * Rule management routes - CRUD for sharing detection rules
+ *
+ * Supports both legacy (type/params) and V2 (conditions/actions) formats.
+ * Legacy rules can be migrated to V2 format via the migration endpoint.
  */
 
 import type { FastifyPluginAsync } from 'fastify';
-import { eq, sql, inArray } from 'drizzle-orm';
-import { createRuleSchema, updateRuleSchema, ruleIdParamSchema } from '@tracearr/shared';
+import { eq, sql, inArray, isNull, isNotNull, and, or } from 'drizzle-orm';
+import {
+  createRuleSchema,
+  updateRuleSchema,
+  ruleIdParamSchema,
+  createRuleV2Schema,
+  updateRuleV2Schema,
+} from '@tracearr/shared';
+import type { RuleConditions, RuleActions } from '@tracearr/shared';
 import { db } from '../db/client.js';
 import { rules, serverUsers, violations, servers } from '../db/schema.js';
 import { hasServerAccess } from '../utils/serverFiltering.js';
 import { scheduleInactivityChecks } from '../jobs/inactivityCheckQueue.js';
+import {
+  needsMigration,
+  convertLegacyRule,
+  migrateRules,
+  type LegacyRule,
+} from '../services/rules/migration.js';
 
 export const ruleRoutes: FastifyPluginAsync = async (app) => {
   /**
@@ -26,11 +42,18 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
       .select({
         id: rules.id,
         name: rules.name,
+        description: rules.description,
+        // Legacy fields
         type: rules.type,
         params: rules.params,
+        // V2 fields
+        conditions: rules.conditions,
+        actions: rules.actions,
+        // Scope
+        serverId: rules.serverId,
         serverUserId: rules.serverUserId,
         username: serverUsers.username,
-        serverId: serverUsers.serverId,
+        serverUserServerId: serverUsers.serverId,
         serverName: servers.name,
         isActive: rules.isActive,
         createdAt: rules.createdAt,
@@ -38,21 +61,29 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
       })
       .from(rules)
       .leftJoin(serverUsers, eq(rules.serverUserId, serverUsers.id))
-      .leftJoin(servers, eq(serverUsers.serverId, servers.id))
+      .leftJoin(servers, or(eq(rules.serverId, servers.id), eq(serverUsers.serverId, servers.id)))
       .orderBy(rules.name);
 
     // Filter rules by server access
-    // Global rules (serverUserId = null) are visible to all
-    // User-specific rules require server access
+    // Global rules (no serverId and no serverUserId) are visible to all
+    // Server-scoped or user-specific rules require server access
     const filteredRules = ruleList.filter((rule) => {
       // Global rule - visible to everyone
-      if (!rule.serverUserId) return true;
-      // User-specific rule - check server access
-      if (!rule.serverId) return false; // Shouldn't happen, but defensive
-      return hasServerAccess(authUser, rule.serverId);
+      if (!rule.serverId && !rule.serverUserId) return true;
+      // Server-scoped rule - check server access
+      if (rule.serverId) return hasServerAccess(authUser, rule.serverId);
+      // User-specific rule - check server access via server user
+      if (rule.serverUserServerId) return hasServerAccess(authUser, rule.serverUserServerId);
+      return false;
     });
 
-    return { data: filteredRules };
+    // Compute effective serverId for each rule
+    const rulesWithEffectiveServerId = filteredRules.map((rule) => ({
+      ...rule,
+      effectiveServerId: rule.serverId ?? rule.serverUserServerId ?? null,
+    }));
+
+    return { data: rulesWithEffectiveServerId };
   });
 
   /**
@@ -121,6 +152,63 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
   });
 
   /**
+   * POST /rules/v2 - Create a new V2 rule with conditions and actions
+   */
+  app.post('/v2', { preHandler: [app.authenticate] }, async (request, reply) => {
+    const body = createRuleV2Schema.safeParse(request.body);
+    if (!body.success) {
+      return reply.badRequest(`Invalid request body: ${body.error.message}`);
+    }
+
+    const authUser = request.user;
+
+    // Only owners can create rules
+    if (authUser.role !== 'owner') {
+      return reply.forbidden('Only server owners can create rules');
+    }
+
+    const { name, description, serverId, isActive, conditions, actions } = body.data;
+
+    // Verify serverId exists and user has access if provided
+    if (serverId) {
+      const serverRows = await db
+        .select({ id: servers.id })
+        .from(servers)
+        .where(eq(servers.id, serverId))
+        .limit(1);
+
+      if (!serverRows[0]) {
+        return reply.notFound('Server not found');
+      }
+
+      // Verify owner has access to this server
+      if (!hasServerAccess(authUser, serverId)) {
+        return reply.forbidden('You do not have access to this server');
+      }
+    }
+
+    // Create rule with V2 format
+    const inserted = await db
+      .insert(rules)
+      .values({
+        name,
+        description,
+        serverId,
+        isActive,
+        conditions,
+        actions,
+      })
+      .returning();
+
+    const rule = inserted[0];
+    if (!rule) {
+      return reply.internalServerError('Failed to create rule');
+    }
+
+    return reply.status(201).send(rule);
+  });
+
+  /**
    * GET /rules/:id - Get a specific rule
    */
   app.get('/:id', { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -136,11 +224,18 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
       .select({
         id: rules.id,
         name: rules.name,
+        description: rules.description,
+        // Legacy fields
         type: rules.type,
         params: rules.params,
+        // V2 fields
+        conditions: rules.conditions,
+        actions: rules.actions,
+        // Scope
+        serverId: rules.serverId,
         serverUserId: rules.serverUserId,
         username: serverUsers.username,
-        serverId: serverUsers.serverId,
+        serverUserServerId: serverUsers.serverId,
         serverName: servers.name,
         isActive: rules.isActive,
         createdAt: rules.createdAt,
@@ -148,7 +243,7 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
       })
       .from(rules)
       .leftJoin(serverUsers, eq(rules.serverUserId, serverUsers.id))
-      .leftJoin(servers, eq(serverUsers.serverId, servers.id))
+      .leftJoin(servers, or(eq(rules.serverId, servers.id), eq(serverUsers.serverId, servers.id)))
       .where(eq(rules.id, id))
       .limit(1);
 
@@ -157,8 +252,9 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
       return reply.notFound('Rule not found');
     }
 
-    // Check access for user-specific rules
-    if (rule.serverUserId && rule.serverId && !hasServerAccess(authUser, rule.serverId)) {
+    // Check access for server-scoped or user-specific rules
+    const effectiveServerId = rule.serverId ?? rule.serverUserServerId;
+    if (effectiveServerId && !hasServerAccess(authUser, effectiveServerId)) {
       return reply.forbidden('You do not have access to this rule');
     }
 
@@ -170,6 +266,8 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       ...rule,
+      effectiveServerId,
+      needsMigration: needsMigration(rule),
       violationCount: violationCount[0]?.count ?? 0,
     };
   });
@@ -256,6 +354,95 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
     // (interval or active status may have changed)
     if (updatedRule.type === 'account_inactivity') {
       void scheduleInactivityChecks();
+    }
+
+    return updatedRule;
+  });
+
+  /**
+   * PATCH /rules/:id/v2 - Update a rule with V2 format
+   */
+  app.patch('/:id/v2', { preHandler: [app.authenticate] }, async (request, reply) => {
+    const params = ruleIdParamSchema.safeParse(request.params);
+    if (!params.success) {
+      return reply.badRequest('Invalid rule ID');
+    }
+
+    const body = updateRuleV2Schema.safeParse(request.body);
+    if (!body.success) {
+      return reply.badRequest(`Invalid request body: ${body.error.message}`);
+    }
+
+    const { id } = params.data;
+    const authUser = request.user;
+
+    // Only owners can update rules
+    if (authUser.role !== 'owner') {
+      return reply.forbidden('Only server owners can update rules');
+    }
+
+    // Check rule exists and get server info
+    const ruleRows = await db
+      .select({
+        id: rules.id,
+        serverId: rules.serverId,
+        serverUserId: rules.serverUserId,
+        serverUserServerId: serverUsers.serverId,
+      })
+      .from(rules)
+      .leftJoin(serverUsers, eq(rules.serverUserId, serverUsers.id))
+      .where(eq(rules.id, id))
+      .limit(1);
+
+    const existingRule = ruleRows[0];
+    if (!existingRule) {
+      return reply.notFound('Rule not found');
+    }
+
+    // Check access for server-scoped or user-specific rules
+    const effectiveServerId = existingRule.serverId ?? existingRule.serverUserServerId;
+    if (effectiveServerId && !hasServerAccess(authUser, effectiveServerId)) {
+      return reply.forbidden('You do not have access to this rule');
+    }
+
+    // Build update object
+    const updateData: Partial<{
+      name: string;
+      description: string | null;
+      conditions: RuleConditions;
+      actions: RuleActions;
+      isActive: boolean;
+      updatedAt: Date;
+    }> = {
+      updatedAt: new Date(),
+    };
+
+    if (body.data.name !== undefined) {
+      updateData.name = body.data.name;
+    }
+
+    if (body.data.description !== undefined) {
+      updateData.description = body.data.description;
+    }
+
+    if (body.data.conditions !== undefined) {
+      updateData.conditions = body.data.conditions;
+    }
+
+    if (body.data.actions !== undefined) {
+      updateData.actions = body.data.actions;
+    }
+
+    if (body.data.isActive !== undefined) {
+      updateData.isActive = body.data.isActive;
+    }
+
+    // Update rule
+    const updated = await db.update(rules).set(updateData).where(eq(rules.id, id)).returning();
+
+    const updatedRule = updated[0];
+    if (!updatedRule) {
+      return reply.internalServerError('Failed to update rule');
     }
 
     return updatedRule;
@@ -424,5 +611,262 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
     await db.delete(rules).where(inArray(rules.id, accessibleIds));
 
     return { success: true, deleted: accessibleIds.length };
+  });
+
+  /**
+   * GET /rules/migrate/preview - Preview migration of legacy rules to V2 format
+   * Shows what the migration would do without making changes.
+   */
+  app.get('/migrate/preview', { preHandler: [app.authenticate] }, async (request, reply) => {
+    const authUser = request.user;
+
+    // Only owners can migrate rules
+    if (authUser.role !== 'owner') {
+      return reply.forbidden('Only server owners can migrate rules');
+    }
+
+    // Get all legacy rules that need migration
+    const legacyRules = await db
+      .select({
+        id: rules.id,
+        name: rules.name,
+        type: rules.type,
+        params: rules.params,
+        serverId: rules.serverId,
+        serverUserId: rules.serverUserId,
+        isActive: rules.isActive,
+      })
+      .from(rules)
+      .where(
+        and(
+          isNotNull(rules.type),
+          isNotNull(rules.params),
+          or(isNull(rules.conditions), isNull(rules.actions))
+        )
+      );
+
+    // Filter by server access
+    const rulesWithAccess = await Promise.all(
+      legacyRules.map(async (rule) => {
+        if (!rule.serverId && !rule.serverUserId) return rule;
+        if (rule.serverId && hasServerAccess(authUser, rule.serverId)) return rule;
+        if (rule.serverUserId) {
+          const serverUser = await db
+            .select({ serverId: serverUsers.serverId })
+            .from(serverUsers)
+            .where(eq(serverUsers.id, rule.serverUserId))
+            .limit(1);
+          if (serverUser[0] && hasServerAccess(authUser, serverUser[0].serverId)) return rule;
+        }
+        return null;
+      })
+    );
+
+    const accessibleRules = rulesWithAccess.filter((r): r is NonNullable<typeof r> => r !== null);
+
+    // Preview migration
+    const result = migrateRules(
+      accessibleRules.map((r) => ({
+        id: r.id,
+        name: r.name,
+        type: r.type!,
+        params: r.params as Record<string, unknown>,
+        serverUserId: r.serverUserId,
+        serverId: r.serverId,
+        isActive: r.isActive,
+      })) as LegacyRule[]
+    );
+
+    return {
+      totalLegacyRules: accessibleRules.length,
+      canMigrate: result.migrated.length,
+      willFail: result.errors.length,
+      preview: result.migrated.map((m) => ({
+        id: m.id,
+        conditions: m.conditions,
+        actions: m.actions,
+      })),
+      errors: result.errors,
+    };
+  });
+
+  /**
+   * POST /rules/migrate - Migrate legacy rules to V2 format
+   * Converts all accessible legacy rules to V2 format.
+   */
+  app.post('/migrate', { preHandler: [app.authenticate] }, async (request, reply) => {
+    const authUser = request.user;
+
+    // Only owners can migrate rules
+    if (authUser.role !== 'owner') {
+      return reply.forbidden('Only server owners can migrate rules');
+    }
+
+    const body = request.body as { ids?: string[] };
+    const specificIds = body?.ids;
+
+    // Build WHERE conditions for legacy rules
+    const baseCondition = and(
+      isNotNull(rules.type),
+      isNotNull(rules.params),
+      or(isNull(rules.conditions), isNull(rules.actions))
+    );
+
+    // Get legacy rules that need migration
+    const legacyRules = await db
+      .select({
+        id: rules.id,
+        name: rules.name,
+        type: rules.type,
+        params: rules.params,
+        serverId: rules.serverId,
+        serverUserId: rules.serverUserId,
+        isActive: rules.isActive,
+      })
+      .from(rules)
+      .where(specificIds ? and(baseCondition, inArray(rules.id, specificIds)) : baseCondition);
+
+    // Filter by server access
+    const rulesWithAccess = await Promise.all(
+      legacyRules.map(async (rule) => {
+        if (!rule.serverId && !rule.serverUserId) return rule;
+        if (rule.serverId && hasServerAccess(authUser, rule.serverId)) return rule;
+        if (rule.serverUserId) {
+          const serverUser = await db
+            .select({ serverId: serverUsers.serverId })
+            .from(serverUsers)
+            .where(eq(serverUsers.id, rule.serverUserId))
+            .limit(1);
+          if (serverUser[0] && hasServerAccess(authUser, serverUser[0].serverId)) return rule;
+        }
+        return null;
+      })
+    );
+
+    const accessibleRules = rulesWithAccess.filter((r): r is NonNullable<typeof r> => r !== null);
+
+    // Perform migration
+    const result = migrateRules(
+      accessibleRules.map((r) => ({
+        id: r.id,
+        name: r.name,
+        type: r.type!,
+        params: r.params as Record<string, unknown>,
+        serverUserId: r.serverUserId,
+        serverId: r.serverId,
+        isActive: r.isActive,
+      })) as LegacyRule[]
+    );
+
+    // Update migrated rules in database
+    let updatedCount = 0;
+    for (const migrated of result.migrated) {
+      await db
+        .update(rules)
+        .set({
+          conditions: migrated.conditions,
+          actions: migrated.actions,
+          updatedAt: new Date(),
+        })
+        .where(eq(rules.id, migrated.id));
+      updatedCount++;
+    }
+
+    return {
+      success: true,
+      migrated: updatedCount,
+      skipped: result.errors.length,
+      errors: result.errors,
+    };
+  });
+
+  /**
+   * POST /rules/:id/migrate - Migrate a single legacy rule to V2 format
+   */
+  app.post('/:id/migrate', { preHandler: [app.authenticate] }, async (request, reply) => {
+    const params = ruleIdParamSchema.safeParse(request.params);
+    if (!params.success) {
+      return reply.badRequest('Invalid rule ID');
+    }
+
+    const { id } = params.data;
+    const authUser = request.user;
+
+    // Only owners can migrate rules
+    if (authUser.role !== 'owner') {
+      return reply.forbidden('Only server owners can migrate rules');
+    }
+
+    // Get the rule
+    const ruleRows = await db
+      .select({
+        id: rules.id,
+        name: rules.name,
+        type: rules.type,
+        params: rules.params,
+        conditions: rules.conditions,
+        actions: rules.actions,
+        serverId: rules.serverId,
+        serverUserId: rules.serverUserId,
+        isActive: rules.isActive,
+      })
+      .from(rules)
+      .where(eq(rules.id, id))
+      .limit(1);
+
+    const rule = ruleRows[0];
+    if (!rule) {
+      return reply.notFound('Rule not found');
+    }
+
+    // Check access
+    if (rule.serverId && !hasServerAccess(authUser, rule.serverId)) {
+      return reply.forbidden('You do not have access to this rule');
+    }
+    if (rule.serverUserId) {
+      const serverUser = await db
+        .select({ serverId: serverUsers.serverId })
+        .from(serverUsers)
+        .where(eq(serverUsers.id, rule.serverUserId))
+        .limit(1);
+      if (serverUser[0] && !hasServerAccess(authUser, serverUser[0].serverId)) {
+        return reply.forbidden('You do not have access to this rule');
+      }
+    }
+
+    // Check if migration is needed
+    if (!needsMigration(rule)) {
+      return reply.badRequest(
+        'Rule does not need migration (already has V2 fields or no legacy fields)'
+      );
+    }
+
+    // Convert rule
+    const migrated = convertLegacyRule({
+      id: rule.id,
+      name: rule.name,
+      type: rule.type!,
+      params: rule.params as Record<string, unknown>,
+      serverUserId: rule.serverUserId,
+      serverId: rule.serverId,
+      isActive: rule.isActive,
+    } as LegacyRule);
+
+    if (!migrated) {
+      return reply.badRequest(`Cannot migrate rule: unknown type ${rule.type}`);
+    }
+
+    // Update rule in database
+    const updated = await db
+      .update(rules)
+      .set({
+        conditions: migrated.conditions,
+        actions: migrated.actions,
+        updatedAt: new Date(),
+      })
+      .where(eq(rules.id, id))
+      .returning();
+
+    return updated[0];
   });
 };
