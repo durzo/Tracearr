@@ -7,6 +7,7 @@ import type {
 } from '@tracearr/shared';
 import type { EvaluationContext, EvaluationResult, ConditionEvaluator } from './types.js';
 import { evaluatorRegistry } from './evaluators/index.js';
+import { rulesLogger as logger } from '../../utils/logger.js';
 
 /**
  * Evaluate a single condition using the appropriate evaluator.
@@ -16,7 +17,9 @@ function evaluateCondition(context: EvaluationContext, condition: Condition): bo
     evaluatorRegistry[condition.field as ConditionField];
 
   if (!evaluator) {
-    console.warn(`No evaluator found for condition field: ${condition.field}`);
+    logger.warn(`No evaluator found for condition field: ${condition.field}`, {
+      field: condition.field,
+    });
     return false;
   }
 
@@ -24,12 +27,17 @@ function evaluateCondition(context: EvaluationContext, condition: Condition): bo
     const result = evaluator(context, condition);
     // Handle sync and async evaluators
     if (result instanceof Promise) {
-      console.warn(`Async evaluator called synchronously for field: ${condition.field}`);
+      logger.warn(`Async evaluator called synchronously for field: ${condition.field}`, {
+        field: condition.field,
+      });
       return false;
     }
     return result;
   } catch (error) {
-    console.error(`Error evaluating condition field ${condition.field}:`, error);
+    logger.error(`Error evaluating condition field ${condition.field}`, {
+      field: condition.field,
+      error,
+    });
     return false;
   }
 }
@@ -153,7 +161,9 @@ async function evaluateConditionAsync(
     evaluatorRegistry[condition.field as ConditionField];
 
   if (!evaluator) {
-    console.warn(`No evaluator found for condition field: ${condition.field}`);
+    logger.warn(`No evaluator found for condition field: ${condition.field}`, {
+      field: condition.field,
+    });
     return false;
   }
 
@@ -162,7 +172,10 @@ async function evaluateConditionAsync(
     // Handle both sync and async evaluators
     return result instanceof Promise ? await result : result;
   } catch (error) {
-    console.error(`Error evaluating condition field ${condition.field}:`, error);
+    logger.error(`Error evaluating condition field ${condition.field}`, {
+      field: condition.field,
+      error,
+    });
     return false;
   }
 }

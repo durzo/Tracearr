@@ -24,6 +24,7 @@ import type {
   GeoRestrictionParams,
   AccountInactivityParams,
 } from '@tracearr/shared';
+import { rulesLogger as logger } from '../../utils/logger.js';
 
 export interface LegacyRule {
   id: string;
@@ -284,7 +285,7 @@ export function convertLegacyRule(rule: LegacyRule): MigratedRule | null {
         conditions = convertAccountInactivity(rule.params as unknown as AccountInactivityParams);
         break;
       default:
-        console.warn(`Unknown rule type: ${rule.type}`);
+        logger.warn(`Unknown rule type: ${rule.type}`, { ruleId: rule.id, type: rule.type });
         return null;
     }
 
@@ -294,7 +295,7 @@ export function convertLegacyRule(rule: LegacyRule): MigratedRule | null {
       actions: createDefaultActions(),
     };
   } catch (error) {
-    console.error(`Error converting rule ${rule.id}:`, error);
+    logger.error(`Error converting rule ${rule.id}`, { ruleId: rule.id, error });
     return null;
   }
 }
