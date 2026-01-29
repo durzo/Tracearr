@@ -44,8 +44,16 @@ export type {
   RuleParams,
   Rule,
   // Rule V2
+  Operator,
+  ConditionField,
+  ConditionValue,
+  Condition,
+  ConditionGroup,
   RuleConditions,
+  ActionType,
+  Action,
   RuleActions,
+  RuleV2,
   // Violation
   ViolationSeverity,
   Violation,
