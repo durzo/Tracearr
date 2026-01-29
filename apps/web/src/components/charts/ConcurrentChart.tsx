@@ -136,7 +136,7 @@ export function ConcurrentChart({
           // Get category from axis using x index
           const categories = points[0]?.series?.xAxis?.categories;
           const xIndex = typeof this.x === 'number' ? this.x : 0;
-          const categoryValue = categories?.[xIndex] as string | undefined;
+          const categoryValue = categories?.[xIndex];
           // PostgreSQL: "2026-01-28 05:00:00+00" -> JS needs "2026-01-28T05:00:00+00:00"
           const normalized = categoryValue?.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
           const date = normalized ? new Date(normalized) : null;
