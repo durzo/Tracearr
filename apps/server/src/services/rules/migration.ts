@@ -15,7 +15,6 @@ import type {
   RuleType,
   RuleConditions,
   RuleActions,
-  ConditionGroup,
   Condition,
   ImpossibleTravelParams,
   SimultaneousLocationsParams,

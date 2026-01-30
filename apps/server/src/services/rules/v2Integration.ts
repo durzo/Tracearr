@@ -7,7 +7,6 @@
 
 import type { Redis } from 'ioredis';
 import { eq, sql, and, isNull, isNotNull } from 'drizzle-orm';
-import type { Action } from '@tracearr/shared';
 import { db } from '../../db/client.js';
 import { rules, serverUsers, sessions, ruleActionResults } from '../../db/schema.js';
 import { rulesLogger } from '../../utils/logger.js';
@@ -246,7 +245,7 @@ export function createActionExecutorDeps(redis: Redis): ActionExecutorDeps {
       // Dynamic import to avoid circular dependency
       const { createMediaServerClient } = await import('../mediaServer/index.js');
       const client = createMediaServerClient({
-        type: session.server.type as 'jellyfin' | 'emby',
+        type: session.server.type,
         url: session.server.url,
         token: session.server.token,
       });

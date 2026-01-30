@@ -71,17 +71,37 @@ export interface ActionExecutorDeps {
 
 // Default no-op dependencies for testing
 const noopDeps: ActionExecutorDeps = {
-  createViolation: async () => {},
-  logAudit: async () => {},
-  sendNotification: async () => {},
-  adjustUserTrust: async () => {},
-  setUserTrust: async () => {},
-  resetUserTrust: async () => {},
-  terminateSession: async () => {},
-  sendClientMessage: async () => {},
+  createViolation: async () => {
+    /* no-op */
+  },
+  logAudit: async () => {
+    /* no-op */
+  },
+  sendNotification: async () => {
+    /* no-op */
+  },
+  adjustUserTrust: async () => {
+    /* no-op */
+  },
+  setUserTrust: async () => {
+    /* no-op */
+  },
+  resetUserTrust: async () => {
+    /* no-op */
+  },
+  terminateSession: async () => {
+    /* no-op */
+  },
+  sendClientMessage: async () => {
+    /* no-op */
+  },
   checkCooldown: async () => false,
-  setCooldown: async () => {},
-  queueForConfirmation: async () => {},
+  setCooldown: async () => {
+    /* no-op */
+  },
+  queueForConfirmation: async () => {
+    /* no-op */
+  },
 };
 
 let currentDeps: ActionExecutorDeps = noopDeps;

@@ -1,10 +1,4 @@
-import type {
-  RuleConditions,
-  ConditionGroup,
-  Condition,
-  ConditionField,
-  RuleV2,
-} from '@tracearr/shared';
+import type { RuleConditions, ConditionGroup, Condition, RuleV2 } from '@tracearr/shared';
 import type { EvaluationContext, EvaluationResult, ConditionEvaluator } from './types.js';
 import { evaluatorRegistry } from './evaluators/index.js';
 import { rulesLogger as logger } from '../../utils/logger.js';
@@ -13,8 +7,7 @@ import { rulesLogger as logger } from '../../utils/logger.js';
  * Evaluate a single condition using the appropriate evaluator.
  */
 function evaluateCondition(context: EvaluationContext, condition: Condition): boolean {
-  const evaluator: ConditionEvaluator | undefined =
-    evaluatorRegistry[condition.field as ConditionField];
+  const evaluator: ConditionEvaluator | undefined = evaluatorRegistry[condition.field];
 
   if (!evaluator) {
     logger.warn(`No evaluator found for condition field: ${condition.field}`, {
@@ -91,7 +84,7 @@ export function evaluateRule(context: EvaluationContext): EvaluationResult {
   const { rule } = context;
 
   // Check if rule has v2 conditions
-  if (!rule.conditions || !rule.conditions.groups) {
+  if (!rule.conditions?.groups) {
     return {
       ruleId: rule.id,
       ruleName: rule.name,
@@ -157,8 +150,7 @@ async function evaluateConditionAsync(
   context: EvaluationContext,
   condition: Condition
 ): Promise<boolean> {
-  const evaluator: ConditionEvaluator | undefined =
-    evaluatorRegistry[condition.field as ConditionField];
+  const evaluator: ConditionEvaluator | undefined = evaluatorRegistry[condition.field];
 
   if (!evaluator) {
     logger.warn(`No evaluator found for condition field: ${condition.field}`, {
@@ -233,7 +225,7 @@ async function evaluateAllGroupsAsync(
 export async function evaluateRuleAsync(context: EvaluationContext): Promise<EvaluationResult> {
   const { rule } = context;
 
-  if (!rule.conditions || !rule.conditions.groups) {
+  if (!rule.conditions?.groups) {
     return {
       ruleId: rule.id,
       ruleName: rule.name,

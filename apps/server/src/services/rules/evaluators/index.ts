@@ -4,7 +4,6 @@ import type {
   VideoResolution,
   DeviceType,
   Platform,
-  MediaType,
 } from '@tracearr/shared';
 import type { ConditionEvaluator, EvaluationContext } from '../types.js';
 import { compare } from '../comparisons.js';
@@ -622,7 +621,7 @@ const evaluateMediaType: ConditionEvaluator = (
 ): boolean => {
   const { session } = context;
 
-  return compare(session.mediaType as MediaType, condition.operator, condition.value);
+  return compare(session.mediaType, condition.operator, condition.value);
 };
 
 // ============================================================================
