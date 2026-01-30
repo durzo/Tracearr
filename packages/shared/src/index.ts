@@ -63,6 +63,7 @@ export type {
   NotificationChannelV2,
   RuleActions,
   RuleV2,
+  ActionResult,
   VideoResolution,
   DeviceType,
   Platform,

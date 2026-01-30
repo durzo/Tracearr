@@ -588,6 +588,16 @@ export interface RuleV2 {
   updatedAt: Date;
 }
 
+// Action result types (for UI display of action execution results)
+export interface ActionResult {
+  actionType: string;
+  success: boolean;
+  skipped?: boolean;
+  skipReason?: string;
+  errorMessage?: string;
+  executedAt?: string;
+}
+
 // Violation types
 export type ViolationSeverity = 'low' | 'warning' | 'high';
 
@@ -629,7 +639,8 @@ export interface ViolationSessionInfo {
 }
 
 export interface ViolationWithDetails extends Violation {
-  rule: Pick<Rule, 'id' | 'name' | 'type'>;
+  // type is optional to support V2 rules which don't have a type field
+  rule: Pick<Rule, 'id' | 'name'> & { type: RuleType | null };
   user: Pick<ServerUser, 'id' | 'username' | 'thumbUrl' | 'serverId'> & {
     identityName: string | null;
   };
