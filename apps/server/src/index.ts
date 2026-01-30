@@ -104,6 +104,7 @@ import {
 } from './jobs/inactivityCheckQueue.js';
 import { initHeavyOpsLock } from './jobs/heavyOpsLock.js';
 import { initPushRateLimiter } from './services/pushRateLimiter.js';
+import { initializeV2Rules } from './services/rules/v2Integration.js';
 import { processPushReceipts } from './services/pushNotification.js';
 import { cleanupMobileTokens } from './jobs/cleanupMobileTokens.js';
 import { db, runMigrations } from './db/client.js';
@@ -254,6 +255,15 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
 
   // Redis plugin
   await app.register(redisPlugin);
+
+  // Initialize V2 rules system (wire dependencies, run migration)
+  try {
+    await initializeV2Rules(app.redis);
+    app.log.info('V2 rules system initialized');
+  } catch (err) {
+    app.log.error({ err }, 'Failed to initialize V2 rules system');
+    // Don't throw - rules can still work with default no-op deps
+  }
 
   // Auth plugin (depends on cookie)
   await app.register(authPlugin);
