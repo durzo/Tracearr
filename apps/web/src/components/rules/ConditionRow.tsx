@@ -1,7 +1,9 @@
-import { X } from 'lucide-react';
+import { Check, ChevronsUpDown, X } from 'lucide-react';
 import type { Condition, ConditionField, Operator, RulesFilterOptions } from '@tracearr/shared';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import {
   Select,
@@ -289,7 +291,7 @@ function ValueInput({
   );
 }
 
-// Multi-select with optional grouping support
+// Multi-select with optional grouping support (uses Popover to stay open)
 interface GroupedMultiSelectInputProps {
   options: { value: string; label: string; group?: string }[];
   value: string[];
@@ -330,48 +332,51 @@ function GroupedMultiSelectInput({
     : null;
 
   const renderOption = (opt: { value: string; label: string }) => (
-    <SelectItem key={opt.value} value={opt.value}>
-      <div className="flex items-center gap-2">
-        <div
-          className={`h-4 w-4 rounded border ${
-            value.includes(opt.value) ? 'bg-primary border-primary' : 'border-input'
-          }`}
-        >
-          {value.includes(opt.value) && (
-            <svg
-              className="text-primary-foreground h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={3}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-          )}
-        </div>
-        {opt.label}
-      </div>
-    </SelectItem>
+    <label
+      key={opt.value}
+      className="hover:bg-accent flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm"
+    >
+      <Checkbox
+        checked={value.includes(opt.value)}
+        onCheckedChange={() => toggleOption(opt.value)}
+      />
+      <span className="flex-1">{opt.label}</span>
+    </label>
   );
 
   return (
-    <Select value="_multi" onValueChange={(v) => v !== '_multi' && toggleOption(v)}>
-      <SelectTrigger>
-        <span className={value.length === 0 ? 'text-muted-foreground' : ''}>
-          {value.length === 0 ? placeholder : selectedLabels}
-        </span>
-      </SelectTrigger>
-      <SelectContent className="max-h-[300px]">
-        {groupedOptions
-          ? Object.entries(groupedOptions).map(([groupName, groupOptions]) => (
-              <SelectGroup key={groupName}>
-                <SelectLabel>{groupName}</SelectLabel>
-                {groupOptions.map(renderOption)}
-              </SelectGroup>
-            ))
-          : options.map(renderOption)}
-      </SelectContent>
-    </Select>
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          className="h-10 w-full justify-between font-normal"
+        >
+          <span className={`truncate ${value.length === 0 ? 'text-muted-foreground' : ''}`}>
+            {value.length === 0
+              ? placeholder
+              : value.length === 1
+                ? selectedLabels
+                : `${value.length} selected`}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[250px] p-1" align="start">
+        <div className="max-h-[300px] overflow-y-auto">
+          {groupedOptions
+            ? Object.entries(groupedOptions).map(([groupName, groupOptions]) => (
+                <div key={groupName}>
+                  <div className="bg-muted/50 text-muted-foreground mx-1 mt-1 rounded-sm px-2 py-1.5 text-xs font-medium tracking-wider uppercase first:mt-0">
+                    {groupName}
+                  </div>
+                  {groupOptions.map(renderOption)}
+                </div>
+              ))
+            : options.map(renderOption)}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
