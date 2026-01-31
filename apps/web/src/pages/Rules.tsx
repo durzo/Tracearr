@@ -55,6 +55,7 @@ import type {
   UnitSystem,
   CreateRuleV2Input,
   UpdateRuleV2Input,
+  RulesFilterOptions,
 } from '@tracearr/shared';
 import { RuleBuilderDialog, getRuleIcon, getRuleSummary, isV2Rule } from '@/components/rules';
 import {
@@ -561,6 +562,7 @@ function RuleCard({
   unitSystem,
   isSelected,
   onSelect,
+  filterOptions,
 }: {
   rule: Rule;
   onEdit: () => void;
@@ -569,6 +571,7 @@ function RuleCard({
   unitSystem: UnitSystem;
   isSelected?: boolean;
   onSelect?: () => void;
+  filterOptions?: RulesFilterOptions;
 }) {
   const { t } = useTranslation('pages');
   const ruleTypes = useRuleTypes();
@@ -584,7 +587,7 @@ function RuleCard({
 
   // Get subtitle: V2 shows summary, V1 shows type label
   const subtitle = isV2
-    ? getRuleSummary(rule)
+    ? getRuleSummary(rule, filterOptions)
     : (ruleType?.label ?? rule.type?.replace(/_/g, ' ') ?? 'Unknown');
 
   return (
@@ -988,6 +991,7 @@ export function Rules() {
               unitSystem={unitSystem}
               isSelected={isSelected(rule)}
               onSelect={() => toggleRow(rule)}
+              filterOptions={rulesFilterOptions}
             />
           ))}
         </div>

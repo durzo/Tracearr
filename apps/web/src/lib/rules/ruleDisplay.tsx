@@ -12,6 +12,7 @@ import type {
   ActionType,
   ConditionField,
   Operator,
+  RulesFilterOptions,
 } from '@tracearr/shared';
 import {
   MapPin,
@@ -130,7 +131,7 @@ function countTotalConditions(rule: Rule): number {
 /**
  * Format a single condition to a human-readable string.
  */
-export function formatCondition(condition: Condition): string {
+export function formatCondition(condition: Condition, filterOptions?: RulesFilterOptions): string {
   const fieldDef = FIELD_DEFINITIONS[condition.field];
   const label = COMPACT_FIELD_LABELS[condition.field] ?? fieldDef?.label ?? condition.field;
   const operator = OPERATOR_SYMBOLS[condition.operator] ?? condition.operator;
@@ -144,7 +145,7 @@ export function formatCondition(condition: Condition): string {
   }
 
   // Format the value
-  const formattedValue = formatConditionValue(condition, fieldDef);
+  const formattedValue = formatConditionValue(condition, fieldDef, filterOptions);
 
   // For 'in' operator with arrays, use format: "Country in US, CA"
   if (condition.operator === 'in' || condition.operator === 'not_in') {
@@ -157,24 +158,65 @@ export function formatCondition(condition: Condition): string {
 }
 
 /**
+ * Look up a human-readable label for a dynamic field value.
+ */
+function lookupDynamicValue(
+  field: ConditionField,
+  value: string,
+  filterOptions?: RulesFilterOptions
+): string | null {
+  if (!filterOptions) return null;
+
+  switch (field) {
+    case 'user_id': {
+      const user = filterOptions.users?.find((u) => u.id === value);
+      return user ? user.identityName || user.username : null;
+    }
+    case 'server_id': {
+      const server = filterOptions.servers?.find((s) => s.id === value);
+      return server?.name ?? null;
+    }
+    case 'country': {
+      const country = filterOptions.countries?.find((c) => c.code === value);
+      return country?.name ?? null;
+    }
+    default:
+      return null;
+  }
+}
+
+/**
  * Format a condition value for display.
  */
 function formatConditionValue(
   condition: Condition,
-  fieldDef: (typeof FIELD_DEFINITIONS)[ConditionField] | undefined
+  fieldDef: (typeof FIELD_DEFINITIONS)[ConditionField] | undefined,
+  filterOptions?: RulesFilterOptions
 ): string {
-  const { value } = condition;
+  const { value, field } = condition;
 
-  // Array values: join with comma
+  // Array values: join with comma (with dynamic lookups)
   if (Array.isArray(value)) {
     if (value.length === 0) return '(none)';
-    if (value.length > 3) {
-      return `${value.slice(0, 3).join(', ')}...`;
+    const labels = value.map((v) => {
+      if (typeof v === 'string') {
+        return lookupDynamicValue(field, v, filterOptions) ?? v;
+      }
+      return String(v);
+    });
+    if (labels.length > 3) {
+      return `${labels.slice(0, 3).join(', ')}...`;
     }
-    return value.join(', ');
+    return labels.join(', ');
   }
 
-  // Select fields: try to get option label
+  // Try dynamic lookup first for fields like user_id, server_id, country
+  if (typeof value === 'string') {
+    const dynamicLabel = lookupDynamicValue(field, value, filterOptions);
+    if (dynamicLabel) return dynamicLabel;
+  }
+
+  // Select fields: try to get option label from static options
   if (fieldDef?.options && typeof value === 'string') {
     const option = fieldDef.options.find((o) => o.value === value);
     if (option) return option.label;
@@ -240,7 +282,7 @@ function formatActions(actions: Action[]): string {
  *
  * Format: "Inactive > 180 days (+2 conditions) → Warning"
  */
-export function getRuleSummary(rule: Rule): string {
+export function getRuleSummary(rule: Rule, filterOptions?: RulesFilterOptions): string {
   // Conditions part
   const firstCondition = getFirstCondition(rule);
   const totalConditions = countTotalConditions(rule);
@@ -249,7 +291,7 @@ export function getRuleSummary(rule: Rule): string {
   if (!firstCondition) {
     conditionsPart = 'No conditions';
   } else {
-    conditionsPart = formatCondition(firstCondition);
+    conditionsPart = formatCondition(firstCondition, filterOptions);
     if (totalConditions > 1) {
       conditionsPart += ` (+${totalConditions - 1} more)`;
     }
