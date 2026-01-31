@@ -342,7 +342,7 @@ function GroupedMultiSelectInput({
   );
 
   return (
-    <Popover>
+    <Popover modal>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -359,8 +359,8 @@ function GroupedMultiSelectInput({
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[250px] p-1" align="start">
-        <div className="max-h-[300px] overflow-y-auto">
+      <PopoverContent className="w-[250px] p-0" align="start">
+        <div className="max-h-[300px] overflow-y-auto p-1">
           {groupedOptions
             ? Object.entries(groupedOptions).map(([groupName, groupOptions]) => (
                 <div key={groupName}>
