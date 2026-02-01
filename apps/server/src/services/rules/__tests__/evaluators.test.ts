@@ -968,16 +968,184 @@ describe('Stream Quality Evaluators', () => {
   });
 
   describe('is_transcoding', () => {
-    it('evaluates transcode status', () => {
+    it('evaluates "video" - matches when video is transcoding', () => {
+      const session = createMockSession({
+        isTranscode: true,
+        videoDecision: 'transcode',
+        audioDecision: 'copy',
+      });
+      const ctx = createTestContext({ session });
+      const evaluator = evaluatorRegistry.is_transcoding;
+
+      expect(
+        evaluator(ctx, createCondition({ field: 'is_transcoding', operator: 'eq', value: 'video' }))
+      ).toBe(true);
+    });
+
+    it('evaluates "video" - does not match when only audio is transcoding', () => {
+      const session = createMockSession({
+        isTranscode: true,
+        videoDecision: 'copy',
+        audioDecision: 'transcode',
+      });
+      const ctx = createTestContext({ session });
+      const evaluator = evaluatorRegistry.is_transcoding;
+
+      expect(
+        evaluator(ctx, createCondition({ field: 'is_transcoding', operator: 'eq', value: 'video' }))
+      ).toBe(false);
+    });
+
+    it('evaluates "audio" - matches when audio is transcoding', () => {
+      const session = createMockSession({
+        isTranscode: true,
+        videoDecision: 'copy',
+        audioDecision: 'transcode',
+      });
+      const ctx = createTestContext({ session });
+      const evaluator = evaluatorRegistry.is_transcoding;
+
+      expect(
+        evaluator(ctx, createCondition({ field: 'is_transcoding', operator: 'eq', value: 'audio' }))
+      ).toBe(true);
+    });
+
+    it('evaluates "audio" - does not match when only video is transcoding', () => {
+      const session = createMockSession({
+        isTranscode: true,
+        videoDecision: 'transcode',
+        audioDecision: 'copy',
+      });
+      const ctx = createTestContext({ session });
+      const evaluator = evaluatorRegistry.is_transcoding;
+
+      expect(
+        evaluator(ctx, createCondition({ field: 'is_transcoding', operator: 'eq', value: 'audio' }))
+      ).toBe(false);
+    });
+
+    it('evaluates "video_or_audio" - matches when either is transcoding', () => {
+      const evaluator = evaluatorRegistry.is_transcoding;
+
+      // Video only transcoding
+      const videoOnly = createMockSession({
+        isTranscode: true,
+        videoDecision: 'transcode',
+        audioDecision: 'copy',
+      });
+      expect(
+        evaluator(
+          createTestContext({ session: videoOnly }),
+          createCondition({ field: 'is_transcoding', operator: 'eq', value: 'video_or_audio' })
+        )
+      ).toBe(true);
+
+      // Audio only transcoding
+      const audioOnly = createMockSession({
+        isTranscode: true,
+        videoDecision: 'copy',
+        audioDecision: 'transcode',
+      });
+      expect(
+        evaluator(
+          createTestContext({ session: audioOnly }),
+          createCondition({ field: 'is_transcoding', operator: 'eq', value: 'video_or_audio' })
+        )
+      ).toBe(true);
+
+      // Both transcoding
+      const both = createMockSession({
+        isTranscode: true,
+        videoDecision: 'transcode',
+        audioDecision: 'transcode',
+      });
+      expect(
+        evaluator(
+          createTestContext({ session: both }),
+          createCondition({ field: 'is_transcoding', operator: 'eq', value: 'video_or_audio' })
+        )
+      ).toBe(true);
+    });
+
+    it('evaluates "video_or_audio" - does not match direct play', () => {
+      const session = createMockSession({
+        isTranscode: false,
+        videoDecision: 'directplay',
+        audioDecision: 'directplay',
+      });
+      const ctx = createTestContext({ session });
+      const evaluator = evaluatorRegistry.is_transcoding;
+
+      expect(
+        evaluator(
+          ctx,
+          createCondition({ field: 'is_transcoding', operator: 'eq', value: 'video_or_audio' })
+        )
+      ).toBe(false);
+    });
+
+    it('evaluates "neither" - matches direct play', () => {
+      const session = createMockSession({
+        isTranscode: false,
+        videoDecision: 'directplay',
+        audioDecision: 'directplay',
+      });
+      const ctx = createTestContext({ session });
+      const evaluator = evaluatorRegistry.is_transcoding;
+
+      expect(
+        evaluator(
+          ctx,
+          createCondition({ field: 'is_transcoding', operator: 'eq', value: 'neither' })
+        )
+      ).toBe(true);
+    });
+
+    it('evaluates "neither" - does not match when transcoding', () => {
+      const session = createMockSession({
+        isTranscode: true,
+        videoDecision: 'transcode',
+        audioDecision: 'copy',
+      });
+      const ctx = createTestContext({ session });
+      const evaluator = evaluatorRegistry.is_transcoding;
+
+      expect(
+        evaluator(
+          ctx,
+          createCondition({ field: 'is_transcoding', operator: 'eq', value: 'neither' })
+        )
+      ).toBe(false);
+    });
+
+    // Backwards compatibility tests
+    it('backwards compatibility: boolean true behaves like video_or_audio', () => {
       const session = createMockSession({ isTranscode: true });
       const ctx = createTestContext({ session });
-
       const evaluator = evaluatorRegistry.is_transcoding;
+
       expect(
         evaluator(ctx, createCondition({ field: 'is_transcoding', operator: 'eq', value: true }))
       ).toBe(true);
       expect(
         evaluator(ctx, createCondition({ field: 'is_transcoding', operator: 'eq', value: false }))
+      ).toBe(false);
+    });
+
+    it('backwards compatibility: boolean false behaves like neither', () => {
+      const session = createMockSession({
+        isTranscode: false,
+        videoDecision: 'directplay',
+        audioDecision: 'directplay',
+      });
+      const ctx = createTestContext({ session });
+      const evaluator = evaluatorRegistry.is_transcoding;
+
+      expect(
+        evaluator(ctx, createCondition({ field: 'is_transcoding', operator: 'eq', value: false }))
+      ).toBe(true);
+      expect(
+        evaluator(ctx, createCondition({ field: 'is_transcoding', operator: 'eq', value: true }))
       ).toBe(false);
     });
   });
