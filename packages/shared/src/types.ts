@@ -447,6 +447,8 @@ export type StreamQualityField =
   | 'is_transcode_downgrade'
   | 'source_bitrate_mbps';
 
+export type TranscodingConditionValue = 'video' | 'audio' | 'video_or_audio' | 'neither';
+
 export type UserAttributeField = 'user_id' | 'trust_score' | 'account_age_days';
 
 export type DeviceClientField = 'device_type' | 'client_name' | 'platform';
