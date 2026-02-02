@@ -59,11 +59,12 @@ function getResolutionFromHeight(height: number): ResolutionLabel {
 /**
  * Normalize video resolution to a display-friendly label
  *
- * Resolution standards (720p, 1080p, etc.) are defined by VERTICAL pixel count.
- * However, widescreen/scope content (2.39:1) has reduced height, so we use
- * the MAX of width-based and height-based classification to handle all cases:
+ * Priority: width/height dimensions over resolution strings. This correctly
+ * classifies widescreen/scope content where Plex's height-based resolution
+ * string is misleading (e.g., Plex sends "720" for 1920x800 scope content).
  *
- * - Widescreen: 1920x804 → max(1080p by width, 720p by height) = 1080p ✓
+ * Uses MAX of width-based and height-based classification to handle all cases:
+ * - Widescreen: 1920x800 → max(1080p by width, 720p by height) = 1080p ✓
  * - 4:3 content: 1440x1080 → max(720p by width, 1080p by height) = 1080p ✓
  * - Standard 16:9: 1920x1080 → max(1080p by width, 1080p by height) = 1080p ✓
  *
@@ -71,18 +72,41 @@ function getResolutionFromHeight(height: number): ResolutionLabel {
  * @returns Normalized resolution string (e.g., "4K", "1080p", "720p", "SD") or null
  *
  * @example
- * normalizeResolution({ resolution: '1080p' })           // "1080p"
+ * normalizeResolution({ width: 1920, height: 800 })      // "1080p" (widescreen 2.40:1)
  * normalizeResolution({ width: 1920, height: 804 })      // "1080p" (widescreen 2.39:1)
  * normalizeResolution({ width: 1440, height: 1080 })     // "1080p" (4:3 aspect ratio)
  * normalizeResolution({ width: 1920, height: 1080 })     // "1080p" (16:9 standard)
  * normalizeResolution({ width: 3840, height: 1600 })     // "4K" (ultrawide)
- * normalizeResolution({ height: 1080 })                  // "1080p" (height-only)
- * normalizeResolution({ width: 1920 })                   // "1080p" (width-only)
+ * normalizeResolution({ resolution: '1080p' })           // "1080p" (string fallback)
+ * // Width/height takes precedence over resolution string:
+ * normalizeResolution({ resolution: '720', width: 1920, height: 800 }) // "1080p"
  */
 export function normalizeResolution(input: ResolutionInput): string | null {
   const { resolution, width, height } = input;
 
-  // 1. Prefer explicit resolution string from API (most reliable)
+  // 1. Width + Height available → use MAX of both (handles all aspect ratios)
+  // This correctly classifies widescreen (scope) and 4:3 content:
+  // - Widescreen 1920x800: max(1080p, 720p) = 1080p (width indicates source quality)
+  // - 4:3 content 1440x1080: max(720p, 1080p) = 1080p (height indicates source quality)
+  if (width && height) {
+    const widthRes = getResolutionFromWidth(width);
+    const heightRes = getResolutionFromHeight(height);
+
+    // Return the higher quality tier
+    return RESOLUTION_TIERS[widthRes] >= RESOLUTION_TIERS[heightRes] ? widthRes : heightRes;
+  }
+
+  // 2. Width-only → widescreen detection
+  if (width) {
+    return getResolutionFromWidth(width);
+  }
+
+  // 3. Height-only → standard classification by vertical pixels
+  if (height) {
+    return getResolutionFromHeight(height);
+  }
+
+  // 4. Resolution string fallback (when no dimensions available)
   if (resolution) {
     const lower = resolution.toLowerCase();
 
@@ -112,28 +136,6 @@ export function normalizeResolution(input: ResolutionInput): string | null {
 
     // Return as-is if already formatted
     return resolution;
-  }
-
-  // 2. Use MAX of width-based and height-based classification
-  // This handles both widescreen (scope) and 4:3 content correctly:
-  // - Widescreen 1920x804: max(1080p, 720p) = 1080p (width indicates source)
-  // - 4:3 content 1440x1080: max(720p, 1080p) = 1080p (height is the standard)
-  if (width && height) {
-    const widthRes = getResolutionFromWidth(width);
-    const heightRes = getResolutionFromHeight(height);
-
-    // Return the higher quality tier
-    return RESOLUTION_TIERS[widthRes] >= RESOLUTION_TIERS[heightRes] ? widthRes : heightRes;
-  }
-
-  // 3. Width-only (e.g., widescreen without height info)
-  if (width) {
-    return getResolutionFromWidth(width);
-  }
-
-  // 4. Height-only (standard classification by vertical pixels)
-  if (height) {
-    return getResolutionFromHeight(height);
   }
 
   return null;

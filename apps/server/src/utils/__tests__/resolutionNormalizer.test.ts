@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import { normalizeResolution, formatQualityString } from '../resolutionNormalizer.js';
 
 describe('normalizeResolution', () => {
-  describe('resolution string priority', () => {
+  describe('resolution string fallback (when no dimensions)', () => {
     it('should return 4K for "4k" string', () => {
       expect(normalizeResolution({ resolution: '4k' })).toBe('4K');
     });
@@ -71,8 +71,33 @@ describe('normalizeResolution', () => {
       expect(normalizeResolution({ resolution: '540' })).toBe('540p');
     });
 
-    it('should prefer resolution string over width/height', () => {
-      expect(normalizeResolution({ resolution: '1080p', width: 1280, height: 720 })).toBe('1080p');
+    it('should use resolution string only when no dimensions available', () => {
+      // Resolution string is a fallback - dimensions take priority
+      expect(normalizeResolution({ resolution: '1080p' })).toBe('1080p');
+      expect(normalizeResolution({ resolution: '720p' })).toBe('720p');
+    });
+  });
+
+  describe('width/height priority over resolution string (Issue #277)', () => {
+    it('should prefer width/height over resolution string', () => {
+      // Plex sends "720" for 1920x800 widescreen, but dimensions indicate 1080p
+      expect(normalizeResolution({ resolution: '720', width: 1920, height: 800 })).toBe('1080p');
+    });
+
+    it('should return 1080p for widescreen even when Plex says 720 (Issue #277)', () => {
+      // Main bug: 1920x800 scope content incorrectly labeled as 720p
+      expect(normalizeResolution({ resolution: '720', width: 1920, height: 800 })).toBe('1080p');
+      expect(normalizeResolution({ resolution: '720', width: 1920, height: 804 })).toBe('1080p');
+      expect(normalizeResolution({ resolution: '720', width: 1920, height: 816 })).toBe('1080p');
+    });
+
+    it('should return 4K for ultrawide even when Plex says 1080 or lower', () => {
+      expect(normalizeResolution({ resolution: '1080', width: 3840, height: 1600 })).toBe('4K');
+    });
+
+    it('should return 1080p for 4:3 content even if width suggests 720p', () => {
+      // 1440x1080 is 4:3 content - height indicates 1080p source
+      expect(normalizeResolution({ resolution: '1080', width: 1440, height: 1080 })).toBe('1080p');
     });
   });
 
