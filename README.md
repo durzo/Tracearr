@@ -138,6 +138,14 @@ Available log files: `tracearr.log`, `tracearr-error.log`, `postgres.log`, `post
 
 Set `LOG_LEVEL=debug` for verbose output.
 
+**Proxmox VE LXC** - Each service runs as a systemd unit:
+
+```bash
+journalctl -u tracearr   # Application logs
+journalctl -u postgresql # Database logs
+journalctl -u redis      # Cache logs
+```
+
 ### Development Setup
 
 ```bash
