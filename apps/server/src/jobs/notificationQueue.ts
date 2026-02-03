@@ -247,15 +247,15 @@ async function processNotificationJob(job: Job<NotificationJobData>): Promise<vo
 
   // Build notification settings with routing-aware channel enablement
   // The routing config controls which channels receive notifications
+  // webhookEnabled gates all webhook formats: json, ntfy, apprise, pushover
   const notificationSettings = {
-    // Only include webhook URLs if routing allows
     discordWebhookUrl: routing.discordEnabled ? settings.discordWebhookUrl : null,
     customWebhookUrl: routing.webhookEnabled ? settings.customWebhookUrl : null,
     webhookFormat: settings.webhookFormat,
-    ntfyTopic: settings.ntfyTopic,
-    ntfyAuthToken: settings.ntfyAuthToken,
-    pushoverUserKey: settings.pushoverUserKey,
-    pushoverApiToken: settings.pushoverApiToken,
+    ntfyTopic: routing.webhookEnabled ? settings.ntfyTopic : null,
+    ntfyAuthToken: routing.webhookEnabled ? settings.ntfyAuthToken : null,
+    pushoverUserKey: routing.webhookEnabled ? settings.pushoverUserKey : null,
+    pushoverApiToken: routing.webhookEnabled ? settings.pushoverApiToken : null,
   };
 
   switch (type) {
