@@ -365,10 +365,14 @@ export function extractMusicMetadata(nowPlaying: Record<string, unknown>): {
 } {
   const artists = nowPlaying.Artists as string[] | undefined;
   const artistFromList = artists?.[0]?.slice(0, 255);
+  const albumArtist = parseOptionalBoundedString(nowPlaying.AlbumArtist, 255);
+
+  // For compilations ("Various Artists"), prefer track artist; otherwise prefer album artist
+  const isCompilation = albumArtist?.toLowerCase() === 'various artists';
+  const artistName = isCompilation ? artistFromList || albumArtist : albumArtist || artistFromList;
 
   return {
-    artistName:
-      artistFromList || parseOptionalBoundedString(nowPlaying.AlbumArtist, 255) || undefined,
+    artistName: artistName || undefined,
     albumName: parseOptionalBoundedString(nowPlaying.Album, 255),
     trackNumber: parseOptionalNumber(nowPlaying.IndexNumber),
     discNumber: parseOptionalNumber(nowPlaying.ParentIndexNumber),

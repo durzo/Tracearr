@@ -99,6 +99,53 @@ describe('parseProviderIds', () => {
       tvdbId: 789012,
     });
   });
+
+  // Corrupted metadata tests (fixes for real-world Emby data issues)
+  it('fixes duplicated TMDB ID (129536129536 -> 129536)', () => {
+    const result = parseProviderIds({ Tmdb: '129536129536' });
+    expect(result.tmdbId).toBe(129536);
+  });
+
+  it('fixes duplicated TVDB ID (405495405495 -> 405495)', () => {
+    const result = parseProviderIds({ Tvdb: '405495405495' });
+    expect(result.tvdbId).toBe(405495);
+  });
+
+  it('accepts valid IDs even if they look like duplicates (123123 is valid)', () => {
+    // 123123 is within valid range, so we don't try to "fix" it
+    // Only IDs exceeding POSTGRES_INT_MAX get the duplication check
+    const result = parseProviderIds({ Tmdb: '123123' });
+    expect(result.tmdbId).toBe(123123);
+  });
+
+  it('fixes IDs that happen to match duplicate pattern (9999999999 -> 99999)', () => {
+    // 9999999999 matches the duplicate pattern (99999+99999) and gets fixed
+    // This is acceptable since TMDB IDs of 9.9 billion don't exist
+    const result = parseProviderIds({ Tmdb: '9999999999' });
+    expect(result.tmdbId).toBe(99999);
+  });
+
+  it('rejects IDs exceeding max that are not duplicates (odd length)', () => {
+    // 12345678901 (11 digits, odd) exceeds max and can't be a duplicate
+    const result = parseProviderIds({ Tmdb: '12345678901' });
+    expect(result.tmdbId).toBeUndefined();
+  });
+
+  it('rejects unfixable duplicated IDs that are still too large', () => {
+    // Even after fixing, this would be 2200000000 which exceeds max
+    const result = parseProviderIds({ Tmdb: '22000000002200000000' });
+    expect(result.tmdbId).toBeUndefined();
+  });
+
+  it('rejects negative IDs', () => {
+    const result = parseProviderIds({ Tmdb: '-123456' });
+    expect(result.tmdbId).toBeUndefined();
+  });
+
+  it('rejects zero IDs', () => {
+    const result = parseProviderIds({ Tmdb: '0' });
+    expect(result.tmdbId).toBeUndefined();
+  });
 });
 
 // ============================================================================

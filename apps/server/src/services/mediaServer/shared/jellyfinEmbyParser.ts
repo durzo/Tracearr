@@ -431,6 +431,59 @@ export function parseItemsResponse(data: unknown): JellyfinEmbyItemResult[] {
 // Library Items Parsing (for library snapshots)
 // ============================================================================
 
+// PostgreSQL integer max value (signed 32-bit)
+const POSTGRES_INT_MAX = 2147483647;
+
+/**
+ * Fix duplicated numeric IDs (e.g., "129536129536" → 129536)
+ * Some media servers have corrupted metadata where IDs get concatenated with themselves.
+ * This detects the pattern and recovers the original value.
+ */
+function fixDuplicatedId(value: number): number {
+  // Only check values that exceed PostgreSQL integer max
+  if (value <= POSTGRES_INT_MAX) return value;
+
+  const str = String(value);
+  const len = str.length;
+
+  // Must be even length to be a duplicate
+  if (len % 2 !== 0) return value;
+
+  const half = len / 2;
+  const firstHalf = str.slice(0, half);
+  const secondHalf = str.slice(half);
+
+  // Check if it's the same value repeated
+  if (firstHalf === secondHalf) {
+    const fixed = parseInt(firstHalf, 10);
+    // Ensure the recovered value is valid
+    if (!isNaN(fixed) && fixed > 0 && fixed <= POSTGRES_INT_MAX) {
+      return fixed;
+    }
+  }
+
+  return value;
+}
+
+/**
+ * Parse and validate a numeric external ID (TMDB/TVDB).
+ * Handles corrupted metadata and validates within PostgreSQL integer range.
+ */
+function parseExternalId(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null) return undefined;
+
+  const parsed = typeof raw === 'number' ? raw : parseInt(String(raw), 10);
+  if (isNaN(parsed) || parsed <= 0) return undefined;
+
+  // Try to fix duplicated IDs (e.g., "129536129536" → 129536)
+  const fixed = fixDuplicatedId(parsed);
+
+  // Validate within PostgreSQL integer range
+  if (fixed > POSTGRES_INT_MAX) return undefined;
+
+  return fixed;
+}
+
 /**
  * Parse ProviderIds object to extract external IDs
  * Handles both capitalized (Imdb) and lowercase (imdb) keys
@@ -461,19 +514,8 @@ export function parseProviderIds(providerIds: unknown): {
     }
   }
 
-  if (tmdbRaw !== undefined && tmdbRaw !== null) {
-    const parsed = typeof tmdbRaw === 'number' ? tmdbRaw : parseInt(String(tmdbRaw), 10);
-    if (!isNaN(parsed)) {
-      result.tmdbId = parsed;
-    }
-  }
-
-  if (tvdbRaw !== undefined && tvdbRaw !== null) {
-    const parsed = typeof tvdbRaw === 'number' ? tvdbRaw : parseInt(String(tvdbRaw), 10);
-    if (!isNaN(parsed)) {
-      result.tvdbId = parsed;
-    }
-  }
+  result.tmdbId = parseExternalId(tmdbRaw);
+  result.tvdbId = parseExternalId(tvdbRaw);
 
   return result;
 }
