@@ -198,8 +198,10 @@ export abstract class BaseMediaServerClient
     const params = new URLSearchParams({
       ParentId: libraryId,
       Recursive: 'true',
-      IncludeItemTypes: 'Movie,Series,Season,Episode,MusicArtist,MusicAlbum,Audio',
-      // IsMissing=false excludes "missing" episodes that Jellyfin knows about from metadata
+      // Episode: fetched separately via getLibraryLeaves() to avoid double-counting
+      // Season: not stored (filtered by parser), episode metadata has parentIndex
+      IncludeItemTypes: 'Movie,Series,MusicArtist,MusicAlbum,Audio',
+      // IsMissing=false excludes "missing" items that Jellyfin/Emby knows about from metadata
       // but the user doesn't have files for (fixes #240 - inflated episode counts)
       IsMissing: 'false',
       Fields:
