@@ -1556,195 +1556,198 @@ async function processBackfillLibrarySnapshotsJob(
         await extendJobLock(job);
         await extendHeavyOpsLock(job.id!);
 
-        // PHASE 1: Pre-compute cumulative data ONCE for the entire library
-        // Drop and recreate temp table for each library (Drizzle auto-commits each statement,
-        // so ON COMMIT DROP doesn't work across multiple libraries)
-        await db.execute(sql`DROP TABLE IF EXISTS backfill_cumulative`);
-        await db.execute(sql`
-          CREATE TEMP TABLE backfill_cumulative (
-            day date PRIMARY KEY,
-            item_count int,
-            total_size bigint,
-            movie_count int,
-            episode_count int,
-            season_count int,
-            show_count int,
-            music_count int,
-            count_4k int,
-            count_1080p int,
-            count_720p int,
-            count_sd int,
-            hevc_count int,
-            h264_count int,
-            av1_count int
-          )
-        `);
-
-        // Single scan of library_items + single window function pass
-        // This replaces the O(n²) approach where each batch rescanned the entire history
-        await db.execute(sql`
-          INSERT INTO backfill_cumulative
-          WITH daily_additions AS (
-            -- Single scan: Get per-day additions with all metrics for entire library
-            SELECT
-              DATE(created_at) AS day,
-              COUNT(*) AS items,
-              SUM(file_size) AS size,
-              COUNT(*) FILTER (WHERE media_type = 'movie') AS movies,
-              COUNT(*) FILTER (WHERE media_type = 'episode') AS episodes,
-              COUNT(*) FILTER (WHERE media_type = 'season') AS seasons,
-              COUNT(*) FILTER (WHERE media_type = 'show') AS shows,
-              COUNT(*) FILTER (WHERE media_type IN ('artist', 'album', 'track')) AS music,
-              COUNT(*) FILTER (WHERE video_resolution = '4k') AS c4k,
-              COUNT(*) FILTER (WHERE video_resolution = '1080p') AS c1080p,
-              COUNT(*) FILTER (WHERE video_resolution = '720p') AS c720p,
-              COUNT(*) FILTER (WHERE video_resolution IN ('480p', 'sd')
-                                OR (video_resolution IS NOT NULL
-                                    AND video_resolution NOT IN ('4k', '1080p', '720p'))) AS csd,
-              COUNT(*) FILTER (WHERE video_codec IN ('hevc', 'h265', 'x265', 'HEVC', 'H265', 'X265')) AS hevc,
-              COUNT(*) FILTER (WHERE video_codec IN ('h264', 'avc', 'x264', 'H264', 'AVC', 'X264')) AS h264,
-              COUNT(*) FILTER (WHERE video_codec IN ('av1', 'AV1')) AS av1
-            FROM library_items
-            WHERE server_id = ${lib.server_id}::uuid
-              AND library_id = ${lib.library_id}
-              AND ${VALID_LIBRARY_ITEM_CONDITION}
-            GROUP BY DATE(created_at)
-          ),
-          date_range AS (
-            -- Generate complete date series from first item to today
-            SELECT d::date AS day FROM generate_series(
-              ${libStartStr}::date, ${libEndStr}::date, '1 day'
-            ) d
-          ),
-          filled AS (
-            -- Fill in zeros for days with no additions
-            SELECT dr.day,
-              COALESCE(da.items, 0) AS items, COALESCE(da.size, 0) AS size,
-              COALESCE(da.movies, 0) AS movies, COALESCE(da.episodes, 0) AS episodes,
-              COALESCE(da.seasons, 0) AS seasons, COALESCE(da.shows, 0) AS shows,
-              COALESCE(da.music, 0) AS music,
-              COALESCE(da.c4k, 0) AS c4k, COALESCE(da.c1080p, 0) AS c1080p,
-              COALESCE(da.c720p, 0) AS c720p, COALESCE(da.csd, 0) AS csd,
-              COALESCE(da.hevc, 0) AS hevc, COALESCE(da.h264, 0) AS h264,
-              COALESCE(da.av1, 0) AS av1
-            FROM date_range dr
-            LEFT JOIN daily_additions da ON da.day = dr.day
-          ),
-          cumulative AS (
-            -- Single window function pass over entire date range
-            SELECT
-              f.day,
-              SUM(items) OVER w AS item_count,
-              SUM(size) OVER w AS total_size,
-              SUM(movies) OVER w AS movie_count,
-              SUM(episodes) OVER w AS episode_count,
-              SUM(seasons) OVER w AS season_count,
-              SUM(shows) OVER w AS show_count,
-              SUM(music) OVER w AS music_count,
-              SUM(c4k) OVER w AS count_4k,
-              SUM(c1080p) OVER w AS count_1080p,
-              SUM(c720p) OVER w AS count_720p,
-              SUM(csd) OVER w AS count_sd,
-              SUM(hevc) OVER w AS hevc_count,
-              SUM(h264) OVER w AS h264_count,
-              SUM(av1) OVER w AS av1_count
-            FROM filled f
-            WINDOW w AS (ORDER BY day ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
-          )
-          SELECT
-            day,
-            item_count::int,
-            total_size::bigint,
-            movie_count::int,
-            episode_count::int,
-            season_count::int,
-            show_count::int,
-            music_count::int,
-            count_4k::int,
-            count_1080p::int,
-            count_720p::int,
-            count_sd::int,
-            hevc_count::int,
-            h264_count::int,
-            av1_count::int
-          FROM cumulative
-          -- Only include days with actual content (prevents empty leading snapshots)
-          WHERE item_count > 0 AND total_size > 0
-        `);
-
-        // Extend locks after pre-computation
-        await extendJobLock(job);
-        await extendHeavyOpsLock(job.id!);
-
-        // Batch INSERT from pre-computed temp table
-        // Each batch is now a simple SELECT from the temp table
-        let batchStart = libStartDate;
-        while (batchStart <= libEndDate) {
-          const batchEnd = new Date(batchStart);
-          batchEnd.setDate(batchEnd.getDate() + BATCH_SIZE_DAYS - 1);
-          if (batchEnd > libEndDate) {
-            batchEnd.setTime(libEndDate.getTime());
-          }
-
-          const batchStartStr = batchStart.toISOString().split('T')[0];
-          const batchEndStr = batchEnd.toISOString().split('T')[0];
-
-          // Extend locks before each batch INSERT
-          await extendJobLock(job);
-          await extendHeavyOpsLock(job.id!);
-
-          // Simple INSERT from pre-computed data
-          const result = await db.execute(sql`
-            INSERT INTO library_snapshots (
-              server_id, library_id, snapshot_time,
-              item_count, total_size,
-              movie_count, episode_count, season_count, show_count, music_count,
-              count_4k, count_1080p, count_720p, count_sd,
-              hevc_count, h264_count, av1_count,
-              enrichment_pending, enrichment_complete
+        // Wrap all temp table operations in a single transaction to ensure
+        // the temp table is visible across all queries on the same connection
+        await db.transaction(async (tx: typeof db) => {
+          // PHASE 1: Pre-compute cumulative data ONCE for the entire library
+          // Drop and recreate temp table for each library
+          await tx.execute(sql`DROP TABLE IF EXISTS backfill_cumulative`);
+          await tx.execute(sql`
+            CREATE TEMP TABLE backfill_cumulative (
+              day date PRIMARY KEY,
+              item_count int,
+              total_size bigint,
+              movie_count int,
+              episode_count int,
+              season_count int,
+              show_count int,
+              music_count int,
+              count_4k int,
+              count_1080p int,
+              count_720p int,
+              count_sd int,
+              hevc_count int,
+              h264_count int,
+              av1_count int
             )
-            SELECT
-              ${lib.server_id}::uuid,
-              ${lib.library_id},
-              (bc.day + INTERVAL '23 hours 59 minutes 59 seconds')::timestamptz,
-              bc.item_count,
-              bc.total_size,
-              bc.movie_count,
-              bc.episode_count,
-              bc.season_count,
-              bc.show_count,
-              bc.music_count,
-              bc.count_4k,
-              bc.count_1080p,
-              bc.count_720p,
-              bc.count_sd,
-              bc.hevc_count,
-              bc.h264_count,
-              bc.av1_count,
-              0,  -- enrichment_pending: all historical items already enriched
-              bc.item_count  -- enrichment_complete
-            FROM backfill_cumulative bc
-            WHERE bc.day >= ${batchStartStr}::date
-              AND bc.day <= ${batchEndStr}::date
-              -- Skip days that already have snapshots (idempotent)
-              AND NOT EXISTS (
-                SELECT 1 FROM library_snapshots ls
-                WHERE ls.server_id = ${lib.server_id}::uuid
-                  AND ls.library_id = ${lib.library_id}
-                  AND DATE(ls.snapshot_time) = bc.day
-              )
           `);
 
-          librarySnapshotsCreated += Number(result.rowCount ?? 0);
+          // Single scan of library_items + single window function pass
+          // This replaces the O(n²) approach where each batch rescanned the entire history
+          await tx.execute(sql`
+            INSERT INTO backfill_cumulative
+            WITH daily_additions AS (
+              -- Single scan: Get per-day additions with all metrics for entire library
+              SELECT
+                DATE(created_at) AS day,
+                COUNT(*) AS items,
+                SUM(file_size) AS size,
+                COUNT(*) FILTER (WHERE media_type = 'movie') AS movies,
+                COUNT(*) FILTER (WHERE media_type = 'episode') AS episodes,
+                COUNT(*) FILTER (WHERE media_type = 'season') AS seasons,
+                COUNT(*) FILTER (WHERE media_type = 'show') AS shows,
+                COUNT(*) FILTER (WHERE media_type IN ('artist', 'album', 'track')) AS music,
+                COUNT(*) FILTER (WHERE video_resolution = '4k') AS c4k,
+                COUNT(*) FILTER (WHERE video_resolution = '1080p') AS c1080p,
+                COUNT(*) FILTER (WHERE video_resolution = '720p') AS c720p,
+                COUNT(*) FILTER (WHERE video_resolution IN ('480p', 'sd')
+                                  OR (video_resolution IS NOT NULL
+                                      AND video_resolution NOT IN ('4k', '1080p', '720p'))) AS csd,
+                COUNT(*) FILTER (WHERE video_codec IN ('hevc', 'h265', 'x265', 'HEVC', 'H265', 'X265')) AS hevc,
+                COUNT(*) FILTER (WHERE video_codec IN ('h264', 'avc', 'x264', 'H264', 'AVC', 'X264')) AS h264,
+                COUNT(*) FILTER (WHERE video_codec IN ('av1', 'AV1')) AS av1
+              FROM library_items
+              WHERE server_id = ${lib.server_id}::uuid
+                AND library_id = ${lib.library_id}
+                AND ${VALID_LIBRARY_ITEM_CONDITION}
+              GROUP BY DATE(created_at)
+            ),
+            date_range AS (
+              -- Generate complete date series from first item to today
+              SELECT d::date AS day FROM generate_series(
+                ${libStartStr}::date, ${libEndStr}::date, '1 day'
+              ) d
+            ),
+            filled AS (
+              -- Fill in zeros for days with no additions
+              SELECT dr.day,
+                COALESCE(da.items, 0) AS items, COALESCE(da.size, 0) AS size,
+                COALESCE(da.movies, 0) AS movies, COALESCE(da.episodes, 0) AS episodes,
+                COALESCE(da.seasons, 0) AS seasons, COALESCE(da.shows, 0) AS shows,
+                COALESCE(da.music, 0) AS music,
+                COALESCE(da.c4k, 0) AS c4k, COALESCE(da.c1080p, 0) AS c1080p,
+                COALESCE(da.c720p, 0) AS c720p, COALESCE(da.csd, 0) AS csd,
+                COALESCE(da.hevc, 0) AS hevc, COALESCE(da.h264, 0) AS h264,
+                COALESCE(da.av1, 0) AS av1
+              FROM date_range dr
+              LEFT JOIN daily_additions da ON da.day = dr.day
+            ),
+            cumulative AS (
+              -- Single window function pass over entire date range
+              SELECT
+                f.day,
+                SUM(items) OVER w AS item_count,
+                SUM(size) OVER w AS total_size,
+                SUM(movies) OVER w AS movie_count,
+                SUM(episodes) OVER w AS episode_count,
+                SUM(seasons) OVER w AS season_count,
+                SUM(shows) OVER w AS show_count,
+                SUM(music) OVER w AS music_count,
+                SUM(c4k) OVER w AS count_4k,
+                SUM(c1080p) OVER w AS count_1080p,
+                SUM(c720p) OVER w AS count_720p,
+                SUM(csd) OVER w AS count_sd,
+                SUM(hevc) OVER w AS hevc_count,
+                SUM(h264) OVER w AS h264_count,
+                SUM(av1) OVER w AS av1_count
+              FROM filled f
+              WINDOW w AS (ORDER BY day ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+            )
+            SELECT
+              day,
+              item_count::int,
+              total_size::bigint,
+              movie_count::int,
+              episode_count::int,
+              season_count::int,
+              show_count::int,
+              music_count::int,
+              count_4k::int,
+              count_1080p::int,
+              count_720p::int,
+              count_sd::int,
+              hevc_count::int,
+              h264_count::int,
+              av1_count::int
+            FROM cumulative
+            -- Only include days with actual content (prevents empty leading snapshots)
+            WHERE item_count > 0 AND total_size > 0
+          `);
 
-          // Extend locks after each batch
+          // Extend locks after pre-computation
           await extendJobLock(job);
           await extendHeavyOpsLock(job.id!);
 
-          // Move to next batch
-          batchStart = new Date(batchEnd);
-          batchStart.setDate(batchStart.getDate() + 1);
-        }
+          // Batch INSERT from pre-computed temp table
+          // Each batch is now a simple SELECT from the temp table
+          let batchStart = libStartDate;
+          while (batchStart <= libEndDate) {
+            const batchEnd = new Date(batchStart);
+            batchEnd.setDate(batchEnd.getDate() + BATCH_SIZE_DAYS - 1);
+            if (batchEnd > libEndDate) {
+              batchEnd.setTime(libEndDate.getTime());
+            }
+
+            const batchStartStr = batchStart.toISOString().split('T')[0];
+            const batchEndStr = batchEnd.toISOString().split('T')[0];
+
+            // Extend locks before each batch INSERT
+            await extendJobLock(job);
+            await extendHeavyOpsLock(job.id!);
+
+            // Simple INSERT from pre-computed data
+            const result = await tx.execute(sql`
+              INSERT INTO library_snapshots (
+                server_id, library_id, snapshot_time,
+                item_count, total_size,
+                movie_count, episode_count, season_count, show_count, music_count,
+                count_4k, count_1080p, count_720p, count_sd,
+                hevc_count, h264_count, av1_count,
+                enrichment_pending, enrichment_complete
+              )
+              SELECT
+                ${lib.server_id}::uuid,
+                ${lib.library_id},
+                (bc.day + INTERVAL '23 hours 59 minutes 59 seconds')::timestamptz,
+                bc.item_count,
+                bc.total_size,
+                bc.movie_count,
+                bc.episode_count,
+                bc.season_count,
+                bc.show_count,
+                bc.music_count,
+                bc.count_4k,
+                bc.count_1080p,
+                bc.count_720p,
+                bc.count_sd,
+                bc.hevc_count,
+                bc.h264_count,
+                bc.av1_count,
+                0,  -- enrichment_pending: all historical items already enriched
+                bc.item_count  -- enrichment_complete
+              FROM backfill_cumulative bc
+              WHERE bc.day >= ${batchStartStr}::date
+                AND bc.day <= ${batchEndStr}::date
+                -- Skip days that already have snapshots (idempotent)
+                AND NOT EXISTS (
+                  SELECT 1 FROM library_snapshots ls
+                  WHERE ls.server_id = ${lib.server_id}::uuid
+                    AND ls.library_id = ${lib.library_id}
+                    AND DATE(ls.snapshot_time) = bc.day
+                )
+            `);
+
+            librarySnapshotsCreated += Number(result.rowCount ?? 0);
+
+            // Extend locks after each batch
+            await extendJobLock(job);
+            await extendHeavyOpsLock(job.id!);
+
+            // Move to next batch
+            batchStart = new Date(batchEnd);
+            batchStart.setDate(batchStart.getDate() + 1);
+          }
+        });
 
         totalSnapshotsCreated += librarySnapshotsCreated;
         totalProcessed++;
