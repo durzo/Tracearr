@@ -251,6 +251,7 @@ export {
   // Common
   uuidSchema,
   paginationSchema,
+  booleanStringSchema,
   // Auth
   loginSchema,
   callbackSchema,

@@ -17,7 +17,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { eq, desc, sql, and, gte, lte, isNull, isNotNull } from 'drizzle-orm';
 import { z } from 'zod';
-import { formatBitrate } from '@tracearr/shared';
+import { formatBitrate, booleanStringSchema } from '@tracearr/shared';
 import { db } from '../db/client.js';
 import { users, serverUsers, servers, sessions, violations, rules } from '../db/schema.js';
 import { getCacheService } from '../services/cache.js';
@@ -37,7 +37,7 @@ const serverFilterSchema = z.object({
 
 // Streams query schema (extends server filter with summary option)
 const streamsQuerySchema = serverFilterSchema.extend({
-  summary: z.coerce.boolean().optional(),
+  summary: booleanStringSchema.optional(),
 });
 
 // Response envelope helper
@@ -419,7 +419,7 @@ export const publicRoutes: FastifyPluginAsync = async (app) => {
     const querySchema = paginationSchema.extend({
       serverId: z.uuid().optional(),
       severity: z.enum(['low', 'warning', 'high']).optional(),
-      acknowledged: z.coerce.boolean().optional(),
+      acknowledged: booleanStringSchema.optional(),
     });
 
     const query = querySchema.safeParse(request.query);
