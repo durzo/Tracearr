@@ -1558,7 +1558,7 @@ async function processBackfillLibrarySnapshotsJob(
 
         // Wrap all temp table operations in a single transaction to ensure
         // the temp table is visible across all queries on the same connection
-        await db.transaction(async (tx: typeof db) => {
+        await db.transaction(async (tx) => {
           // PHASE 1: Pre-compute cumulative data ONCE for the entire library
           // Drop and recreate temp table for each library
           await tx.execute(sql`DROP TABLE IF EXISTS backfill_cumulative`);
