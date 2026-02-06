@@ -362,9 +362,6 @@ describe('Engagement Routes', () => {
       const mockResults = mockEngagementResults();
       vi.mocked(db.execute).mockResolvedValueOnce(mockResults[0] as never);
       vi.mocked(db.execute).mockResolvedValueOnce(mockResults[1] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[2] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[3] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[4] as never);
 
       const response = await app.inject({
         method: 'GET',
@@ -425,9 +422,6 @@ describe('Engagement Routes', () => {
       const mockResults = mockEngagementResults();
       vi.mocked(db.execute).mockResolvedValueOnce(mockResults[0] as never);
       vi.mocked(db.execute).mockResolvedValueOnce(mockResults[1] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[2] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[3] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[4] as never);
 
       const response = await app.inject({
         method: 'GET',
@@ -445,9 +439,6 @@ describe('Engagement Routes', () => {
       const mockResults = mockEngagementResults();
       vi.mocked(db.execute).mockResolvedValueOnce(mockResults[0] as never);
       vi.mocked(db.execute).mockResolvedValueOnce(mockResults[1] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[2] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[3] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[4] as never);
 
       const response = await app.inject({
         method: 'GET',
@@ -464,9 +455,6 @@ describe('Engagement Routes', () => {
       const mockResults = mockEngagementResults();
       vi.mocked(db.execute).mockResolvedValueOnce(mockResults[0] as never);
       vi.mocked(db.execute).mockResolvedValueOnce(mockResults[1] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[2] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[3] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[4] as never);
 
       const response = await app.inject({
         method: 'GET',
@@ -484,9 +472,6 @@ describe('Engagement Routes', () => {
       const mockResults = mockEngagementResults();
       vi.mocked(db.execute).mockResolvedValueOnce(mockResults[0] as never);
       vi.mocked(db.execute).mockResolvedValueOnce(mockResults[1] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[2] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[3] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[4] as never);
 
       const response = await app.inject({
         method: 'GET',
@@ -513,9 +498,6 @@ describe('Engagement Routes', () => {
       const mockResults = mockEngagementResults();
       vi.mocked(db.execute).mockResolvedValueOnce(mockResults[0] as never);
       vi.mocked(db.execute).mockResolvedValueOnce(mockResults[1] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[2] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[3] as never);
-      vi.mocked(db.execute).mockResolvedValueOnce(mockResults[4] as never);
 
       const response = await app.inject({
         method: 'GET',
