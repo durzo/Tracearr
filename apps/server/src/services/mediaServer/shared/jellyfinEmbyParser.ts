@@ -13,6 +13,7 @@ import {
   parseOptionalNumber,
   getNestedObject,
   parseDateString,
+  extractIpFromEndpoint,
 } from '../../../utils/parsing.js';
 import type { StreamDecisions } from '../../../utils/transcodeNormalizer.js';
 import type {
@@ -202,7 +203,7 @@ export function parseSessionCore(
       platform: undefined, // Neither Jellyfin nor Emby provides platform separately
     },
     network: {
-      ipAddress: parseString(session.RemoteEndPoint),
+      ipAddress: extractIpFromEndpoint(parseString(session.RemoteEndPoint)),
       isLocal: false,
     },
     quality: {

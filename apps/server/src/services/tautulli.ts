@@ -27,6 +27,7 @@ import {
 import { normalizeClient } from '../utils/platformNormalizer.js';
 import { normalizeStreamDecisions } from '../utils/transcodeNormalizer.js';
 import { sanitizeCodec } from '../utils/codecNormalizer.js';
+import { extractIpFromEndpoint } from '../utils/parsing.js';
 
 const PAGE_SIZE = 5000; // Larger batches = fewer API calls (tested up to 10k, scales linearly)
 const REQUEST_TIMEOUT_MS = 30000; // 30 seconds
@@ -908,7 +909,7 @@ export class TautulliService {
           }
 
           // Cached GeoIP lookup
-          const ipForLookup = record.ip_address ?? '0.0.0.0';
+          const ipForLookup = extractIpFromEndpoint(record.ip_address);
           let geo = geoCache.get(ipForLookup);
           if (!geo) {
             const baseGeo = geoipService.lookup(ipForLookup);
@@ -980,7 +981,7 @@ export class TautulliService {
             progressMs: record.duration * 1000,
             pausedDurationMs: record.paused_counter * 1000,
             watched: record.watched_status === 1,
-            ipAddress: record.ip_address || '0.0.0.0',
+            ipAddress: extractIpFromEndpoint(record.ip_address),
             geoCity: geo.city,
             geoRegion: geo.region,
             geoCountry: geo.countryCode ?? geo.country,

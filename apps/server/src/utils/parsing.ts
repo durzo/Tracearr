@@ -24,6 +24,40 @@ export function parseString(val: unknown, defaultVal = ''): string {
 }
 
 /**
+ * Extract an IP address from a string that may be a URL.
+ *
+ * @param endpoint - Raw endpoint string (IP address, URL, or null/undefined)
+ * @param fallback - Value to return when endpoint is empty/null (default: '0.0.0.0')
+ * @returns The extracted IP address, or the fallback
+ *
+ * @example
+ * extractIpFromEndpoint('192.168.1.1') // '192.168.1.1'
+ * extractIpFromEndpoint('http://192.168.5.166:60006/upnp/desc.xml') // '192.168.5.166'
+ * extractIpFromEndpoint('::ffff:10.0.0.1') // '::ffff:10.0.0.1'
+ * extractIpFromEndpoint(null) // '0.0.0.0'
+ */
+export function extractIpFromEndpoint(
+  endpoint: string | null | undefined,
+  fallback = '0.0.0.0'
+): string {
+  if (!endpoint) return fallback;
+
+  // If it looks like a URL (contains ://), extract the hostname
+  if (endpoint.includes('://')) {
+    try {
+      const url = new URL(endpoint);
+      return url.hostname || fallback;
+    } catch {
+      // Malformed URL - try to extract IP with a simple regex
+      const match = /\/\/([^/:]+)/.exec(endpoint);
+      return match?.[1] || fallback;
+    }
+  }
+
+  return endpoint;
+}
+
+/**
  * Safely convert unknown value to string or undefined
  * Returns undefined if value is null/undefined, otherwise converts to string
  *

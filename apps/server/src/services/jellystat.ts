@@ -36,6 +36,7 @@ import { JellyfinClient } from './mediaServer/jellyfin/client.js';
 import { EmbyClient } from './mediaServer/emby/client.js';
 import { normalizeClient } from '../utils/platformNormalizer.js';
 import { parseJellystatPlayMethod } from '../utils/transcodeNormalizer.js';
+import { extractIpFromEndpoint } from '../utils/parsing.js';
 import {
   createUserMapping,
   createSkippedUserTracker,
@@ -425,7 +426,7 @@ export function transformActivityToSession(
     watched: activity.PlayState?.Completed ?? false,
     forceStopped: false,
     shortSession: durationMs < 120000,
-    ipAddress: activity.RemoteEndPoint ?? '0.0.0.0',
+    ipAddress: extractIpFromEndpoint(activity.RemoteEndPoint),
     geoCity: geo.city,
     geoRegion: geo.region,
     geoCountry: geo.countryCode ?? geo.country,
@@ -768,7 +769,7 @@ export async function importJellystatBackup(
             continue;
           }
 
-          const ipAddress = activity.RemoteEndPoint ?? '0.0.0.0';
+          const ipAddress = extractIpFromEndpoint(activity.RemoteEndPoint);
           let geo = geoCache.get(ipAddress);
           if (!geo) {
             const baseGeo = geoipService.lookup(ipAddress);
