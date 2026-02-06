@@ -54,10 +54,11 @@ vi.mock('../poller/sessionMapper.js', () => ({
 vi.mock('../poller/stateTracker.js', () => ({
   calculatePauseAccumulation: vi.fn(),
   checkWatchCompletion: vi.fn(),
+  detectMediaChange: vi.fn(),
 }));
 
 vi.mock('../poller/database.js', () => ({
-  getActiveRules: vi.fn(),
+  getActiveRulesV2: vi.fn(),
   batchGetRecentUserSessions: vi.fn(),
 }));
 
@@ -71,6 +72,8 @@ vi.mock('../poller/sessionLifecycle.js', () => ({
   findActiveSession: vi.fn(),
   findActiveSessionsAll: vi.fn(),
   buildActiveSession: vi.fn(),
+  handleMediaChangeAtomic: vi.fn(),
+  reEvaluateRulesOnTranscodeChange: vi.fn(),
 }));
 
 // Import after mocking

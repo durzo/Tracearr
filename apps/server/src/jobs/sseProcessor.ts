@@ -21,7 +21,11 @@ import type { CacheService, PubSubService } from '../services/cache.js';
 import { lookupGeoIP } from '../services/plexGeoip.js';
 import { getGeoIPSettings } from '../routes/settings.js';
 import { mapMediaSession } from './poller/sessionMapper.js';
-import { calculatePauseAccumulation, checkWatchCompletion } from './poller/stateTracker.js';
+import {
+  calculatePauseAccumulation,
+  checkWatchCompletion,
+  detectMediaChange,
+} from './poller/stateTracker.js';
 import { getActiveRulesV2, batchGetRecentUserSessions } from './poller/database.js';
 import { broadcastViolations } from './poller/violations.js';
 import {
@@ -30,6 +34,8 @@ import {
   findActiveSession,
   findActiveSessionsAll,
   buildActiveSession,
+  handleMediaChangeAtomic,
+  reEvaluateRulesOnTranscodeChange,
 } from './poller/sessionLifecycle.js';
 import { enqueueNotification } from './notificationQueue.js';
 import { triggerReconciliationPoll } from './poller/index.js';
@@ -164,6 +170,11 @@ async function handlePlaying(event: {
     const existingSession = await findActiveSession(serverId, notification.sessionKey);
 
     if (existingSession) {
+      if (detectMediaChange(existingSession.ratingKey, session.ratingKey)) {
+        await handleMediaChange(existingSession, session, serverId, server);
+        return;
+      }
+
       await updateExistingSession(existingSession, session, 'playing');
     } else {
       // Check if this session was recently terminated (cooldown prevents re-creation)
@@ -573,6 +584,104 @@ async function createNewSession(
 }
 
 /**
+ * Handle media change (e.g., auto-play next episode reusing the same sessionKey)
+ * Atomically stops old session and creates new one for accurate play history
+ */
+async function handleMediaChange(
+  existingSession: typeof sessions.$inferSelect,
+  processed: ReturnType<typeof mapMediaSession>,
+  serverId: string,
+  server: typeof servers.$inferSelect
+): Promise<void> {
+  const serverUserRows = await db
+    .select({
+      id: serverUsers.id,
+      username: serverUsers.username,
+      thumbUrl: serverUsers.thumbUrl,
+      identityName: users.name,
+      trustScore: serverUsers.trustScore,
+      sessionCount: serverUsers.sessionCount,
+      lastActivityAt: serverUsers.lastActivityAt,
+    })
+    .from(serverUsers)
+    .innerJoin(users, eq(serverUsers.userId, users.id))
+    .where(eq(serverUsers.id, existingSession.serverUserId))
+    .limit(1);
+
+  const serverUser = serverUserRows[0];
+  if (!serverUser) {
+    console.warn(
+      `[SSEProcessor] Server user not found for media change on session ${existingSession.id}`
+    );
+    return;
+  }
+
+  const { usePlexGeoip } = await getGeoIPSettings();
+  const geo = await lookupGeoIP(processed.ipAddress, usePlexGeoip);
+
+  if (!cacheService) {
+    return;
+  }
+
+  const activeRulesV2 = await getActiveRulesV2();
+  const recentSessions = await batchGetRecentUserSessions([serverUser.id]);
+  const activeSessions = await cacheService.getAllActiveSessions();
+
+  const result = await handleMediaChangeAtomic({
+    existingSession,
+    processed,
+    server: { id: server.id, name: server.name, type: server.type },
+    serverUser,
+    geo,
+    activeRulesV2,
+    activeSessions,
+    recentSessions: recentSessions.get(serverUser.id) ?? [],
+  });
+
+  if (!result) {
+    return;
+  }
+
+  const { stoppedSession, insertedSession, violationResults } = result;
+
+  // Update cache for stopped session
+  await cacheService.removeActiveSession(stoppedSession.id);
+  await cacheService.removeUserSession(stoppedSession.serverUserId, stoppedSession.id);
+
+  if (pubSubService) {
+    await pubSubService.publish('session:stopped', stoppedSession.id);
+  }
+
+  // Build and cache the new session
+  const activeSession = buildActiveSession({
+    session: insertedSession,
+    processed,
+    user: serverUser,
+    geo,
+    server: { id: server.id, name: server.name, type: server.type },
+  });
+
+  await cacheService.addActiveSession(activeSession);
+  await cacheService.addUserSession(serverUser.id, insertedSession.id);
+
+  if (pubSubService) {
+    await pubSubService.publish('session:started', activeSession);
+    await enqueueNotification({ type: 'session_started', payload: activeSession });
+
+    try {
+      await broadcastViolations(violationResults, insertedSession.id, pubSubService);
+    } catch (error) {
+      console.error('[SSEProcessor] Error broadcasting violations for media change:', error);
+    }
+  }
+
+  console.log(
+    `[SSEProcessor] Media change: stopped session ${stoppedSession.id}, ` +
+      `created session ${insertedSession.id} for ${processed.mediaTitle}`
+  );
+}
+
+/**
  * Update an existing session
  */
 async function updateExistingSession(
@@ -610,6 +719,11 @@ async function updateExistingSession(
     watched = checkWatchCompletion(currentWatchTimeMs, processed.totalDurationMs);
   }
 
+  // Check if transcode state changed before updating
+  const transcodeStateChanged =
+    existingSession.videoDecision !== processed.videoDecision ||
+    existingSession.audioDecision !== processed.audioDecision;
+
   // Update session in database
   await db
     .update(sessions)
@@ -628,6 +742,65 @@ async function updateExistingSession(
       audioDecision: processed.audioDecision,
     })
     .where(eq(sessions.id, existingSession.id));
+
+  // Re-evaluate transcode-related V2 rules when transcode state changes.
+  // At session creation (especially via SSE), transcode state may not be known yet,
+  // so rules like "block 4K transcoding" need re-evaluation when transcoding starts.
+  if (transcodeStateChanged) {
+    try {
+      const activeRulesV2 = await getActiveRulesV2();
+      if (activeRulesV2.length > 0 && cacheService) {
+        // Load server user details for rule evaluation context
+        const serverUserRows = await db
+          .select({
+            id: serverUsers.id,
+            username: serverUsers.username,
+            thumbUrl: serverUsers.thumbUrl,
+            trustScore: serverUsers.trustScore,
+            sessionCount: serverUsers.sessionCount,
+            lastActivityAt: serverUsers.lastActivityAt,
+          })
+          .from(serverUsers)
+          .where(eq(serverUsers.id, existingSession.serverUserId))
+          .limit(1);
+
+        const serverUserDetail = serverUserRows[0];
+        if (serverUserDetail) {
+          // Load server info
+          const serverRows = await db
+            .select()
+            .from(servers)
+            .where(eq(servers.id, existingSession.serverId))
+            .limit(1);
+
+          const server = serverRows[0];
+          if (server) {
+            const activeSessions = await cacheService.getAllActiveSessions();
+            const recentSessions = await batchGetRecentUserSessions([serverUserDetail.id]);
+
+            const violationResults = await reEvaluateRulesOnTranscodeChange({
+              existingSession,
+              processed,
+              server: { id: server.id, name: server.name, type: server.type },
+              serverUser: serverUserDetail,
+              activeRulesV2,
+              activeSessions,
+              recentSessions: recentSessions.get(serverUserDetail.id) ?? [],
+            });
+
+            if (violationResults.length > 0 && pubSubService) {
+              await broadcastViolations(violationResults, existingSession.id, pubSubService);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error(
+        `[SSEProcessor] Error re-evaluating rules on transcode change for session ${existingSession.id}:`,
+        error
+      );
+    }
+  }
 
   if (cacheService) {
     let cached = await cacheService.getSessionById(existingSession.id);
