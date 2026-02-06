@@ -19,7 +19,7 @@ import { pickStreamDetailFields } from './sessionMapper.js';
 import { db } from '../../db/client.js';
 import { serverUsers, sessions, violations } from '../../db/schema.js';
 import type { GeoLocation } from '../../services/geoip.js';
-import { evaluateRulesAsync } from '../../services/rules/engine.js';
+import { evaluateRulesAsync, hasTranscodeConditions } from '../../services/rules/engine.js';
 import { executeActions, type ActionResult } from '../../services/rules/executors/index.js';
 import { storeActionResults } from '../../services/rules/v2Integration.js';
 import type { EvaluationContext, EvaluationResult } from '../../services/rules/types.js';
@@ -38,6 +38,7 @@ import type {
   SessionStopResult,
   MediaChangeInput,
   MediaChangeResult,
+  TranscodeReEvalInput,
 } from './types.js';
 
 // ============================================================================
@@ -970,4 +971,237 @@ export async function processPollResults(input: PollResultsInput): Promise<void>
       }
     }
   }
+}
+
+// ============================================================================
+// Transcode State Change Re-evaluation
+// ============================================================================
+
+/**
+ * Re-evaluate V2 rules when an existing session's transcode state changes.
+ *
+ * Only rules containing transcode-related conditions (is_transcoding, is_transcode_downgrade,
+ * output_resolution) are evaluated. This prevents false positives from rules that only check
+ * conditions like concurrent_streams which are already evaluated at session creation.
+ *
+ * Deduplication: checks for existing violations per (ruleId, sessionId) before inserting,
+ * since the DB unique index uses ruleType which is NULL for V2 rules.
+ */
+export async function reEvaluateRulesOnTranscodeChange(
+  input: TranscodeReEvalInput
+): Promise<ViolationInsertResult[]> {
+  const {
+    existingSession,
+    processed,
+    server,
+    serverUser,
+    activeRulesV2,
+    activeSessions,
+    recentSessions,
+  } = input;
+
+  // Filter to only rules that have transcode-related conditions
+  const transcodeRules = activeRulesV2.filter(hasTranscodeConditions);
+  if (transcodeRules.length === 0) return [];
+
+  // Build Session object from existing session + updated transcode fields
+  const session: Session = {
+    id: existingSession.id,
+    serverId: existingSession.serverId,
+    serverUserId: existingSession.serverUserId,
+    sessionKey: existingSession.sessionKey,
+    externalSessionId: existingSession.externalSessionId,
+    state: processed.state,
+    mediaType: processed.mediaType,
+    mediaTitle: processed.mediaTitle,
+    grandparentTitle: processed.grandparentTitle || null,
+    seasonNumber: processed.seasonNumber || null,
+    episodeNumber: processed.episodeNumber || null,
+    year: processed.year || null,
+    thumbPath: processed.thumbPath || null,
+    ratingKey: existingSession.ratingKey,
+    startedAt: existingSession.startedAt,
+    stoppedAt: null,
+    durationMs: null,
+    totalDurationMs: processed.totalDurationMs || null,
+    progressMs: processed.progressMs || null,
+    lastPausedAt: existingSession.lastPausedAt,
+    pausedDurationMs: existingSession.pausedDurationMs,
+    referenceId: existingSession.referenceId,
+    watched: existingSession.watched,
+    ipAddress: existingSession.ipAddress,
+    geoCity: existingSession.geoCity,
+    geoRegion: existingSession.geoRegion,
+    geoCountry: existingSession.geoCountry,
+    geoContinent: existingSession.geoContinent,
+    geoPostal: existingSession.geoPostal,
+    geoLat: existingSession.geoLat,
+    geoLon: existingSession.geoLon,
+    geoAsnNumber: existingSession.geoAsnNumber,
+    geoAsnOrganization: existingSession.geoAsnOrganization,
+    playerName: processed.playerName,
+    deviceId: processed.deviceId || null,
+    product: processed.product || null,
+    device: processed.device || null,
+    platform: processed.platform,
+    quality: processed.quality,
+    // Updated transcode fields (the reason for re-evaluation)
+    isTranscode: processed.isTranscode,
+    videoDecision: processed.videoDecision,
+    audioDecision: processed.audioDecision,
+    bitrate: processed.bitrate,
+    ...pickStreamDetailFields(processed),
+    channelTitle: existingSession.channelTitle,
+    channelIdentifier: existingSession.channelIdentifier,
+    channelThumb: existingSession.channelThumb,
+    artistName: existingSession.artistName,
+    albumName: existingSession.albumName,
+    trackNumber: existingSession.trackNumber,
+    discNumber: existingSession.discNumber,
+  };
+
+  const serverObj: Server = {
+    id: server.id,
+    name: server.name,
+    type: server.type as Server['type'],
+    url: '',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  const serverUserObj: ServerUser = {
+    id: serverUser.id,
+    userId: '',
+    serverId: server.id,
+    externalId: '',
+    username: serverUser.username,
+    email: null,
+    thumbUrl: serverUser.thumbUrl,
+    isServerAdmin: false,
+    trustScore: serverUser.trustScore,
+    sessionCount: serverUser.sessionCount,
+    joinedAt: null,
+    lastActivityAt: serverUser.lastActivityAt,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  const baseContext: Omit<EvaluationContext, 'rule'> = {
+    session,
+    serverUser: serverUserObj,
+    server: serverObj,
+    activeSessions,
+    recentSessions,
+  };
+
+  // Evaluate only transcode-related rules
+  const ruleResults = await evaluateRulesAsync(baseContext, transcodeRules);
+
+  const createdViolations: ViolationInsertResult[] = [];
+
+  for (const result of ruleResults) {
+    if (!result.matched) continue;
+
+    const rule = transcodeRules.find((r) => r.id === result.ruleId);
+    if (!rule) continue;
+
+    const violationAction = result.actions.find((a) => a.type === 'create_violation');
+
+    if (violationAction?.type === 'create_violation') {
+      const severity = violationAction.severity;
+      const trustPenalty = getTrustScorePenalty(severity);
+
+      // Use a transaction with advisory lock to prevent duplicate violations.
+      // The DB unique index uses ruleType (NULL for V2), and NULL != NULL in PG,
+      // so onConflictDoNothing can't catch V2 duplicates. The advisory lock
+      // serializes concurrent SSE + reconciliation poll attempts for the same
+      // session+rule pair, and the transaction ensures atomicity of the
+      // dedup check + insert + trust penalty.
+      const violationResult = await db.transaction(async (tx) => {
+        // Advisory lock scoped to this session+rule pair.
+        // Released automatically when the transaction commits/rolls back.
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtext(${existingSession.id} || '::' || ${rule.id}))`
+        );
+
+        // Dedup check (now race-free under advisory lock)
+        const existing = await tx
+          .select({ id: violations.id })
+          .from(violations)
+          .where(
+            and(
+              eq(violations.ruleId, rule.id),
+              eq(violations.sessionId, existingSession.id),
+              isNull(violations.acknowledgedAt)
+            )
+          )
+          .limit(1);
+
+        if (existing[0]) return null; // Already has a violation for this rule + session
+
+        const insertedViolations = await tx
+          .insert(violations)
+          .values({
+            ruleId: rule.id,
+            serverUserId: serverUser.id,
+            sessionId: existingSession.id,
+            severity,
+            ruleType: null,
+            data: {
+              ruleName: rule.name,
+              matchedGroups: result.matchedGroups,
+              sessionKey: session.sessionKey,
+              mediaTitle: session.mediaTitle,
+              ipAddress: session.ipAddress,
+              transcodeReEval: true,
+            },
+          })
+          .onConflictDoNothing()
+          .returning();
+
+        const violation = insertedViolations[0];
+        if (!violation) return null;
+
+        // Decrease trust score (atomic with the insert)
+        await tx
+          .update(serverUsers)
+          .set({
+            trustScore: sql`GREATEST(0, ${serverUsers.trustScore} - ${trustPenalty})`,
+            updatedAt: new Date(),
+          })
+          .where(eq(serverUsers.id, serverUser.id));
+
+        return violation;
+      });
+
+      if (violationResult) {
+        const ruleInfo = {
+          id: rule.id,
+          name: rule.name,
+          type: null,
+        };
+
+        createdViolations.push({ violation: violationResult, rule: ruleInfo, trustPenalty });
+
+        console.log(
+          `[rules] Transcode re-eval: rule "${rule.name}" matched session ${existingSession.id}`
+        );
+      }
+    }
+
+    // Execute non-violation actions (e.g., kill_stream, send_notification)
+    // Runs outside the transaction - side effects shouldn't block violation commit,
+    // and the advisory lock prevents duplicate action execution for the same rule+session.
+    const sideEffectActions = result.actions.filter((a) => a.type !== 'create_violation');
+    if (sideEffectActions.length > 0) {
+      const context: EvaluationContext = { ...baseContext, rule };
+      const actionResults: ActionResult[] = await executeActions(context, sideEffectActions);
+
+      const violationId =
+        createdViolations.find((v) => v.rule.id === rule.id)?.violation.id ?? null;
+      await storeActionResults(violationId, result.ruleId, actionResults);
+    }
+  }
+
+  return createdViolations;
 }

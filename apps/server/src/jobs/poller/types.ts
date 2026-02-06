@@ -340,6 +340,38 @@ export interface MediaChangeResult {
 }
 
 // ============================================================================
+// Transcode Re-evaluation Types
+// ============================================================================
+
+/**
+ * Input for re-evaluating V2 rules when transcode state changes on an existing session.
+ * Only rules with transcode-related conditions are evaluated to avoid false positives.
+ */
+export interface TranscodeReEvalInput {
+  /** The existing session row (pre-update, used for identity fields) */
+  existingSession: typeof sessions.$inferSelect;
+  /** Updated processed data from the media server (has current transcode state) */
+  processed: ProcessedSession;
+  /** Server info */
+  server: { id: string; name: string; type: string };
+  /** Server user info */
+  serverUser: {
+    id: string;
+    username: string;
+    thumbUrl: string | null;
+    trustScore: number;
+    sessionCount: number;
+    lastActivityAt: Date | null;
+  };
+  /** Active V2 rules (will be filtered to transcode-related) */
+  activeRulesV2: RuleV2[];
+  /** Active sessions for rule context */
+  activeSessions: Session[];
+  /** Recent sessions for rule evaluation context */
+  recentSessions: Session[];
+}
+
+// ============================================================================
 // Re-exports for convenience
 // ============================================================================
 
