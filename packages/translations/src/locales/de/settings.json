@@ -8,7 +8,7 @@
     "import": "Importieren",
     "advanced": "Erweitert",
     "jobs": "Jobs",
-    "accessControl": "Access Control"
+    "accessControl": "Zugangs kontrolle"
   },
   "general": {
     "title": "Allgemeine Einstellungen",
@@ -65,12 +65,12 @@
     "importProgress": "Importfortschritt",
     "importComplete": "Import abgeschlossen",
     "importFailed": "Import fehlgeschlagen",
-    "processed": "Processed",
-    "page": "Page",
-    "imported": "Imported",
-    "skipped": "Skipped",
-    "enriched": "Enriched",
-    "errors": "Errors"
+    "processed": "Verarbeitet",
+    "page": "Seite",
+    "imported": "Importiert",
+    "skipped": "Übersprungen",
+    "enriched": "Angereichert",
+    "errors": "Fehler"
   },
   "plex": {
     "linkedAccounts": "Verknüpfte Plex-Konten",

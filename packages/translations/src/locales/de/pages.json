@@ -1,16 +1,16 @@
 {
   "activity": {
     "activityByDayOfWeek": "Aktivität nach Wochentag",
-    "activityByHourOfDay": "Aktivität nach Tagesstunde",
+    "activityByHourOfDay": "Aktivität nach Tageszeit",
     "concurrentStreams": "Gleichzeitige Streams",
     "description": "Abspiel-Trends, Muster und Streaming-Verhalten",
     "engagementBreakdown": "Engagement-Aufschlüsselung",
     "howUsersEngage": "Wie Nutzer mit Inhalten interagieren",
     "platforms": "Platform",
     "playbackQuality": "Playback Qualität",
-    "playsOverTime": "Wiedergaben über die Zeit",
-    "playsVsSessions": "Plays vs Sessions",
-    "playsVsSessionsDesc": "Validierte Abspiele vs. Rohsitzungsanzahl",
+    "playsOverTime": "Wiedergaben im Zeitverlauf",
+    "playsVsSessions": "Wiedergaben vs Sitzungen",
+    "playsVsSessionsDesc": "Validierte Wiedergaben vs. Roh Wiedergaben",
     "streamQuality": "Stream Qualität",
     "title": "Aktivität"
   },
@@ -18,7 +18,7 @@
     "activeUsers": "Aktive Benutzer",
     "alerts": "Warnungen",
     "noActiveStreams": "Keine aktiven Streams",
-    "nowPlaying": "Läuft gerade",
+    "nowPlaying": "Aktive Streams",
     "plays": "Wiedergaben",
     "serverResources": "Server-Ressourcen",
     "streamLocations": "Stream-Standorte",
@@ -166,11 +166,11 @@
     "weeks": "Wochen"
   },
   "stats": {
-    "hours": "h",
-    "plays": "Plays",
-    "titles": "Titles",
-    "users": "Users",
-    "watchTime": "Watch Time"
+    "hours": "Std",
+    "plays": "Aufrufe",
+    "titles": "Titel",
+    "users": "User",
+    "watchTime": "Wiedergabezeit"
   },
   "terminateStream": {
     "killStream": "Stream beenden",
