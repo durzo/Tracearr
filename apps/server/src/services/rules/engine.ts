@@ -1,7 +1,36 @@
-import type { RuleConditions, ConditionGroup, Condition, RuleV2 } from '@tracearr/shared';
+import type {
+  RuleConditions,
+  ConditionGroup,
+  Condition,
+  ConditionField,
+  RuleV2,
+} from '@tracearr/shared';
 import type { EvaluationContext, EvaluationResult, ConditionEvaluator } from './types.js';
 import { evaluatorRegistry } from './evaluators/index.js';
 import { rulesLogger as logger } from '../../utils/logger.js';
+
+/**
+ * Condition fields whose evaluated value changes when transcode state changes mid-session.
+ * Rules containing at least one of these fields are re-evaluated on transcode state transitions
+ * (e.g., direct play → transcode). Rules with only non-transcode fields (like concurrent_streams)
+ * are skipped to avoid false positives since those conditions don't change mid-session.
+ */
+const TRANSCODE_CONDITION_FIELDS: ReadonlySet<ConditionField> = new Set([
+  'is_transcoding',
+  'is_transcode_downgrade',
+  'output_resolution',
+]);
+
+/**
+ * Check if a rule contains any condition fields that depend on transcode state.
+ * Used to filter which rules need re-evaluation when transcode state changes mid-session.
+ */
+export function hasTranscodeConditions(rule: RuleV2): boolean {
+  if (!rule.conditions?.groups) return false;
+  return rule.conditions.groups.some((group) =>
+    group.conditions.some((condition) => TRANSCODE_CONDITION_FIELDS.has(condition.field))
+  );
+}
 
 /**
  * Evaluate a single condition using the appropriate evaluator.
