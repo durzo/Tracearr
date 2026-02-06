@@ -271,6 +271,25 @@ Run `pnpm dev` in a terminal to start both apps, then use the "Debug All" config
 - [ ] Tiered access controls
 - [ ] Multi-admin support
 
+## Project Statistics
+
+<p align="center">
+  <img
+    src="https://repobeats.axiom.co/api/embed/4632d7f3bb419e78c5525af0905a488d9f72a753.svg"
+    alt="Repobeats analytics"
+  />
+</p>
+
+<p align="center">
+  <a href="https://www.star-history.com/#connorgallopo/Tracearr&type=date&legend=top-left">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=connorgallopo/Tracearr&type=date&theme=dark&legend=top-left" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=connorgallopo/Tracearr&type=date&legend=top-left" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=connorgallopo/Tracearr&type=date&legend=top-left" />
+  </picture>
+  </a>
+</p>
+
 ## License
 
 [AGPL-3.0](LICENSE) — Open source with copyleft protection. If you modify Tracearr and offer it as a service, you share your changes.
