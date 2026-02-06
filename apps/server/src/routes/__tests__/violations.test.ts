@@ -65,15 +65,30 @@ interface MockViolationWithJoins {
   serverName: string;
   sessionId: string;
   mediaTitle: string;
+  mediaType: string | null;
+  grandparentTitle: string | null;
+  seasonNumber: number | null;
+  episodeNumber: number | null;
+  year: number | null;
   severity: ViolationSeverity;
   data: Record<string, unknown>;
   createdAt: Date;
   acknowledgedAt: Date | null;
-  ipAddress?: string;
-  geoCity?: string | null;
-  geoCountry?: string | null;
-  playerName?: string | null;
-  platform?: string | null;
+  ipAddress: string | null;
+  geoCity: string | null;
+  geoRegion: string | null;
+  geoCountry: string | null;
+  geoContinent: string | null;
+  geoPostal: string | null;
+  geoLat: number | null;
+  geoLon: number | null;
+  playerName: string | null;
+  device: string | null;
+  deviceId: string | null;
+  platform: string | null;
+  product: string | null;
+  quality: string | null;
+  startedAt: Date | null;
 }
 
 function createTestViolation(
@@ -93,15 +108,30 @@ function createTestViolation(
     serverName: overrides.serverName ?? 'Test Server',
     sessionId: overrides.sessionId ?? randomUUID(),
     mediaTitle: overrides.mediaTitle ?? 'Test Movie',
+    mediaType: overrides.mediaType ?? 'movie',
+    grandparentTitle: overrides.grandparentTitle ?? null,
+    seasonNumber: overrides.seasonNumber ?? null,
+    episodeNumber: overrides.episodeNumber ?? null,
+    year: overrides.year ?? 2024,
     severity: overrides.severity ?? 'warning',
     data: overrides.data ?? { maxStreams: 3, actualStreams: 4 },
     createdAt: overrides.createdAt ?? new Date(),
     acknowledgedAt: overrides.acknowledgedAt ?? null,
     ipAddress: overrides.ipAddress ?? '192.168.1.1',
     geoCity: overrides.geoCity ?? 'New York',
+    geoRegion: overrides.geoRegion ?? 'NY',
     geoCountry: overrides.geoCountry ?? 'US',
+    geoContinent: overrides.geoContinent ?? 'NA',
+    geoPostal: overrides.geoPostal ?? '10001',
+    geoLat: overrides.geoLat ?? 40.7128,
+    geoLon: overrides.geoLon ?? -74.006,
     playerName: overrides.playerName ?? 'Test Player',
+    device: overrides.device ?? 'Chrome',
+    deviceId: overrides.deviceId ?? 'device-123',
     platform: overrides.platform ?? 'Windows',
+    product: overrides.product ?? 'Plex Web',
+    quality: overrides.quality ?? '1080p',
+    startedAt: overrides.startedAt ?? new Date(),
   };
 }
 
@@ -189,6 +219,46 @@ function createSingleViolationSelectMock(resolvedValue: unknown) {
       }),
     }),
   };
+}
+
+/**
+ * Helper to create a generic chainable mock that resolves to an empty array.
+ * Used for enrichment function's additional DB calls (historical sessions,
+ * related sessions, action results). Supports arbitrary method chains like
+ * .from().where().limit().orderBy() etc.
+ */
+function createEmptyChainMock(): any {
+  const resolvedPromise = Promise.resolve([]);
+  const mock: any = {};
+  // All common drizzle chain methods return the same chainable mock
+  const methods = [
+    'from',
+    'where',
+    'limit',
+    'offset',
+    'orderBy',
+    'innerJoin',
+    'leftJoin',
+    'select',
+  ];
+  for (const method of methods) {
+    mock[method] = vi.fn().mockReturnValue(mock);
+  }
+  // Make it thenable so it resolves as a promise
+  mock.then = resolvedPromise.then.bind(resolvedPromise);
+  mock.catch = resolvedPromise.catch.bind(resolvedPromise);
+  return mock;
+}
+
+/**
+ * Set up mock for GET /:id which now uses enrichViolations.
+ * The first db.select call is the main query, subsequent calls are from enrichment.
+ */
+function setupSingleViolationMocks(mockDb: any, resolvedValue: unknown) {
+  // First call: main violation select query
+  mockDb.select.mockReturnValueOnce(createSingleViolationSelectMock(resolvedValue));
+  // Subsequent calls from enrichViolations: return empty results
+  mockDb.select.mockReturnValue(createEmptyChainMock());
 }
 
 /**
@@ -415,14 +485,14 @@ describe('Violation Routes', () => {
   });
 
   describe('GET /violations/:id', () => {
-    it('should return a specific violation', async () => {
+    it('should return an enriched violation with nested shape', async () => {
       const ownerUser = createOwnerUser();
       app = await buildTestApp(ownerUser);
 
       const violationId = randomUUID();
       const testViolation = createTestViolation({ id: violationId });
 
-      mockDb.select.mockReturnValue(createSingleViolationSelectMock([testViolation]));
+      setupSingleViolationMocks(mockDb, [testViolation]);
 
       const response = await app.inject({
         method: 'GET',
@@ -432,9 +502,13 @@ describe('Violation Routes', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
       expect(body.id).toBe(violationId);
-      expect(body.ruleName).toBe('Test Rule');
-      expect(body.username).toBe('testuser');
-      expect(body.serverName).toBe('Test Server');
+      // Verify nested shape (not flat)
+      expect(body.rule.name).toBe('Test Rule');
+      expect(body.rule.type).toBe('concurrent_streams');
+      expect(body.user.username).toBe('testuser');
+      expect(body.server.name).toBe('Test Server');
+      expect(body.session.mediaTitle).toBe('Test Movie');
+      expect(body.session.ipAddress).toBe('192.168.1.1');
     });
 
     it('should return 404 for non-existent violation', async () => {
@@ -463,7 +537,7 @@ describe('Violation Routes', () => {
       expect(response.statusCode).toBe(400);
     });
 
-    it('should return violation with session details', async () => {
+    it('should return violation with full session details', async () => {
       const ownerUser = createOwnerUser();
       app = await buildTestApp(ownerUser);
 
@@ -472,12 +546,16 @@ describe('Violation Routes', () => {
         id: violationId,
         ipAddress: '10.0.0.1',
         geoCity: 'Los Angeles',
+        geoRegion: 'CA',
         geoCountry: 'US',
         playerName: 'Plex Player',
         platform: 'macOS',
+        device: 'Safari',
+        product: 'Plex Web',
+        quality: '4K',
       });
 
-      mockDb.select.mockReturnValue(createSingleViolationSelectMock([testViolation]));
+      setupSingleViolationMocks(mockDb, [testViolation]);
 
       const response = await app.inject({
         method: 'GET',
@@ -486,11 +564,16 @@ describe('Violation Routes', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.ipAddress).toBe('10.0.0.1');
-      expect(body.geoCity).toBe('Los Angeles');
-      expect(body.geoCountry).toBe('US');
-      expect(body.playerName).toBe('Plex Player');
-      expect(body.platform).toBe('macOS');
+      // Session fields are now nested under body.session
+      expect(body.session.ipAddress).toBe('10.0.0.1');
+      expect(body.session.geoCity).toBe('Los Angeles');
+      expect(body.session.geoRegion).toBe('CA');
+      expect(body.session.geoCountry).toBe('US');
+      expect(body.session.playerName).toBe('Plex Player');
+      expect(body.session.platform).toBe('macOS');
+      expect(body.session.device).toBe('Safari');
+      expect(body.session.product).toBe('Plex Web');
+      expect(body.session.quality).toBe('4K');
     });
   });
 
