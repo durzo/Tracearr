@@ -327,10 +327,16 @@ export function MobileSettings() {
           ) : (
             <>
               <div className="flex items-center justify-between">
-                <div>
+                <div className="space-y-1">
                   <p className="text-muted-foreground text-sm">
                     {deviceCount} of {maxDevices} devices connected
                   </p>
+                  {config.pendingTokens > 0 && (
+                    <p className="text-muted-foreground text-xs">
+                      {config.pendingTokens} pending token
+                      {config.pendingTokens !== 1 ? 's' : ''} awaiting pairing
+                    </p>
+                  )}
                 </div>
                 <Button
                   onClick={handleAddDevice}
