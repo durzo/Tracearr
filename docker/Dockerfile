@@ -7,7 +7,7 @@ ARG APP_TAG=
 ARG APP_COMMIT=
 ARG APP_BUILD_DATE=
 
-RUN corepack enable && corepack prepare pnpm@10.24.0 --activate
+RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 
 WORKDIR /app
 
@@ -38,7 +38,7 @@ ARG APP_TAG=
 ARG APP_COMMIT=
 ARG APP_BUILD_DATE=
 
-RUN corepack enable && corepack prepare pnpm@10.24.0 --activate
+RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 
 WORKDIR /app
 
@@ -57,6 +57,7 @@ COPY --from=builder /app/pnpm-lock.yaml ./
 # Server package
 COPY --from=builder /app/apps/server/package.json ./apps/server/
 COPY --from=builder /app/apps/server/dist ./apps/server/dist
+COPY --from=builder /app/apps/server/scripts ./apps/server/scripts
 
 # Web static files (served by server or reverse proxy)
 COPY --from=builder /app/apps/web/dist ./apps/web/dist
