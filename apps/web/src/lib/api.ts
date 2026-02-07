@@ -311,7 +311,9 @@ class ApiClient {
 
     // Handle empty responses (204 No Content) or responses without JSON
     const contentType = response.headers.get('content-type');
+    console.log(`[API] ${path} - Content-Type:`, contentType, 'Status:', response.status); // Debug log
     if (response.status === 204 || !contentType?.includes('application/json')) {
+      console.warn(`[API] ${path} - Returning undefined due to missing/invalid Content-Type`); // Debug log
       return undefined as T;
     }
 

@@ -57,13 +57,15 @@ export function useGeneratePairToken() {
 
   return useMutation({
     mutationFn: api.mobile.generatePairToken,
-    onSuccess: () => {
+    onSuccess: (data) => {
+      console.log('Token generation success, data:', data); // Debug log
       void queryClient.invalidateQueries({ queryKey: ['mobile', 'config'] });
       toast.success(t('toast.success.pairTokenGenerated.title'), {
         description: t('toast.success.pairTokenGenerated.message'),
       });
     },
     onError: (err) => {
+      console.error('Token generation mutation error:', err); // Debug log
       toast.error(t('toast.error.pairTokenGenerateFailed'), { description: err.message });
     },
   });
