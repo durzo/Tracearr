@@ -14,6 +14,7 @@
   <a href="https://github.com/connorgallopo/Tracearr/blob/main/LICENSE"><img src="https://img.shields.io/github/license/connorgallopo/Tracearr?style=flat-square" alt="License" /></a>
   <a href="https://discord.gg/a7n3sFd2Yw"><img src="https://img.shields.io/discord/1444393247978946684?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2" alt="Discord" /></a>
   <a href="https://docs.tracearr.com"><img src="https://img.shields.io/badge/docs-tracearr.com-18D1E7?style=flat-square" alt="Documentation" /></a>
+  <a href="https://ko-fi.com/E1E21QRI1L"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Ko-Fi" /></a>
 </p>
 
 ---
