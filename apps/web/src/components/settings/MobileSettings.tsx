@@ -201,10 +201,18 @@ export function MobileSettings() {
   const handleAddDevice = async () => {
     try {
       const token = await generatePairToken.mutateAsync();
-      setPairToken(token);
-      setShowQRDialog(true);
-    } catch {
-      // Error handled by mutation
+      if (token?.token && token?.expiresAt) {
+        setPairToken(token);
+        setShowQRDialog(true);
+      } else {
+        console.error('Invalid token response:', token);
+        toast.error('Failed to Generate Token', {
+          description: 'Received invalid token data from server.',
+        });
+      }
+    } catch (err) {
+      // Error already handled by mutation's onError, but log for support
+      console.error('Token generation error:', err);
     }
   };
 
