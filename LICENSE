@@ -1,3 +1,20 @@
+Tracearr Licensing
+===================
+
+This project uses a dual-licensing model:
+
+  - Server, Web, and Shared Packages: Licensed under AGPL-3.0 (below)
+    Includes: /apps/server/, /apps/web/, /packages/
+
+  - Mobile Application: Proprietary License
+    See /apps/mobile/LICENSE for terms
+    The mobile app source is provided for transparency only and may not
+    be redistributed or used to build competing applications.
+
+For questions about licensing, contact: connor.gallopo@me.com
+
+================================================================================
+
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
 
