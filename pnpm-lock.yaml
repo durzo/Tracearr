@@ -116,6 +116,9 @@ importers:
       expo:
         specifier: 55.0.0-preview.7
         version: 55.0.0-preview.7(@babel/core@7.28.6)(@expo/dom-webview@0.2.8)(@expo/metro-runtime@55.0.3)(expo-router@55.0.0-beta.4)(graphql@16.12.0)(react-dom@19.2.3(react@19.2.0))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.0))(react@19.2.0))(react-native@0.83.1(@babel/core@7.28.6)(@types/react@19.2.9)(react@19.2.0))(react@19.2.0)
+      expo-application:
+        specifier: ^7.0.8
+        version: 7.0.8(expo@55.0.0-preview.7)
       expo-build-properties:
         specifier: ^55.0.4
         version: 55.0.4(expo@55.0.0-preview.7)
@@ -4985,6 +4988,11 @@ packages:
 
   expo-application@55.0.3:
     resolution: {integrity: sha512-MTz9ab6DIB8PNbatE76VjVZUa/g00ri8vFeSB16oPcD69GfCk5GPZUYhpcqg8ZnACeSNbvUSDY+eiwfYiDf1Fg==}
+    peerDependencies:
+      expo: '*'
+
+  expo-application@7.0.8:
+    resolution: {integrity: sha512-qFGyxk7VJbrNOQWBbE09XUuGuvkOgFS9QfToaK2FdagM2aQ+x3CvGV2DuVgl/l4ZxPgIf3b/MNh9xHpwSwn74Q==}
     peerDependencies:
       expo: '*'
 
@@ -14247,6 +14255,10 @@ snapshots:
   expect-type@1.2.2: {}
 
   expo-application@55.0.3(expo@55.0.0-preview.7):
+    dependencies:
+      expo: 55.0.0-preview.7(@babel/core@7.28.6)(@expo/dom-webview@0.2.8)(@expo/metro-runtime@55.0.3)(expo-router@55.0.0-beta.4)(graphql@16.12.0)(react-dom@19.2.3(react@19.2.0))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.0))(react@19.2.0))(react-native@0.83.1(@babel/core@7.28.6)(@types/react@19.2.9)(react@19.2.0))(react@19.2.0)
+
+  expo-application@7.0.8(expo@55.0.0-preview.7):
     dependencies:
       expo: 55.0.0-preview.7(@babel/core@7.28.6)(@expo/dom-webview@0.2.8)(@expo/metro-runtime@55.0.3)(expo-router@55.0.0-beta.4)(graphql@16.12.0)(react-dom@19.2.3(react@19.2.0))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.0))(react@19.2.0))(react-native@0.83.1(@babel/core@7.28.6)(@types/react@19.2.9)(react@19.2.0))(react@19.2.0)
 
