@@ -183,6 +183,8 @@ export const REDIS_KEYS = {
   REFRESH_TOKEN: (hash: string) => `${_redisPrefix}tracearr:refresh:${hash}`,
   PLEX_TEMP_TOKEN: (token: string) => `${_redisPrefix}tracearr:plex_temp:${token}`,
   MOBILE_REFRESH_TOKEN: (hash: string) => `${_redisPrefix}tracearr:mobile_refresh:${hash}`,
+  // Rate limiting
+  MOBILE_TOKEN_GEN_RATE: (userId: string) => `${_redisPrefix}mobile_token_gen:${userId}`,
   // Distributed locks
   get HEAVY_OPS_LOCK() {
     return `${_redisPrefix}tracearr:heavy-ops:lock`;

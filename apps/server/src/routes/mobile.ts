@@ -247,7 +247,7 @@ export const mobileRoutes: FastifyPluginAsync = async (app) => {
 
     // Rate limiting: max 3 tokens per 5 minutes
     // Use Lua script for atomic INCR + EXPIRE operation
-    const rateLimitKey = `mobile_token_gen:${authUser.userId}`;
+    const rateLimitKey = REDIS_KEYS.MOBILE_TOKEN_GEN_RATE(authUser.userId);
     const luaScript = `
       local current = redis.call('INCR', KEYS[1])
       if current == 1 then
