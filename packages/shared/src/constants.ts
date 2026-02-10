@@ -193,6 +193,9 @@ export const REDIS_KEYS = {
     `${_redisPrefix}session:lock:${serverId}:${sessionKey}`,
   TERMINATION_COOLDOWN: (serverId: string, sessionKey: string, ratingKey: string) =>
     `${_redisPrefix}termination:cooldown:${serverId}:${sessionKey}:${ratingKey}`,
+  // Rule cooldowns
+  RULE_COOLDOWN: (ruleId: string, targetId: string) =>
+    `${_redisPrefix}tracearr:rule:cooldown:${ruleId}:${targetId}`,
 };
 
 // Cache TTLs in seconds
