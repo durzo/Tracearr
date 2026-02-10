@@ -430,6 +430,7 @@ async function processServerSessions(
             return {
               insertedSession: result.insertedSession,
               violationResults: result.violationResults,
+              wasTerminatedByRule: result.wasTerminatedByRule,
             };
           }
         );
@@ -438,7 +439,22 @@ async function processServerSessions(
           continue;
         }
 
-        const { insertedSession, violationResults } = createResult;
+        const { insertedSession, violationResults, wasTerminatedByRule } = createResult;
+
+        // The termination service already removed from cache (no-op since not added yet)
+        // and set cooldown, but we must not add it to newSessions
+        if (wasTerminatedByRule) {
+          console.log(
+            `[Poller] Session ${processed.sessionKey} was terminated by rule, skipping cache add`
+          );
+          // Still broadcast violations since they were created
+          try {
+            await broadcastViolations(violationResults, insertedSession.id, pubSubService);
+          } catch (err) {
+            console.error('[Poller] Failed to broadcast violations:', err);
+          }
+          continue;
+        }
 
         const activeSession = buildActiveSession({
           session: insertedSession,
@@ -555,7 +571,20 @@ async function processServerSessions(
           );
 
           if (createResult) {
-            const { insertedSession, violationResults } = createResult;
+            const { insertedSession, violationResults, wasTerminatedByRule } = createResult;
+
+            if (wasTerminatedByRule) {
+              console.log(
+                `[Poller] Stale recovery session ${processed.sessionKey} was terminated by rule, skipping cache add`
+              );
+              try {
+                await broadcastViolations(violationResults, insertedSession.id, pubSubService);
+              } catch (err) {
+                console.error('[Poller] Failed to broadcast violations:', err);
+              }
+              continue;
+            }
+
             const activeSession = buildActiveSession({
               session: insertedSession,
               processed,
@@ -593,7 +622,8 @@ async function processServerSessions(
           });
 
           if (mediaChangeResult) {
-            const { stoppedSession, insertedSession, violationResults } = mediaChangeResult;
+            const { stoppedSession, insertedSession, violationResults, wasTerminatedByRule } =
+              mediaChangeResult;
 
             // Update cache for stopped session
             if (cacheService) {
@@ -602,6 +632,20 @@ async function processServerSessions(
             }
             if (pubSubService) {
               await pubSubService.publish('session:stopped', stoppedSession.id);
+            }
+
+            // Broadcast violations for new session
+            try {
+              await broadcastViolations(violationResults, insertedSession.id, pubSubService);
+            } catch (err) {
+              console.error('[Poller] Failed to broadcast violations:', err);
+            }
+
+            if (wasTerminatedByRule) {
+              console.log(
+                `[Poller] Media change session ${processed.sessionKey} was terminated by rule, skipping cache add`
+              );
+              continue;
             }
 
             // Build and add new session
@@ -616,13 +660,6 @@ async function processServerSessions(
 
             // Mark as cached within this poll cycle to prevent duplicate processing
             cachedSessionKeys.add(sessionKey);
-
-            // Broadcast violations for new session
-            try {
-              await broadcastViolations(violationResults, insertedSession.id, pubSubService);
-            } catch (err) {
-              console.error('[Poller] Failed to broadcast violations:', err);
-            }
           }
 
           continue; // Skip normal update path
