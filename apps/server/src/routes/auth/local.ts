@@ -14,12 +14,14 @@ import { PlexClient } from '../../services/mediaServer/index.js';
 import { hashPassword, verifyPassword } from '../../utils/password.js';
 import { generateTokens } from './utils.js';
 import { getUserByEmail, getOwnerUser } from '../../services/userService.js';
+import { validateClaimCode, isClaimCodeEnabled } from '../../utils/claimCode.js';
 
 // Schemas
 const signupSchema = z.object({
   username: z.string().min(3).max(50), // Display name
   email: z.email(),
   password: z.string().min(8).max(100),
+  claimCode: z.string().optional(), // Optional claim code for first-time setup
 });
 
 const localLoginSchema = z.object({
@@ -38,6 +40,32 @@ const loginSchema = z.discriminatedUnion('type', [localLoginSchema, plexLoginSch
 
 export const localRoutes: FastifyPluginAsync = async (app) => {
   /**
+   * POST /validate-claim-code - Validate claim code (stateless check)
+   *
+   * Validates the claim code without storing session.
+   * Client uses this for immediate feedback.
+   * Server will validate again during signup for security.
+   */
+  app.post('/validate-claim-code', async (request, reply) => {
+    const body = z.object({ claimCode: z.string().min(1) }).safeParse(request.body);
+    if (!body.success) {
+      return reply.badRequest('Claim code is required');
+    }
+
+    const { claimCode } = body.data;
+
+    if (!isClaimCodeEnabled()) {
+      return reply.badRequest('Claim code validation not required');
+    }
+
+    if (!validateClaimCode(claimCode)) {
+      return reply.forbidden('Invalid claim code');
+    }
+
+    return { success: true };
+  });
+
+  /**
    * POST /signup - Create a local account
    */
   app.post('/signup', async (request, reply) => {
@@ -48,7 +76,7 @@ export const localRoutes: FastifyPluginAsync = async (app) => {
       );
     }
 
-    const { username, password } = body.data;
+    const { username, password, claimCode } = body.data;
     const email = body.data.email.toLowerCase();
 
     // Check if email already exists
@@ -60,6 +88,17 @@ export const localRoutes: FastifyPluginAsync = async (app) => {
     // Check if this is the first user (will be owner)
     const owner = await getOwnerUser();
     const isFirstUser = !owner;
+
+    // If this is the first user and claim code is enabled, validate it
+    if (isFirstUser && isClaimCodeEnabled()) {
+      if (!claimCode) {
+        return reply.forbidden('Claim code is required for first-time setup');
+      }
+      if (!validateClaimCode(claimCode)) {
+        return reply.forbidden('Invalid claim code');
+      }
+      app.log.info('First-time setup with valid claim code');
+    }
 
     // Create user with password hash
     // First user becomes owner, subsequent users are viewers

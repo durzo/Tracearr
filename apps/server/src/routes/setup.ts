@@ -6,6 +6,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { isNotNull, eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { servers, users, settings } from '../db/schema.js';
+import { isClaimCodeEnabled } from '../utils/claimCode.js';
 
 export const setupRoutes: FastifyPluginAsync = async (app) => {
   /**
@@ -16,6 +17,7 @@ export const setupRoutes: FastifyPluginAsync = async (app) => {
    *
    * Returns:
    * - needsSetup: true if no owner accounts exist
+   * - requiresClaimCode: true if first-time setup requires a claim code
    * - hasServers: true if at least one server is configured
    * - hasPasswordAuth: true if at least one user has password login enabled
    */
@@ -43,8 +45,11 @@ export const setupRoutes: FastifyPluginAsync = async (app) => {
       primaryAuthMethod = 'local';
     }
 
+    const needsSetup = ownerList.length === 0;
+
     return {
-      needsSetup: ownerList.length === 0,
+      needsSetup,
+      requiresClaimCode: needsSetup && isClaimCodeEnabled(), // Claim code required only if enabled and setup needed
       hasServers: serverList.length > 0,
       hasJellyfinServers: jellyfinServerList.length > 0,
       hasPasswordAuth: passwordUserList.length > 0,

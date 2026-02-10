@@ -111,6 +111,7 @@ import { db, runMigrations } from './db/client.js';
 import { initTimescaleDB, getTimescaleStatus } from './db/timescale.js';
 import { sql, eq } from 'drizzle-orm';
 import { servers } from './db/schema.js';
+import { initializeClaimCode } from './utils/claimCode.js';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -500,6 +501,9 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
 
 async function start() {
   try {
+    // Initialize claim code for first-time setup security
+    initializeClaimCode();
+
     const app = await buildApp();
 
     // Handle graceful shutdown - use process.once to prevent handler stacking in test/restart scenarios

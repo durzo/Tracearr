@@ -30,10 +30,12 @@ import { plexHeaders } from '../../utils/http.js';
 import { generateTokens, generateTempToken, PLEX_TEMP_TOKEN_TTL } from './utils.js';
 import { syncServer } from '../../services/sync.js';
 import { getUserByPlexAccountId, getOwnerUser, getUserById } from '../../services/userService.js';
+import { isClaimCodeEnabled, validateClaimCode } from '../../utils/claimCode.js';
 
 // Schemas
 const plexCheckPinSchema = z.object({
   pinId: z.string(),
+  claimCode: z.string().optional(),
 });
 
 const plexConnectSchema = z.object({
@@ -41,6 +43,7 @@ const plexConnectSchema = z.object({
   serverUri: z.url(),
   serverName: z.string().min(1).max(100),
   clientIdentifier: z.string().optional(), // For storing machineIdentifier
+  claimCode: z.string().optional(),
 });
 
 const plexAddServerSchema = z.object({
@@ -140,7 +143,7 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('pinId is required');
     }
 
-    const { pinId } = body.data;
+    const { pinId, claimCode } = body.data;
 
     try {
       const authResult = await PlexClient.checkOAuthPin(pinId);
@@ -319,6 +322,13 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
       // First user becomes owner, subsequent users are viewers
       const role = isFirstUser ? 'owner' : 'viewer';
 
+      // Validate claim code for first user if enabled
+      if (isFirstUser && isClaimCodeEnabled()) {
+        if (!claimCode || !validateClaimCode(claimCode)) {
+          return reply.forbidden('Claim code required for first-time setup');
+        }
+      }
+
       const [newUser] = await db
         .insert(users)
         .values({
@@ -369,7 +379,7 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('tempToken, serverUri, and serverName are required');
     }
 
-    const { tempToken, serverUri, serverName, clientIdentifier } = body.data;
+    const { tempToken, serverUri, serverName, clientIdentifier, claimCode } = body.data;
 
     // Get stored Plex auth from temp token
     const stored = await app.redis.get(REDIS_KEYS.PLEX_TEMP_TOKEN(tempToken));
@@ -446,6 +456,13 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
       // Create user identity (no serverId on users table)
       // First user becomes owner, subsequent users are viewers
       const role = isFirstUser ? 'owner' : 'viewer';
+
+      // Validate claim code for first user if enabled
+      if (isFirstUser && isClaimCodeEnabled()) {
+        if (!claimCode || !validateClaimCode(claimCode)) {
+          return reply.forbidden('Claim code required for first-time setup');
+        }
+      }
 
       const [newUser] = await db
         .insert(users)

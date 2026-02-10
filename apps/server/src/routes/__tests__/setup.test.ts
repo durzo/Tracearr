@@ -16,8 +16,14 @@ vi.mock('../../db/client.js', () => ({
   },
 }));
 
-// Import the mocked db and the routes
+// Mock the claim code module
+vi.mock('../../utils/claimCode.js', () => ({
+  isClaimCodeEnabled: vi.fn().mockReturnValue(false), // Default to disabled
+}));
+
+// Import the mocked modules and the routes
 import { db } from '../../db/client.js';
+import { isClaimCodeEnabled } from '../../utils/claimCode.js';
 import { setupRoutes } from '../setup.js';
 
 /**
@@ -63,6 +69,8 @@ describe('Setup Routes', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset isClaimCodeEnabled to default (false)
+    vi.mocked(isClaimCodeEnabled).mockReturnValue(false);
   });
 
   afterEach(async () => {
@@ -92,6 +100,38 @@ describe('Setup Routes', () => {
       const body = response.json();
       expect(body).toEqual({
         needsSetup: true,
+        requiresClaimCode: false, // Claim code disabled by default in tests
+        hasServers: true,
+        hasJellyfinServers: false,
+        hasPasswordAuth: false,
+        primaryAuthMethod: 'local',
+      });
+    });
+
+    it('returns requiresClaimCode true when claim code enabled and setup needed', async () => {
+      app = await buildTestApp();
+
+      // Enable claim code for this test
+      vi.mocked(isClaimCodeEnabled).mockReturnValue(true);
+
+      // Mock: no owners (needs setup)
+      mockDbSelectMultiple([
+        [{ id: 'server-1' }], // servers query
+        [], // jellyfin servers query
+        [], // owners query (empty = needs setup)
+        [], // password users query
+      ]);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/setup/status',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body).toEqual({
+        needsSetup: true,
+        requiresClaimCode: true, // Claim code enabled and setup needed
         hasServers: true,
         hasJellyfinServers: false,
         hasPasswordAuth: false,
@@ -119,6 +159,7 @@ describe('Setup Routes', () => {
       const body = response.json();
       expect(body).toEqual({
         needsSetup: false,
+        requiresClaimCode: false,
         hasServers: true,
         hasJellyfinServers: true,
         hasPasswordAuth: true,
@@ -146,6 +187,7 @@ describe('Setup Routes', () => {
       const body = response.json();
       expect(body).toEqual({
         needsSetup: true,
+        requiresClaimCode: false, // Claim code disabled by default in tests
         hasServers: false,
         hasJellyfinServers: false,
         hasPasswordAuth: false,
@@ -173,6 +215,7 @@ describe('Setup Routes', () => {
       const body = response.json();
       expect(body).toEqual({
         needsSetup: false,
+        requiresClaimCode: false,
         hasServers: false,
         hasJellyfinServers: false,
         hasPasswordAuth: true,
@@ -200,6 +243,7 @@ describe('Setup Routes', () => {
       const body = response.json();
       expect(body).toEqual({
         needsSetup: false,
+        requiresClaimCode: false,
         hasServers: true,
         hasJellyfinServers: true,
         hasPasswordAuth: false,
@@ -227,6 +271,7 @@ describe('Setup Routes', () => {
       const body = response.json();
       expect(body).toEqual({
         needsSetup: true,
+        requiresClaimCode: false, // Claim code disabled by default in tests
         hasServers: false,
         hasJellyfinServers: false,
         hasPasswordAuth: false,
@@ -254,6 +299,7 @@ describe('Setup Routes', () => {
       const body = response.json();
       expect(body).toEqual({
         needsSetup: false,
+        requiresClaimCode: false,
         hasServers: true,
         hasJellyfinServers: true,
         hasPasswordAuth: true,

@@ -17,7 +17,7 @@ import { PlexServerSelector } from '@/components/auth/PlexServerSelector';
 // Plex brand color
 const PLEX_COLOR = 'bg-[#E5A00D] hover:bg-[#C88A0B]';
 
-type AuthStep = 'initial' | 'plex-waiting' | 'server-select';
+type AuthStep = 'claim-code-gate' | 'initial' | 'plex-waiting' | 'server-select';
 
 export function Login() {
   const navigate = useNavigate();
@@ -28,6 +28,7 @@ export function Login() {
   // Setup status - default to false (Sign In mode) since most users are returning
   const [setupLoading, setSetupLoading] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [requiresClaimCode, setRequiresClaimCode] = useState(false);
   const [hasPasswordAuth, setHasPasswordAuth] = useState(false);
   const [hasJellyfinServers, setHasJellyfinServers] = useState(false);
 
@@ -49,6 +50,10 @@ export function Login() {
   const [password, setPassword] = useState('');
   const [email, setEmail] = useState('');
 
+  // Claim code gate state
+  const [claimCode, setClaimCode] = useState('');
+  const [claimCodeLoading, setClaimCodeLoading] = useState(false);
+
   // Jellyfin auth state
   const [jellyfinLoading, setJellyfinLoading] = useState(false);
   const [jellyfinUsername, setJellyfinUsername] = useState('');
@@ -67,10 +72,17 @@ export function Login() {
           }
           const status = await api.setup.status();
           setNeedsSetup(status.needsSetup);
+          setRequiresClaimCode(status.requiresClaimCode);
           setHasPasswordAuth(status.hasPasswordAuth);
           setHasJellyfinServers(status.hasJellyfinServers);
           // Use the configured primary auth method
           setShowJellyfinForm(status.primaryAuthMethod === 'jellyfin');
+
+          // Set initial auth step based on setup requirements
+          if (status.needsSetup && status.requiresClaimCode) {
+            setAuthStep('claim-code-gate');
+          }
+
           setSetupLoading(false);
           return; // Success - exit retry loop
         } catch {
@@ -103,10 +115,36 @@ export function Login() {
     setPlexPopup(null);
   };
 
+  // Handle claim code validation (immediate feedback, server validates again during signup)
+  const handleClaimCodeValidation = async (e: React.SyntheticEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setClaimCodeLoading(true);
+
+    try {
+      await api.auth.validateClaimCode({ claimCode: claimCode.trim() });
+      toast.success(t('notifications:toast.success.claimCodeValidated.title'), {
+        description: t('notifications:toast.success.claimCodeValidated.message'),
+      });
+      setAuthStep('initial');
+    } catch (error) {
+      toast.error(t('notifications:toast.error.invalidClaimCode.title'), {
+        description:
+          error instanceof Error
+            ? error.message
+            : t('notifications:toast.error.invalidClaimCode.message'),
+      });
+    } finally {
+      setClaimCodeLoading(false);
+    }
+  };
+
   // Poll for Plex PIN claim
   const pollPlexPin = async (pinId: string) => {
     try {
-      const result = await api.auth.checkPlexPin(pinId);
+      const result = await api.auth.checkPlexPin({
+        pinId,
+        ...(requiresClaimCode && { claimCode: claimCode.trim() }),
+      });
 
       if (!result.authorized) {
         // Still waiting for PIN claim, continue polling
@@ -186,6 +224,7 @@ export function Login() {
         serverUri,
         serverName,
         clientIdentifier,
+        ...(requiresClaimCode && { claimCode: claimCode.trim() }),
       });
 
       if (result.accessToken && result.refreshToken) {
@@ -229,6 +268,7 @@ export function Login() {
         email: email.trim(),
         username: username.trim(),
         password,
+        ...(requiresClaimCode && { claimCode: claimCode.trim() }),
       });
 
       if (result.accessToken && result.refreshToken) {
@@ -317,6 +357,63 @@ export function Login() {
     );
   }
 
+  // Claim code gate - shown before any setup options
+  if (authStep === 'claim-code-gate') {
+    return (
+      <div className="bg-background flex min-h-screen flex-col items-center justify-center p-4">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <LogoIcon className="mb-4 h-20 w-20" />
+          <h1 className="text-4xl font-bold tracking-tight">{t('pages:login.title')}</h1>
+          <p className="text-muted-foreground mt-2">{t('pages:login.claimCodeRequired')}</p>
+        </div>
+
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5" />
+              {t('pages:login.enterClaimCode')}
+            </CardTitle>
+            <CardDescription>{t('pages:login.claimCodeDescription')}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleClaimCodeValidation} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="gate-claimCode">
+                  {t('pages:login.claimCodeLabel')}
+                  <span className="text-destructive ml-1">*</span>
+                </Label>
+                <Input
+                  id="gate-claimCode"
+                  type="text"
+                  placeholder=""
+                  value={claimCode}
+                  onChange={(e) => setClaimCode(e.target.value.toUpperCase())}
+                  required
+                  disabled={claimCodeLoading}
+                  className="font-mono text-lg tracking-wider"
+                  autoFocus
+                />
+                <p className="text-muted-foreground text-xs">{t('pages:login.claimCodeHint')}</p>
+              </div>
+              <Button type="submit" className="w-full" disabled={claimCodeLoading}>
+                {claimCodeLoading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <KeyRound className="mr-2 h-4 w-4" />
+                )}
+                {t('pages:login.validateClaimCode')}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        <p className="text-muted-foreground mt-6 text-center text-xs">
+          {t('pages:login.claimCodeSecurityNote')}
+        </p>
+      </div>
+    );
+  }
+
   // Server selection step (only during Plex signup)
   if (authStep === 'server-select' && plexServers.length > 0) {
     return (
@@ -332,7 +429,7 @@ export function Login() {
             <CardTitle>{t('settings:plex.selectServer')}</CardTitle>
             <CardDescription>{t('settings:plex.chooseServer')}</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <PlexServerSelector
               servers={plexServers}
               onSelect={handlePlexServerSelect}

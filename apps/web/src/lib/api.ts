@@ -322,6 +322,7 @@ class ApiClient {
     status: () =>
       this.request<{
         needsSetup: boolean;
+        requiresClaimCode: boolean;
         hasServers: boolean;
         hasJellyfinServers: boolean;
         hasPasswordAuth: boolean;
@@ -350,8 +351,16 @@ class ApiClient {
       }>('/auth/me'),
     logout: () => this.request<void>('/auth/logout', { method: 'POST' }),
 
+    // Validate claim code (stateless check for immediate feedback)
+    validateClaimCode: (data: { claimCode: string }) =>
+      this.request<{ success: boolean }>('/auth/validate-claim-code', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+
     // Local account signup (email for login, username for display)
-    signup: (data: { email: string; username: string; password: string }) =>
+    // claimCode is required if first-time setup with claim code enabled
+    signup: (data: { email: string; username: string; password: string; claimCode?: string }) =>
       this.request<{ accessToken: string; refreshToken: string; user: User }>('/auth/signup', {
         method: 'POST',
         body: JSON.stringify(data),
@@ -372,10 +381,10 @@ class ApiClient {
       }),
 
     // Plex OAuth - Step 2: Check PIN and get servers
-    checkPlexPin: (pinId: string) =>
+    checkPlexPin: (data: { pinId: string; claimCode?: string }) =>
       this.request<PlexCheckPinResponse>('/auth/plex/check-pin', {
         method: 'POST',
-        body: JSON.stringify({ pinId }),
+        body: JSON.stringify(data),
       }),
 
     // Jellyfin Admin Login - Authenticate with Jellyfin username/password
@@ -394,6 +403,7 @@ class ApiClient {
       serverUri: string;
       serverName: string;
       clientIdentifier?: string;
+      claimCode?: string;
     }) =>
       this.request<{ accessToken: string; refreshToken: string; user: User }>(
         '/auth/plex/connect',
