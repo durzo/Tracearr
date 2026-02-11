@@ -303,6 +303,16 @@ class ApiClient {
       // Don't clear here - might just be a network error (server restarting)
     }
 
+    // Detect maintenance mode (503 with maintenance flag)
+    if (response.status === 503) {
+      const errorBody = await response.json().catch(() => ({}));
+      if (errorBody.maintenance) {
+        window.dispatchEvent(new CustomEvent('tracearr:maintenance-mode'));
+        throw new Error('Server is in maintenance mode');
+      }
+      throw new Error(errorBody.message ?? errorBody.error ?? 'Service Unavailable');
+    }
+
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({}));
       throw new Error(errorBody.message ?? errorBody.error ?? `Request failed: ${response.status}`);

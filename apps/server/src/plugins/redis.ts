@@ -1,8 +1,11 @@
 /**
  * Redis client plugin for Fastify
+ *
+ * Uses lazyConnect so the plugin can be registered even when Redis
+ * is unreachable. Call connectRedis(app) to actually establish the connection.
  */
 
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 import { Redis } from 'ioredis';
 import { setRedisPrefix } from '@tracearr/shared';
@@ -22,6 +25,7 @@ const redisPlugin: FastifyPluginAsync = async (app) => {
   }
 
   const redis = new Redis(redisUrl, {
+    lazyConnect: true,
     maxRetriesPerRequest: 3,
     retryStrategy(times: number) {
       const delay = Math.min(times * 50, 2000);
@@ -47,9 +51,19 @@ const redisPlugin: FastifyPluginAsync = async (app) => {
   app.decorate('redis', redis);
 
   app.addHook('onClose', async () => {
-    await redis.quit();
+    if (redis.status === 'ready' || redis.status === 'connecting') {
+      await redis.quit();
+    }
   });
 };
+
+/**
+ * Explicitly connect the Redis client decorated on the Fastify instance.
+ * Call this after verifying Redis is reachable.
+ */
+export async function connectRedis(app: FastifyInstance): Promise<void> {
+  await app.redis.connect();
+}
 
 export default fp(redisPlugin, {
   name: 'redis',
