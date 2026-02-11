@@ -30,18 +30,16 @@ import { useVersion } from '@/hooks/queries';
 function NavMenuItem({ item }: { item: NavItem }) {
   const { setOpenMobile } = useSidebar();
   const { t } = useTranslation('nav');
+  const location = useLocation();
+  const isActive =
+    item.href === '/'
+      ? location.pathname === '/'
+      : location.pathname === item.href || location.pathname.startsWith(item.href + '/');
 
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton asChild>
-        <NavLink
-          to={item.href}
-          end={item.href === '/'}
-          onClick={() => setOpenMobile(false)}
-          className={({ isActive }) =>
-            cn(isActive && 'bg-sidebar-accent text-sidebar-accent-foreground')
-          }
-        >
+      <SidebarMenuButton asChild isActive={isActive}>
+        <NavLink to={item.href} end={item.href === '/'} onClick={() => setOpenMobile(false)}>
           <item.icon className="size-4" />
           <span>{t(item.nameKey)}</span>
         </NavLink>
@@ -68,22 +66,20 @@ function NavMenuGroup({ group }: { group: NavGroup }) {
         </CollapsibleTrigger>
         <CollapsibleContent>
           <SidebarMenuSub>
-            {group.children.map((child) => (
-              <SidebarMenuSubItem key={child.href}>
-                <SidebarMenuSubButton asChild>
-                  <NavLink
-                    to={child.href}
-                    onClick={() => setOpenMobile(false)}
-                    className={({ isActive }) =>
-                      cn(isActive && 'bg-sidebar-accent text-sidebar-accent-foreground')
-                    }
-                  >
-                    <child.icon className="size-4" />
-                    <span>{t(child.nameKey)}</span>
-                  </NavLink>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            ))}
+            {group.children.map((child) => {
+              const childIsActive =
+                location.pathname === child.href || location.pathname.startsWith(child.href + '/');
+              return (
+                <SidebarMenuSubItem key={child.href}>
+                  <SidebarMenuSubButton asChild isActive={childIsActive}>
+                    <NavLink to={child.href} onClick={() => setOpenMobile(false)}>
+                      <child.icon className="size-4" />
+                      <span>{t(child.nameKey)}</span>
+                    </NavLink>
+                  </SidebarMenuSubButton>
+                </SidebarMenuSubItem>
+              );
+            })}
           </SidebarMenuSub>
         </CollapsibleContent>
       </SidebarMenuItem>
