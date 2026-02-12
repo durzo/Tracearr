@@ -8,6 +8,7 @@
 import { Queue, Worker, type Job, type ConnectionOptions } from 'bullmq';
 import { getRedisPrefix } from '@tracearr/shared';
 import type { Redis } from 'ioredis';
+import { isMaintenance } from '../serverState.js';
 import { REDIS_KEYS, CACHE_TTL, WS_EVENTS } from '@tracearr/shared';
 
 // Queue name
@@ -90,6 +91,9 @@ export function initVersionCheckQueue(
       },
     },
   });
+  versionQueue.on('error', (err) => {
+    if (!isMaintenance()) console.error('Version check queue error:', err);
+  });
 
   console.log('Version check queue initialized');
 }
@@ -131,7 +135,7 @@ export function startVersionCheckWorker(): void {
   );
 
   versionWorker.on('error', (error) => {
-    console.error('Version check worker error:', error);
+    if (!isMaintenance()) console.error('Version check worker error:', error);
   });
 
   console.log('Version check worker started');

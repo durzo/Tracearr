@@ -11,6 +11,7 @@
  */
 
 import { Queue, Worker, type Job, type ConnectionOptions } from 'bullmq';
+import { isMaintenance } from '../serverState.js';
 import { getRedisPrefix } from '@tracearr/shared';
 import { extendJobLock } from './lockUtils.js';
 import {
@@ -114,6 +115,9 @@ export function initMaintenanceQueue(redisUrl: string): void {
         age: 7 * 24 * 60 * 60,
       },
     },
+  });
+  maintenanceQueue.on('error', (err) => {
+    if (!isMaintenance()) console.error('[Maintenance] Queue error:', err);
   });
 
   console.log('Maintenance queue initialized');
@@ -298,7 +302,7 @@ export function startMaintenanceWorker(): void {
   });
 
   maintenanceWorker.on('error', (error) => {
-    console.error('[Maintenance] Worker error:', error);
+    if (!isMaintenance()) console.error('[Maintenance] Worker error:', error);
   });
 
   console.log('Maintenance worker started');

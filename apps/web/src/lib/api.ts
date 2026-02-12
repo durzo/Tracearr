@@ -80,6 +80,7 @@ export type {
   PlexAccountsResponse,
 };
 import { API_BASE_PATH, getClientTimezone } from '@tracearr/shared';
+import { MAINTENANCE_EVENT } from '@/hooks/useMaintenanceMode';
 
 // Stats time range parameters
 export interface StatsTimeRange {
@@ -303,9 +304,21 @@ class ApiClient {
       // Don't clear here - might just be a network error (server restarting)
     }
 
+    // Detect maintenance mode (503 with maintenance flag)
+    if (response.status === 503) {
+      const errorBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      if (errorBody.maintenance) {
+        window.dispatchEvent(new CustomEvent(MAINTENANCE_EVENT));
+        throw new Error('Server is in maintenance mode');
+      }
+      throw new Error(((errorBody.message ?? errorBody.error) as string) ?? 'Service Unavailable');
+    }
+
     if (!response.ok) {
-      const errorBody = await response.json().catch(() => ({}));
-      throw new Error(errorBody.message ?? errorBody.error ?? `Request failed: ${response.status}`);
+      const errorBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      throw new Error(
+        ((errorBody.message ?? errorBody.error) as string) ?? `Request failed: ${response.status}`
+      );
     }
 
     // Handle empty responses (204 No Content) or responses without JSON

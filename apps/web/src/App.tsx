@@ -20,10 +20,17 @@ import { Settings } from '@/pages/Settings';
 import { ApiDocs } from '@/pages/ApiDocs';
 import { Debug } from '@/pages/Debug';
 import { NotFound } from '@/pages/NotFound';
+import { Maintenance } from '@/pages/Maintenance';
+import { useMaintenanceMode } from '@/hooks/useMaintenanceMode';
 
 export function App() {
   // Automatically update document title based on current route
   useDocumentTitle();
+  const { isInMaintenance } = useMaintenanceMode();
+
+  if (isInMaintenance) {
+    return <Maintenance />;
+  }
 
   return (
     <>

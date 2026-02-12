@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { config } from 'dotenv';
-import Fastify from 'fastify';
+import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import sensible from '@fastify/sensible';
@@ -38,7 +38,7 @@ import type {
 } from '@tracearr/shared';
 
 import authPlugin from './plugins/auth.js';
-import redisPlugin from './plugins/redis.js';
+import redisPlugin, { connectRedis } from './plugins/redis.js';
 import { authRoutes } from './routes/auth/index.js';
 import { setupRoutes } from './routes/setup.js';
 import { serverRoutes } from './routes/servers.js';
@@ -107,17 +107,43 @@ import { initPushRateLimiter } from './services/pushRateLimiter.js';
 import { initializeV2Rules } from './services/rules/v2Integration.js';
 import { processPushReceipts } from './services/pushNotification.js';
 import { cleanupMobileTokens } from './jobs/cleanupMobileTokens.js';
-import { db, runMigrations } from './db/client.js';
+import { db, checkDatabaseConnection, runMigrations } from './db/client.js';
 import { initTimescaleDB, getTimescaleStatus } from './db/timescale.js';
 import { sql, eq } from 'drizzle-orm';
 import { servers } from './db/schema.js';
 import { initializeClaimCode } from './utils/claimCode.js';
+import {
+  getServerMode,
+  setServerMode,
+  isMaintenance,
+  isServicesInitialized,
+  setServicesInitialized,
+  onModeChange,
+  wasEverReady,
+} from './serverState.js';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
 const HOST = process.env.HOST ?? '0.0.0.0';
+const RECOVERY_INTERVAL_MS = 10_000;
 
-// WebSocket subscriber - module level so it can be cleaned up in onClose hook
+/** No-op callback for suppressing ioredis error events on disposable probe clients. */
+// eslint-disable-next-line @typescript-eslint/no-empty-function
+function noop() {}
+
+// Module-level references for cleanup
 let wsSubscriber: Redis | null = null;
+let pubSubRedis: Redis | null = null;
+let pushReceiptInterval: ReturnType<typeof setInterval> | null = null;
+let mobileTokenCleanupInterval: ReturnType<typeof setInterval> | null = null;
+let recoveryInterval: ReturnType<typeof setInterval> | null = null;
+let dbHealthInterval: ReturnType<typeof setInterval> | null = null;
+let redisCloseHandler: (() => void) | null = null;
+let redisReadyHandler: (() => void) | null = null;
+const DB_HEALTH_CHECK_MS = 15_000;
+
+// ============================================================================
+// Phase 1: Build the Fastify app (always succeeds, even without DB/Redis)
+// ============================================================================
 
 async function buildApp(options: { trustProxy?: boolean } = {}) {
   const app = Fastify({
@@ -132,6 +158,228 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
     // This respects X-Forwarded-For, X-Forwarded-Proto headers from reverse proxies
     trustProxy: options.trustProxy ?? process.env.TRUST_PROXY === 'true',
   });
+
+  // Maintenance gate hook — MUST be registered before rate limiter so it
+  // short-circuits requests before the rate limiter tries to access Redis
+  app.addHook('onRequest', async (request, reply) => {
+    // Always allow health endpoint
+    if (request.url === '/health') return;
+
+    // Allow static files (non-API routes) so frontend can load and show maintenance page
+    if (!request.url.startsWith('/api/')) return;
+
+    if (isMaintenance()) {
+      return reply.code(503).send({
+        error: 'Service Unavailable',
+        message: 'Tracearr is starting up. Database or Redis is not yet available.',
+        maintenance: true,
+      });
+    }
+  });
+
+  // Security plugins - relaxed for HTTP-only deployments
+  await app.register(helmet, {
+    contentSecurityPolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    originAgentCluster: false,
+  });
+  await app.register(cors, {
+    origin: process.env.CORS_ORIGIN || true,
+    credentials: true,
+  });
+  await app.register(rateLimit, {
+    max: 1000,
+    timeWindow: '1 minute',
+  });
+
+  // Utility plugins
+  await app.register(sensible);
+  await app.register(cookie, {
+    secret: process.env.COOKIE_SECRET,
+  });
+
+  // Redis plugin (lazyConnect — does not attempt connection yet)
+  await app.register(redisPlugin);
+
+  // Auth plugin (depends on cookie, uses JWT — no Redis dependency)
+  await app.register(authPlugin);
+
+  // Health check endpoint — always reachable, even in maintenance mode
+  app.get('/health', async () => {
+    let dbHealthy = false;
+    let redisHealthy = false;
+
+    // Check database
+    try {
+      await db.execute(sql`SELECT 1`);
+      dbHealthy = true;
+    } catch {
+      dbHealthy = false;
+    }
+
+    // Check Redis — trust ioredis connection state instead of probing.
+    // The client's status is updated internally via TCP events, so 'ready'
+    // means the connection is live. No ping round-trip needed.
+    redisHealthy = app.redis.status === 'ready';
+
+    const mode = getServerMode();
+
+    // Only include extended info when fully ready
+    if (mode === 'ready') {
+      let timescale = null;
+      try {
+        const tsStatus = await getTimescaleStatus();
+        timescale = {
+          installed: tsStatus.extensionInstalled,
+          hypertable: tsStatus.sessionsIsHypertable,
+          compression: tsStatus.compressionEnabled,
+          aggregates: tsStatus.continuousAggregates.length,
+          chunks: tsStatus.chunkCount,
+        };
+      } catch {
+        timescale = {
+          installed: false,
+          hypertable: false,
+          compression: false,
+          aggregates: 0,
+          chunks: 0,
+        };
+      }
+
+      return {
+        status: dbHealthy && redisHealthy ? 'ok' : 'degraded',
+        mode,
+        db: dbHealthy,
+        redis: redisHealthy,
+        geoip: geoipService.hasDatabase(),
+        timescale,
+      };
+    }
+
+    return {
+      status: 'maintenance',
+      mode,
+      wasReady: wasEverReady(),
+      db: dbHealthy,
+      redis: redisHealthy,
+    };
+  });
+
+  // API routes — registered now but gated by the maintenance hook above
+  await app.register(setupRoutes, { prefix: `${API_BASE_PATH}/setup` });
+  await app.register(authRoutes, { prefix: `${API_BASE_PATH}/auth` });
+  await app.register(serverRoutes, { prefix: `${API_BASE_PATH}/servers` });
+  await app.register(userRoutes, { prefix: `${API_BASE_PATH}/users` });
+  await app.register(sessionRoutes, { prefix: `${API_BASE_PATH}/sessions` });
+  await app.register(ruleRoutes, { prefix: `${API_BASE_PATH}/rules` });
+  await app.register(violationRoutes, { prefix: `${API_BASE_PATH}/violations` });
+  await app.register(statsRoutes, { prefix: `${API_BASE_PATH}/stats` });
+  await app.register(settingsRoutes, { prefix: `${API_BASE_PATH}/settings` });
+  await app.register(channelRoutingRoutes, { prefix: `${API_BASE_PATH}/settings/notifications` });
+  await app.register(importRoutes, { prefix: `${API_BASE_PATH}/import` });
+  await app.register(imageRoutes, { prefix: `${API_BASE_PATH}/images` });
+  await app.register(debugRoutes, { prefix: `${API_BASE_PATH}/debug` });
+  await app.register(mobileRoutes, { prefix: `${API_BASE_PATH}/mobile` });
+  await app.register(notificationPreferencesRoutes, { prefix: `${API_BASE_PATH}/notifications` });
+  await app.register(versionRoutes, { prefix: `${API_BASE_PATH}/version` });
+  await app.register(maintenanceRoutes, { prefix: `${API_BASE_PATH}/maintenance` });
+  await app.register(tasksRoutes, { prefix: `${API_BASE_PATH}/tasks` });
+  await app.register(publicRoutes, { prefix: `${API_BASE_PATH}/public` });
+  await app.register(libraryRoutes, { prefix: `${API_BASE_PATH}/library` });
+
+  // Serve static frontend in production
+  const webDistPath = resolve(PROJECT_ROOT, 'apps/web/dist');
+  if (process.env.NODE_ENV === 'production' && existsSync(webDistPath)) {
+    await app.register(fastifyStatic, {
+      root: webDistPath,
+      prefix: '/',
+    });
+
+    // SPA fallback - serve index.html for all non-API routes
+    app.setNotFoundHandler((request, reply) => {
+      if (request.url.startsWith('/api/') || request.url === '/health') {
+        return reply.code(404).send({ error: 'Not Found' });
+      }
+      return reply.sendFile('index.html');
+    });
+
+    app.log.info('Static file serving enabled for production');
+  }
+
+  // Cleanup hook — handles both maintenance and ready mode resources
+  app.addHook('onClose', async () => {
+    if (recoveryInterval) {
+      clearInterval(recoveryInterval);
+    }
+    if (dbHealthInterval) {
+      clearInterval(dbHealthInterval);
+    }
+    if (pushReceiptInterval) {
+      clearInterval(pushReceiptInterval);
+    }
+    if (mobileTokenCleanupInterval) {
+      clearInterval(mobileTokenCleanupInterval);
+    }
+    stopImageCacheCleanup();
+    if (pubSubRedis) await pubSubRedis.quit();
+    if (wsSubscriber) await wsSubscriber.quit();
+    stopPoller();
+    await sseManager.stop();
+    stopSSEProcessor();
+    await shutdownNotificationQueue();
+    await shutdownImportQueue();
+    await shutdownMaintenanceQueue();
+    await shutdownLibrarySyncQueue();
+    await shutdownVersionCheckQueue();
+    await shutdownInactivityCheckQueue();
+  });
+
+  // Probe DB and Redis to decide if we can initialize services now
+  const dbOk = await checkDatabaseConnection();
+  let redisOk = false;
+  try {
+    // Temporarily connect to test reachability
+    const testRedis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
+      connectTimeout: 5000,
+      maxRetriesPerRequest: 1,
+      lazyConnect: true,
+      retryStrategy: () => null, // Don't retry for the probe
+    });
+    testRedis.on('error', noop); // Suppress — failure is handled via catch
+    try {
+      await testRedis.connect();
+      const pong = await testRedis.ping();
+      redisOk = pong === 'PONG';
+    } finally {
+      testRedis.disconnect();
+    }
+  } catch {
+    redisOk = false;
+  }
+
+  if (dbOk && redisOk) {
+    await initializeServices(app);
+  } else {
+    setServerMode('maintenance');
+    app.log.warn(
+      { db: dbOk, redis: redisOk },
+      'Server starting in MAINTENANCE mode — database or Redis unavailable'
+    );
+  }
+
+  return app;
+}
+
+// ============================================================================
+// Phase 2: Initialize all DB/Redis-dependent services
+// ============================================================================
+
+async function initializeServices(app: FastifyInstance) {
+  if (isServicesInitialized()) return;
+
+  // Connect the lazy Redis client
+  await connectRedis(app);
 
   // Run database migrations
   try {
@@ -232,31 +480,6 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
     app.log.warn('GeoASN database not available - ASN data disabled');
   }
 
-  // Security plugins - relaxed for HTTP-only deployments
-  await app.register(helmet, {
-    contentSecurityPolicy: false,
-    crossOriginOpenerPolicy: false,
-    crossOriginEmbedderPolicy: false,
-    originAgentCluster: false,
-  });
-  await app.register(cors, {
-    origin: process.env.CORS_ORIGIN || true,
-    credentials: true,
-  });
-  await app.register(rateLimit, {
-    max: 1000,
-    timeWindow: '1 minute',
-  });
-
-  // Utility plugins
-  await app.register(sensible);
-  await app.register(cookie, {
-    secret: process.env.COOKIE_SECRET,
-  });
-
-  // Redis plugin
-  await app.register(redisPlugin);
-
   // Initialize V2 rules system (wire dependencies, run migration)
   try {
     await initializeV2Rules(app.redis);
@@ -266,12 +489,12 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
     // Don't throw - rules can still work with default no-op deps
   }
 
-  // Auth plugin (depends on cookie)
-  await app.register(authPlugin);
-
   // Create cache and pubsub services
   const redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
-  const pubSubRedis = new Redis(redisUrl);
+  pubSubRedis = new Redis(redisUrl);
+  pubSubRedis.on('error', (err: Error) => {
+    app.log.error({ err }, 'PubSub Redis error');
+  });
   const cacheService = createCacheService(app.redis);
   const pubSubService = createPubSubService(app.redis, pubSubRedis);
 
@@ -279,8 +502,6 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
   initPushRateLimiter(app.redis);
   app.log.info('Push notification rate limiter initialized');
 
-  let pushReceiptInterval: ReturnType<typeof setInterval> | null = null;
-  let mobileTokenCleanupInterval: ReturnType<typeof setInterval> | null = null;
   try {
     initNotificationQueue(redisUrl);
     startNotificationWorker();
@@ -382,122 +603,235 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
     // Don't throw - SSE is optional, fallback to polling
   }
 
-  // Cleanup pub/sub redis, notification queue, import queue, and version check queue on close
-  app.addHook('onClose', async () => {
-    if (pushReceiptInterval) {
-      clearInterval(pushReceiptInterval);
+  // Monitor the main Redis client for mid-operation failures.
+  // When Redis disconnects, transition to maintenance mode so the
+  // maintenance gate returns 503 instead of letting requests fail with 500.
+  // When Redis reconnects, transition back to ready.
+  //
+  // Remove previous listeners first to prevent stacking if initializeServices
+  // runs again after maintenance recovery.
+  if (redisCloseHandler) app.redis.removeListener('close', redisCloseHandler);
+  if (redisReadyHandler) app.redis.removeListener('ready', redisReadyHandler);
+
+  redisCloseHandler = () => {
+    if (isServicesInitialized() && !isMaintenance()) {
+      app.log.warn('Redis connection lost — entering MAINTENANCE mode');
+      setServerMode('maintenance');
     }
-    if (mobileTokenCleanupInterval) {
-      clearInterval(mobileTokenCleanupInterval);
-    }
-    stopImageCacheCleanup();
-    await pubSubRedis.quit();
-    if (wsSubscriber) await wsSubscriber.quit();
-    stopPoller();
-    await sseManager.stop();
-    stopSSEProcessor();
-    await shutdownNotificationQueue();
-    await shutdownImportQueue();
-    await shutdownMaintenanceQueue();
-    await shutdownLibrarySyncQueue();
-    await shutdownVersionCheckQueue();
-    await shutdownInactivityCheckQueue();
-  });
-
-  // Health check endpoint
-  app.get('/health', async () => {
-    let dbHealthy = false;
-    let redisHealthy = false;
-
-    // Check database
-    try {
-      await db.execute(sql`SELECT 1`);
-      dbHealthy = true;
-    } catch {
-      dbHealthy = false;
-    }
-
-    // Check Redis
-    try {
-      const pong = await app.redis.ping();
-      redisHealthy = pong === 'PONG';
-    } catch {
-      redisHealthy = false;
-    }
-
-    // Check TimescaleDB status
-    let timescale = null;
-    try {
-      const tsStatus = await getTimescaleStatus();
-      timescale = {
-        installed: tsStatus.extensionInstalled,
-        hypertable: tsStatus.sessionsIsHypertable,
-        compression: tsStatus.compressionEnabled,
-        aggregates: tsStatus.continuousAggregates.length,
-        chunks: tsStatus.chunkCount,
-      };
-    } catch {
-      timescale = {
-        installed: false,
-        hypertable: false,
-        compression: false,
-        aggregates: 0,
-        chunks: 0,
-      };
-    }
-
-    return {
-      status: dbHealthy && redisHealthy ? 'ok' : 'degraded',
-      db: dbHealthy,
-      redis: redisHealthy,
-      geoip: geoipService.hasDatabase(),
-      timescale,
-    };
-  });
-
-  // API routes
-  await app.register(setupRoutes, { prefix: `${API_BASE_PATH}/setup` });
-  await app.register(authRoutes, { prefix: `${API_BASE_PATH}/auth` });
-  await app.register(serverRoutes, { prefix: `${API_BASE_PATH}/servers` });
-  await app.register(userRoutes, { prefix: `${API_BASE_PATH}/users` });
-  await app.register(sessionRoutes, { prefix: `${API_BASE_PATH}/sessions` });
-  await app.register(ruleRoutes, { prefix: `${API_BASE_PATH}/rules` });
-  await app.register(violationRoutes, { prefix: `${API_BASE_PATH}/violations` });
-  await app.register(statsRoutes, { prefix: `${API_BASE_PATH}/stats` });
-  await app.register(settingsRoutes, { prefix: `${API_BASE_PATH}/settings` });
-  await app.register(channelRoutingRoutes, { prefix: `${API_BASE_PATH}/settings/notifications` });
-  await app.register(importRoutes, { prefix: `${API_BASE_PATH}/import` });
-  await app.register(imageRoutes, { prefix: `${API_BASE_PATH}/images` });
-  await app.register(debugRoutes, { prefix: `${API_BASE_PATH}/debug` });
-  await app.register(mobileRoutes, { prefix: `${API_BASE_PATH}/mobile` });
-  await app.register(notificationPreferencesRoutes, { prefix: `${API_BASE_PATH}/notifications` });
-  await app.register(versionRoutes, { prefix: `${API_BASE_PATH}/version` });
-  await app.register(maintenanceRoutes, { prefix: `${API_BASE_PATH}/maintenance` });
-  await app.register(tasksRoutes, { prefix: `${API_BASE_PATH}/tasks` });
-  await app.register(publicRoutes, { prefix: `${API_BASE_PATH}/public` });
-  await app.register(libraryRoutes, { prefix: `${API_BASE_PATH}/library` });
-
-  // Serve static frontend in production
-  const webDistPath = resolve(PROJECT_ROOT, 'apps/web/dist');
-  if (process.env.NODE_ENV === 'production' && existsSync(webDistPath)) {
-    await app.register(fastifyStatic, {
-      root: webDistPath,
-      prefix: '/',
-    });
-
-    // SPA fallback - serve index.html for all non-API routes
-    app.setNotFoundHandler((request, reply) => {
-      if (request.url.startsWith('/api/') || request.url === '/health') {
-        return reply.code(404).send({ error: 'Not Found' });
+  };
+  redisReadyHandler = () => {
+    void (async () => {
+      if (isServicesInitialized() && isMaintenance()) {
+        // Redis is back — verify DB is also reachable before going ready
+        const dbOk = await checkDatabaseConnection();
+        if (dbOk) {
+          app.log.info('Redis reconnected and database is reachable — returning to READY mode');
+          setServerMode('ready');
+        } else {
+          app.log.warn(
+            'Redis reconnected but database is still unreachable — staying in MAINTENANCE mode'
+          );
+        }
       }
-      return reply.sendFile('index.html');
-    });
+    })();
+  };
+  app.redis.on('close', redisCloseHandler);
+  app.redis.on('ready', redisReadyHandler);
 
-    app.log.info('Static file serving enabled for production');
+  // Monitor database connectivity with periodic health checks.
+  // Unlike Redis (which emits connection events), pg-pool doesn't notify on
+  // connection loss, so we poll instead.
+  dbHealthInterval = setInterval(() => {
+    void (async () => {
+      if (!isServicesInitialized()) return;
+
+      const dbOk = await checkDatabaseConnection();
+
+      if (!dbOk && !isMaintenance()) {
+        app.log.warn('Database connection lost — entering MAINTENANCE mode');
+        setServerMode('maintenance');
+      } else if (dbOk && isMaintenance() && app.redis.status === 'ready') {
+        app.log.info('Database reconnected and Redis is ready — returning to READY mode');
+        setServerMode('ready');
+      }
+    })();
+  }, DB_HEALTH_CHECK_MS);
+
+  setServicesInitialized(true);
+  setServerMode('ready');
+}
+
+// ============================================================================
+// Post-listen initialization (WebSocket, pub/sub subscriber, poller, SSE)
+// ============================================================================
+
+async function initializePostListen(app: FastifyInstance) {
+  // Initialize WebSocket server using Fastify's underlying HTTP server
+  const httpServer = app.server;
+  initializeWebSocket(httpServer);
+  app.log.info('WebSocket server initialized');
+
+  // Set up Redis pub/sub to forward events to WebSocket clients
+  const redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
+  wsSubscriber = new Redis(redisUrl);
+  wsSubscriber.on('error', (err: Error) => {
+    app.log.error({ err }, 'WebSocket subscriber Redis error');
+  });
+
+  void wsSubscriber.subscribe(REDIS_KEYS.PUBSUB_EVENTS, (err) => {
+    if (err) {
+      app.log.error({ err }, 'Failed to subscribe to pub/sub channel');
+    } else {
+      app.log.info('Subscribed to pub/sub channel for WebSocket events');
+    }
+  });
+
+  wsSubscriber.on('message', (_channel: string, message: string) => {
+    try {
+      const { event, data } = JSON.parse(message) as {
+        event: string;
+        data: unknown;
+        timestamp: number;
+      };
+
+      // Forward events to WebSocket clients
+      switch (event) {
+        case WS_EVENTS.SESSION_STARTED:
+          broadcastToSessions('session:started', data as ActiveSession);
+          break;
+        case WS_EVENTS.SESSION_STOPPED:
+          broadcastToSessions('session:stopped', data as string);
+          break;
+        case WS_EVENTS.SESSION_UPDATED:
+          broadcastToSessions('session:updated', data as ActiveSession);
+          break;
+        case WS_EVENTS.VIOLATION_NEW:
+          broadcastToSessions('violation:new', data as ViolationWithDetails);
+          break;
+        case WS_EVENTS.STATS_UPDATED:
+          broadcastToSessions('stats:updated', data as DashboardStats);
+          break;
+        case WS_EVENTS.IMPORT_PROGRESS:
+          broadcastToSessions('import:progress', data as TautulliImportProgress);
+          break;
+        case WS_EVENTS.IMPORT_JELLYSTAT_PROGRESS:
+          broadcastToSessions('import:jellystat:progress', data as JellystatImportProgress);
+          break;
+        case WS_EVENTS.MAINTENANCE_PROGRESS:
+          broadcastToSessions('maintenance:progress', data as MaintenanceJobProgress);
+          break;
+        case WS_EVENTS.LIBRARY_SYNC_PROGRESS:
+          broadcastToSessions('library:sync:progress', data as LibrarySyncProgress);
+          break;
+        case WS_EVENTS.VERSION_UPDATE:
+          broadcastToSessions(
+            'version:update',
+            data as { current: string; latest: string; releaseUrl: string }
+          );
+          break;
+        default:
+          // Unknown event, ignore
+          break;
+      }
+    } catch (err) {
+      app.log.error({ err, message }, 'Failed to process pub/sub message');
+    }
+  });
+
+  // Start session poller after server is listening (uses DB settings)
+  const pollerSettings = await getPollerSettings();
+  if (pollerSettings.enabled) {
+    startPoller({ enabled: true, intervalMs: pollerSettings.intervalMs });
+  } else {
+    app.log.info('Session poller disabled in settings');
   }
 
-  return app;
+  // Start SSE connections for Plex servers (real-time updates)
+  try {
+    startSSEProcessor(); // Subscribe to SSE events
+    await sseManager.start(); // Start SSE connections
+    app.log.info('SSE connections started for Plex servers');
+  } catch (err) {
+    app.log.error({ err }, 'Failed to start SSE connections - falling back to polling');
+  }
+
+  // Log network settings status
+  const networkSettings = await getNetworkSettings();
+  const envTrustProxy = process.env.TRUST_PROXY === 'true';
+  if (networkSettings.trustProxy && !envTrustProxy) {
+    app.log.warn(
+      'Trust proxy is enabled in settings but TRUST_PROXY env var is not set. ' +
+        'Set TRUST_PROXY=true and restart for reverse proxy support.'
+    );
+  }
+  if (networkSettings.externalUrl) {
+    app.log.info(`External URL configured: ${networkSettings.externalUrl}`);
+  }
+  if (networkSettings.basePath) {
+    app.log.info(`Base path configured: ${networkSettings.basePath}`);
+  }
 }
+
+// ============================================================================
+// Recovery loop — probes DB/Redis and transitions out of maintenance mode
+// ============================================================================
+
+function startRecoveryLoop(app: FastifyInstance) {
+  if (recoveryInterval) {
+    clearInterval(recoveryInterval);
+    recoveryInterval = null;
+  }
+  recoveryInterval = setInterval(() => {
+    void (async () => {
+      app.log.info('Recovery check: probing database and Redis...');
+
+      const dbOk = await checkDatabaseConnection();
+      let redisOk = false;
+      try {
+        const testRedis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
+          connectTimeout: 5000,
+          maxRetriesPerRequest: 1,
+          lazyConnect: true,
+          retryStrategy: () => null,
+        });
+        testRedis.on('error', noop); // Suppress — failure is handled via catch
+        try {
+          await testRedis.connect();
+          const pong = await testRedis.ping();
+          redisOk = pong === 'PONG';
+        } finally {
+          testRedis.disconnect();
+        }
+      } catch {
+        redisOk = false;
+      }
+
+      if (dbOk && redisOk) {
+        if (recoveryInterval) {
+          clearInterval(recoveryInterval);
+          recoveryInterval = null;
+        }
+        app.log.info('Database and Redis are now available — initializing services...');
+
+        try {
+          await initializeServices(app);
+          await initializePostListen(app);
+          app.log.info('Server transitioned to READY mode');
+        } catch (err) {
+          app.log.error({ err }, 'Failed to initialize after recovery — restarting recovery loop');
+          setServerMode('maintenance');
+          startRecoveryLoop(app);
+        }
+      } else {
+        app.log.info(`Recovery check: services still unavailable (db:${dbOk}, redis:${redisOk})`);
+      }
+    })();
+  }, RECOVERY_INTERVAL_MS);
+}
+
+// ============================================================================
+// Server entrypoint
+// ============================================================================
 
 async function start() {
   try {
@@ -521,109 +855,69 @@ async function start() {
       });
     }
 
+    // Tear down / rebuild services when transitioning in/out of maintenance mode.
+    // This prevents log flooding from Redis clients and BullMQ workers that keep
+    // trying to reconnect after Redis goes down.
+    onModeChange((newMode, prevMode) => {
+      if (newMode === 'maintenance' && prevMode === 'ready') {
+        app.log.info('Entering maintenance mode — shutting down services');
+        stopPoller();
+        stopSSEProcessor();
+        void sseManager.stop();
+
+        // Disconnect extra Redis clients to stop reconnection attempts
+        if (pubSubRedis) {
+          pubSubRedis.disconnect();
+          pubSubRedis = null;
+        }
+        if (wsSubscriber) {
+          wsSubscriber.disconnect();
+          wsSubscriber = null;
+        }
+
+        // Shut down BullMQ workers/queues (closes their internal Redis connections)
+        void Promise.all([
+          shutdownNotificationQueue(),
+          shutdownImportQueue(),
+          shutdownMaintenanceQueue(),
+          shutdownLibrarySyncQueue(),
+          shutdownVersionCheckQueue(),
+          shutdownInactivityCheckQueue(),
+        ]).catch((err) => {
+          app.log.error({ err }, 'Error shutting down queues during maintenance');
+        });
+
+        // Stop the DB health interval — initializeServices will recreate it on recovery.
+        if (dbHealthInterval) {
+          clearInterval(dbHealthInterval);
+          dbHealthInterval = null;
+        }
+
+        // Clear timers that won't fire correctly without Redis/DB
+        if (pushReceiptInterval) {
+          clearInterval(pushReceiptInterval);
+          pushReceiptInterval = null;
+        }
+        if (mobileTokenCleanupInterval) {
+          clearInterval(mobileTokenCleanupInterval);
+          mobileTokenCleanupInterval = null;
+        }
+
+        // Reset so recovery loop can re-run initializeServices + initializePostListen
+        setServicesInitialized(false);
+
+        startRecoveryLoop(app);
+      }
+    });
+
     await app.listen({ port: PORT, host: HOST });
     app.log.info(`Server running at http://${HOST}:${PORT}`);
 
-    // Initialize WebSocket server using Fastify's underlying HTTP server
-    const httpServer = app.server;
-    initializeWebSocket(httpServer);
-    app.log.info('WebSocket server initialized');
-
-    // Set up Redis pub/sub to forward events to WebSocket clients
-    const redisUrl = process.env.REDIS_URL ?? 'redis://localhost:6379';
-    wsSubscriber = new Redis(redisUrl);
-
-    void wsSubscriber.subscribe(REDIS_KEYS.PUBSUB_EVENTS, (err) => {
-      if (err) {
-        app.log.error({ err }, 'Failed to subscribe to pub/sub channel');
-      } else {
-        app.log.info('Subscribed to pub/sub channel for WebSocket events');
-      }
-    });
-
-    wsSubscriber.on('message', (_channel: string, message: string) => {
-      try {
-        const { event, data } = JSON.parse(message) as {
-          event: string;
-          data: unknown;
-          timestamp: number;
-        };
-
-        // Forward events to WebSocket clients
-        switch (event) {
-          case WS_EVENTS.SESSION_STARTED:
-            broadcastToSessions('session:started', data as ActiveSession);
-            break;
-          case WS_EVENTS.SESSION_STOPPED:
-            broadcastToSessions('session:stopped', data as string);
-            break;
-          case WS_EVENTS.SESSION_UPDATED:
-            broadcastToSessions('session:updated', data as ActiveSession);
-            break;
-          case WS_EVENTS.VIOLATION_NEW:
-            broadcastToSessions('violation:new', data as ViolationWithDetails);
-            break;
-          case WS_EVENTS.STATS_UPDATED:
-            broadcastToSessions('stats:updated', data as DashboardStats);
-            break;
-          case WS_EVENTS.IMPORT_PROGRESS:
-            broadcastToSessions('import:progress', data as TautulliImportProgress);
-            break;
-          case WS_EVENTS.IMPORT_JELLYSTAT_PROGRESS:
-            broadcastToSessions('import:jellystat:progress', data as JellystatImportProgress);
-            break;
-          case WS_EVENTS.MAINTENANCE_PROGRESS:
-            broadcastToSessions('maintenance:progress', data as MaintenanceJobProgress);
-            break;
-          case WS_EVENTS.LIBRARY_SYNC_PROGRESS:
-            broadcastToSessions('library:sync:progress', data as LibrarySyncProgress);
-            break;
-          case WS_EVENTS.VERSION_UPDATE:
-            broadcastToSessions(
-              'version:update',
-              data as { current: string; latest: string; releaseUrl: string }
-            );
-            break;
-          default:
-            // Unknown event, ignore
-            break;
-        }
-      } catch (err) {
-        app.log.error({ err, message }, 'Failed to process pub/sub message');
-      }
-    });
-
-    // Start session poller after server is listening (uses DB settings)
-    const pollerSettings = await getPollerSettings();
-    if (pollerSettings.enabled) {
-      startPoller({ enabled: true, intervalMs: pollerSettings.intervalMs });
+    if (isMaintenance()) {
+      app.log.warn('Waiting for database and Redis to become available...');
+      startRecoveryLoop(app);
     } else {
-      app.log.info('Session poller disabled in settings');
-    }
-
-    // Start SSE connections for Plex servers (real-time updates)
-    try {
-      startSSEProcessor(); // Subscribe to SSE events
-      await sseManager.start(); // Start SSE connections
-      app.log.info('SSE connections started for Plex servers');
-    } catch (err) {
-      app.log.error({ err }, 'Failed to start SSE connections - falling back to polling');
-    }
-
-    // Log network settings status
-    const networkSettings = await getNetworkSettings();
-    const envTrustProxy = process.env.TRUST_PROXY === 'true';
-    if (networkSettings.trustProxy && !envTrustProxy) {
-      app.log.warn(
-        'Trust proxy is enabled in settings but TRUST_PROXY env var is not set. ' +
-          'Set TRUST_PROXY=true and restart for reverse proxy support.'
-      );
-    }
-    if (networkSettings.externalUrl) {
-      app.log.info(`External URL configured: ${networkSettings.externalUrl}`);
-    }
-    if (networkSettings.basePath) {
-      app.log.info(`Base path configured: ${networkSettings.basePath}`);
+      await initializePostListen(app);
     }
   } catch (err) {
     console.error('Failed to start server:', err);

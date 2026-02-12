@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router';
 import { AuthProvider } from '@/hooks/useAuth';
 import { ServerProvider } from '@/hooks/useServer';
 import { SocketProvider } from '@/hooks/useSocket';
+import { MaintenanceProvider } from '@/hooks/useMaintenanceMode';
 import { ThemeProvider } from '@/components/theme-provider';
 import { App } from './App';
 import './i18n';
@@ -35,13 +36,15 @@ createRoot(root).render(
     <ThemeProvider defaultTheme="dark" storageKey="tracearr-theme">
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
-          <AuthProvider>
-            <ServerProvider>
-              <SocketProvider>
-                <App />
-              </SocketProvider>
-            </ServerProvider>
-          </AuthProvider>
+          <MaintenanceProvider>
+            <AuthProvider>
+              <ServerProvider>
+                <SocketProvider>
+                  <App />
+                </SocketProvider>
+              </ServerProvider>
+            </AuthProvider>
+          </MaintenanceProvider>
         </BrowserRouter>
       </QueryClientProvider>
     </ThemeProvider>

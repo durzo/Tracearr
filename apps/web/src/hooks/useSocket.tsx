@@ -26,6 +26,7 @@ import type {
 } from '@tracearr/shared';
 import { WS_EVENTS } from '@tracearr/shared';
 import { useAuth } from './useAuth';
+import { useMaintenanceMode } from './useMaintenanceMode';
 import { toast } from 'sonner';
 import { tokenStorage } from '@/lib/api';
 import { useChannelRouting } from './queries';
@@ -52,6 +53,7 @@ const SocketContext = createContext<SocketContextValue | null>(null);
 export function SocketProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation(['notifications', 'common']);
   const { isAuthenticated } = useAuth();
+  const { isInMaintenance } = useMaintenanceMode();
   const queryClient = useQueryClient();
   const [socket, setSocket] = useState<TypedSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -95,7 +97,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   }, [isAuthenticated]);
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    // Don't connect WebSocket during maintenance mode — server hasn't initialized it yet
+    if (!isAuthenticated || isInMaintenance) {
       if (socket) {
         socket.disconnect();
         setSocket(null);
@@ -340,7 +343,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     return () => {
       newSocket.disconnect();
     };
-  }, [isAuthenticated, queryClient, isWebToastEnabled]);
+  }, [isAuthenticated, isInMaintenance, queryClient, isWebToastEnabled]);
 
   const subscribeSessions = useCallback(() => {
     if (socket && isConnected) {

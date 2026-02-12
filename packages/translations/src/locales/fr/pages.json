@@ -79,6 +79,12 @@
     "waitingForPlex": "En attente d'autorisation de Plex...",
     "yourPasswordPlaceholder": "Votre mot de passe"
   },
+  "maintenance": {
+    "interruptionDescription": "One or more backend services have become unavailable. This page will automatically refresh when connectivity is restored.",
+    "interruptionTitle": "Service interruption",
+    "startingDescription": "The server is waiting for backend services to become available. This page will automatically refresh when everything is ready.",
+    "startingTitle": "Tracearr is starting up..."
+  },
   "notFound": {
     "description": "La page que vous cherchez n'existe pas ou a été déplacée.",
     "heading": "Page non trouvée",

@@ -8,6 +8,7 @@
 import { Queue, Worker, type Job, type ConnectionOptions } from 'bullmq';
 import { getRedisPrefix } from '@tracearr/shared';
 import type { Redis } from 'ioredis';
+import { isMaintenance } from '../serverState.js';
 import { eq, and, isNull } from 'drizzle-orm';
 import type {
   Rule,
@@ -115,6 +116,9 @@ export function initInactivityCheckQueue(
       },
     },
   });
+  inactivityQueue.on('error', (err) => {
+    if (!isMaintenance()) console.error('[Inactivity] Queue error:', err);
+  });
 
   console.log('[Inactivity] Queue initialized');
 }
@@ -156,7 +160,7 @@ export function startInactivityCheckWorker(): void {
   );
 
   inactivityWorker.on('error', (error) => {
-    console.error('[Inactivity] Worker error:', error);
+    if (!isMaintenance()) console.error('[Inactivity] Worker error:', error);
   });
 
   console.log('[Inactivity] Worker started');
