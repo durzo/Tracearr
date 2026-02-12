@@ -10,8 +10,6 @@ export type ServerMode = 'starting' | 'maintenance' | 'ready';
 type ModeChangeListener = (newMode: ServerMode, prevMode: ServerMode) => void;
 
 let _mode: ServerMode = 'starting';
-let _dbReady = false;
-let _redisReady = false;
 let _servicesInitialized = false;
 const _listeners: ModeChangeListener[] = [];
 
@@ -40,22 +38,6 @@ export function isReady(): boolean {
 
 export function isMaintenance(): boolean {
   return _mode === 'maintenance';
-}
-
-export function setDbReady(v: boolean): void {
-  _dbReady = v;
-}
-
-export function setRedisReady(v: boolean): void {
-  _redisReady = v;
-}
-
-export function getDbReady(): boolean {
-  return _dbReady;
-}
-
-export function getRedisReady(): boolean {
-  return _redisReady;
 }
 
 export function isServicesInitialized(): boolean {
