@@ -36,7 +36,8 @@ vi.mock('../db/client.js', () => ({
   },
 }));
 
-vi.mock('../db/schema.js', () => ({
+vi.mock('../db/schema.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   sessions: { id: 'id' },
   violations: { id: 'id' },
   users: { id: 'id' },
