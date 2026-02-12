@@ -80,6 +80,7 @@ export type {
   PlexAccountsResponse,
 };
 import { API_BASE_PATH, getClientTimezone } from '@tracearr/shared';
+import { MAINTENANCE_EVENT } from '@/hooks/useMaintenanceMode';
 
 // Stats time range parameters
 export interface StatsTimeRange {
@@ -307,7 +308,7 @@ class ApiClient {
     if (response.status === 503) {
       const errorBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
       if (errorBody.maintenance) {
-        window.dispatchEvent(new CustomEvent('tracearr:maintenance-mode'));
+        window.dispatchEvent(new CustomEvent(MAINTENANCE_EVENT));
         throw new Error('Server is in maintenance mode');
       }
       throw new Error(((errorBody.message ?? errorBody.error) as string) ?? 'Service Unavailable');
