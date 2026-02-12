@@ -8,6 +8,7 @@
 import { Queue, Worker, type Job, type ConnectionOptions } from 'bullmq';
 import { getRedisPrefix } from '@tracearr/shared';
 import type { ViolationWithDetails, ActiveSession, NotificationEventType } from '@tracearr/shared';
+import { isMaintenance } from '../serverState.js';
 import { WS_EVENTS } from '@tracearr/shared';
 import { notificationManager } from '../services/notifications/index.js';
 import { pushNotificationService } from '../services/pushNotification.js';
@@ -164,7 +165,7 @@ export function startNotificationWorker(): void {
   });
 
   notificationWorker.on('error', (error) => {
-    console.error('Notification worker error:', error);
+    if (!isMaintenance()) console.error('Notification worker error:', error);
   });
 
   console.log('Notification worker started');

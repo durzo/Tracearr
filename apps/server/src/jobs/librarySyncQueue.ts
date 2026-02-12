@@ -9,6 +9,7 @@
  */
 
 import { Queue, Worker, type Job, type ConnectionOptions } from 'bullmq';
+import { isMaintenance } from '../serverState.js';
 import { getRedisPrefix } from '@tracearr/shared';
 import { Redis } from 'ioredis';
 import { sql } from 'drizzle-orm';
@@ -227,7 +228,7 @@ export function startLibrarySyncWorker(): void {
   });
 
   librarySyncWorker.on('error', (error) => {
-    console.error('[LibrarySync] Worker error:', error);
+    if (!isMaintenance()) console.error('[LibrarySync] Worker error:', error);
   });
 
   // After sync completes, check if snapshot backfill is needed (with cooldown)

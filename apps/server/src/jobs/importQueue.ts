@@ -11,6 +11,7 @@
  */
 
 import { Queue, Worker, type Job, type ConnectionOptions } from 'bullmq';
+import { isMaintenance } from '../serverState.js';
 import { getRedisPrefix } from '@tracearr/shared';
 import type {
   TautulliImportProgress,
@@ -331,7 +332,7 @@ export function startImportWorker(): void {
   });
 
   importWorker.on('error', (error) => {
-    console.error('[Import] Worker error:', error);
+    if (!isMaintenance()) console.error('[Import] Worker error:', error);
   });
 
   console.log('Import worker started');
