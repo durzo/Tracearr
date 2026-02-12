@@ -119,6 +119,7 @@ import {
   isServicesInitialized,
   setServicesInitialized,
   onModeChange,
+  wasEverReady,
 } from './serverState.js';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
@@ -255,6 +256,7 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
     return {
       status: 'maintenance',
       mode,
+      wasReady: wasEverReady(),
       db: dbHealthy,
       redis: redisHealthy,
     };

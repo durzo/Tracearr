@@ -10,6 +10,7 @@ export type ServerMode = 'starting' | 'maintenance' | 'ready';
 type ModeChangeListener = (newMode: ServerMode, prevMode: ServerMode) => void;
 
 let _mode: ServerMode = 'starting';
+let _wasReady = false;
 let _servicesInitialized = false;
 const _listeners: ModeChangeListener[] = [];
 
@@ -20,6 +21,7 @@ export function getServerMode(): ServerMode {
 export function setServerMode(mode: ServerMode): void {
   const prev = _mode;
   _mode = mode;
+  if (mode === 'ready') _wasReady = true;
   if (prev !== mode) {
     for (const listener of _listeners) {
       listener(mode, prev);
@@ -34,6 +36,11 @@ export function onModeChange(listener: ModeChangeListener): void {
 
 export function isMaintenance(): boolean {
   return _mode === 'maintenance';
+}
+
+/** True if the server has ever reached 'ready' mode during this process lifetime. */
+export function wasEverReady(): boolean {
+  return _wasReady;
 }
 
 export function isServicesInitialized(): boolean {

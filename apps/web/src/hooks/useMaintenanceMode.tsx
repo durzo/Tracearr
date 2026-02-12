@@ -10,6 +10,7 @@ import {
 
 interface HealthResponse {
   mode?: string;
+  wasReady?: boolean;
   db?: boolean;
   redis?: boolean;
 }
@@ -47,10 +48,9 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
       const res = await fetch('/health');
       const data = (await res.json()) as HealthResponse;
       const inMaintenance = data.mode === 'maintenance' || data.mode === 'starting';
-      setState((prev) => ({
+      setState(() => ({
         isInMaintenance: inMaintenance,
-        // Only set wasReady when a health check confirms the server reached 'ready' mode
-        wasReady: prev.wasReady || !inMaintenance,
+        wasReady: data.wasReady === true || !inMaintenance,
         db: data.db ?? false,
         redis: data.redis ?? false,
       }));
