@@ -178,7 +178,13 @@ export const libraryStaleRoute: FastifyPluginAsync = async (app) => {
             grandparent_rating_key,
             server_id,
             SUM(file_size) AS total_size,
-            MAX(video_resolution) AS best_resolution
+            MAX(CASE video_resolution
+              WHEN '4k' THEN 4
+              WHEN '1080p' THEN 3
+              WHEN '720p' THEN 2
+              WHEN '480p' THEN 1
+              ELSE 0
+            END) AS best_resolution_tier
           FROM library_items
           WHERE media_type IN ('episode', 'track') AND grandparent_rating_key IS NOT NULL
           GROUP BY grandparent_rating_key, server_id
@@ -212,9 +218,18 @@ export const libraryStaleRoute: FastifyPluginAsync = async (app) => {
               WHEN li.media_type IN ('show', 'artist') THEN COALESCE(cs.total_size, li.file_size)
               ELSE li.file_size
             END AS file_size,
-            -- For shows/artists: use best child resolution
+            -- For shows/artists: use best child resolution (mapped from numeric tier)
             CASE
-              WHEN li.media_type IN ('show', 'artist') THEN COALESCE(cs.best_resolution, li.video_resolution)
+              WHEN li.media_type IN ('show', 'artist') THEN COALESCE(
+                CASE cs.best_resolution_tier
+                  WHEN 4 THEN '4k'
+                  WHEN 3 THEN '1080p'
+                  WHEN 2 THEN '720p'
+                  WHEN 1 THEN '480p'
+                  WHEN 0 THEN 'sd'
+                END,
+                li.video_resolution
+              )
               ELSE li.video_resolution
             END AS video_resolution,
             li.created_at AS added_at,
@@ -245,7 +260,7 @@ export const libraryStaleRoute: FastifyPluginAsync = async (app) => {
             ${mediaTypeFilter}
           GROUP BY li.id, li.server_id, s.name, li.library_id, li.title,
                    li.media_type, li.year, li.file_size, li.video_resolution, li.created_at,
-                   cs.total_size, cs.best_resolution, cws.last_watched, cws.watch_count
+                   cs.total_size, cs.best_resolution_tier, cws.last_watched, cws.watch_count
         ),
         stale_items AS (
           SELECT
