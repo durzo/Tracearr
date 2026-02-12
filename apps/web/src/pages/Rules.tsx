@@ -1083,6 +1083,7 @@ export function Rules() {
                 id: '',
                 name: selectedTemplate.defaultName,
                 description: selectedTemplate.description,
+                severity: selectedTemplate.severity,
                 isActive: true,
                 conditions: selectedTemplate.conditions,
                 actions: selectedTemplate.actions,

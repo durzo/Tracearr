@@ -9,6 +9,7 @@ import type {
   RuleType,
   RuleConditions,
   RuleActions,
+  ViolationSeverity,
   Condition,
   ConditionGroup,
 } from '@tracearr/shared';
@@ -18,6 +19,7 @@ export interface ClassicRuleTemplate {
   label: string;
   description: string;
   defaultName: string;
+  severity: ViolationSeverity;
   conditions: RuleConditions;
   actions: RuleActions;
 }
@@ -43,10 +45,10 @@ function createConditionGroup(
 }
 
 /**
- * Default action for all classic rules: create_violation with warning severity
+ * Default actions for classic rules (empty — violations are auto-created from rule severity)
  */
 const DEFAULT_ACTIONS: RuleActions = {
-  actions: [{ type: 'create_violation', severity: 'warning' }],
+  actions: [],
 };
 
 /**
@@ -64,6 +66,7 @@ export function createImpossibleTravelTemplate(
     label: 'Impossible Travel',
     description: 'Detect physically impossible travel between sessions',
     defaultName: 'Impossible Travel Detection',
+    severity: 'warning',
     conditions: {
       groups: [
         createConditionGroup(
@@ -96,6 +99,7 @@ export function createSimultaneousLocationsTemplate(
     label: 'Simultaneous Locations',
     description: 'Detect concurrent sessions from distant locations',
     defaultName: 'Simultaneous Location Detection',
+    severity: 'warning',
     conditions: {
       groups: [
         createConditionGroup(
@@ -126,6 +130,7 @@ export function createDeviceVelocityTemplate(
     label: 'Device Velocity',
     description: 'Detect excessive unique IPs in a time window',
     defaultName: 'Device Velocity Detection',
+    severity: 'warning',
     conditions: {
       groups: [
         createConditionGroup(
@@ -158,6 +163,7 @@ export function createConcurrentStreamsTemplate(
     label: 'Concurrent Streams',
     description: 'Limit simultaneous streams per user',
     defaultName: 'Concurrent Stream Limit',
+    severity: 'warning',
     conditions: {
       groups: [
         createConditionGroup(
@@ -198,6 +204,7 @@ export function createGeoRestrictionTemplate(
         ? 'Block streaming from specific countries'
         : 'Only allow specific countries',
     defaultName: mode === 'blocklist' ? 'Country Block List' : 'Country Allow List',
+    severity: 'warning',
     conditions: {
       groups: [
         {
@@ -230,6 +237,7 @@ export function createAccountInactivityTemplate(
     label: 'Account Inactivity',
     description: 'Detect inactive accounts',
     defaultName: 'Account Inactivity Detection',
+    severity: 'warning',
     conditions: {
       groups: [
         {

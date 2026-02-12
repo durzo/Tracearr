@@ -32,7 +32,6 @@ import { cn } from '@/lib/utils';
 
 // Icon mapping
 const ACTION_ICONS: Record<ActionType, React.ComponentType<{ className?: string }>> = {
-  create_violation: AlertTriangle,
   log_only: FileText,
   notify: Bell,
   adjust_trust: TrendingUp,

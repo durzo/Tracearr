@@ -27,7 +27,7 @@ import {
   Settings2,
 } from 'lucide-react';
 import { FIELD_DEFINITIONS } from './conditionFields';
-import { ACTION_DEFINITIONS, SEVERITY_OPTIONS } from './actionDefinitions';
+import { ACTION_DEFINITIONS } from './actionDefinitions';
 
 // Condition field → icon mapping
 const CONDITION_FIELD_ICONS: Partial<Record<ConditionField, ReactNode>> = {
@@ -240,12 +240,6 @@ const COMPACT_ACTION_LABELS: Partial<Record<ActionType, string>> = {
  * Format the primary action for summary display.
  */
 function formatAction(action: Action): string {
-  // Special handling for create_violation: show severity
-  if (action.type === 'create_violation') {
-    const severity = SEVERITY_OPTIONS.find((s) => s.value === action.severity);
-    return severity?.label ?? 'Violation';
-  }
-
   // Use compact label if available, otherwise fall back to definition
   const compactLabel = COMPACT_ACTION_LABELS[action.type];
   if (compactLabel) return compactLabel;

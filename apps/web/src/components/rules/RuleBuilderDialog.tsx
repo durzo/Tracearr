@@ -12,6 +12,7 @@ import type {
   RuleConditions,
   RuleActions,
   RulesFilterOptions,
+  ViolationSeverity,
 } from '@tracearr/shared';
 
 // Combined rule type that can represent V1 or V2 rules from the API
@@ -19,6 +20,7 @@ interface RuleInput {
   id: string;
   name: string;
   description?: string | null;
+  severity?: ViolationSeverity;
   isActive: boolean;
   conditions?: RuleConditions | null;
   actions?: RuleActions | null;

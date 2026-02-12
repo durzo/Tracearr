@@ -97,33 +97,6 @@ export const SESSION_TARGET_OPTIONS: ConfigFieldOption[] = [
 
 // The main action definitions registry
 export const ACTION_DEFINITIONS: Record<ActionType, ActionDefinition> = {
-  create_violation: {
-    type: 'create_violation',
-    label: 'Create Violation',
-    description: 'Record a violation against the user',
-    icon: 'AlertTriangle',
-    color: 'warning',
-    configFields: [
-      {
-        name: 'severity',
-        label: 'Severity',
-        type: 'select',
-        required: true,
-        options: SEVERITY_OPTIONS.map((s) => ({ value: s.value, label: s.label })),
-      },
-      {
-        name: 'cooldown_minutes',
-        label: 'Cooldown',
-        type: 'number',
-        min: 0,
-        max: 1440,
-        step: 5,
-        unit: 'minutes',
-        description: 'Minimum time between repeated violations',
-      },
-    ],
-  },
-
   log_only: {
     type: 'log_only',
     label: 'Log Only',
@@ -301,8 +274,6 @@ export function getAllActionTypes(): ActionType[] {
  */
 export function createDefaultAction(type: ActionType): Action {
   switch (type) {
-    case 'create_violation':
-      return { type: 'create_violation', severity: 'warning' };
     case 'log_only':
       return { type: 'log_only' };
     case 'notify':

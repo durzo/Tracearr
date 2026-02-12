@@ -6,6 +6,7 @@ import type {
   RuleConditions,
   RuleActions,
   Action,
+  ViolationSeverity,
   CreateRuleV2Input,
   UpdateRuleV2Input,
   RulesFilterOptions,
@@ -14,12 +15,20 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { ConditionGroup } from './ConditionGroup';
 import { ActionRow } from './ActionRow';
 import {
   getDefaultOperatorForField,
   getDefaultValueForField,
   createDefaultAction,
+  SEVERITY_OPTIONS,
 } from '@/lib/rules';
 
 // Combined rule type that can represent V1 or V2 rules from the API
@@ -28,6 +37,7 @@ interface RuleInput {
   id: string;
   name: string;
   description?: string | null;
+  severity?: ViolationSeverity;
   isActive: boolean;
   // V2 fields
   conditions?: RuleConditions | null;
@@ -58,7 +68,7 @@ function createDefaultConditionGroup(): ConditionGroupType {
 
 // Create default action
 function createDefaultRuleAction(): Action {
-  return createDefaultAction('create_violation');
+  return createDefaultAction('log_only');
 }
 
 // Extract conditions from existing rule (V1 or V2)
@@ -100,6 +110,7 @@ export function RuleBuilder({
 }: RuleBuilderProps) {
   const [name, setName] = useState(initialRule?.name ?? '');
   const [description, setDescription] = useState(initialRule?.description ?? '');
+  const [severity, setSeverity] = useState<ViolationSeverity>(initialRule?.severity ?? 'warning');
   const [isActive, setIsActive] = useState(initialRule?.isActive ?? true);
   const [conditions, setConditions] = useState<RuleConditions>(extractConditions(initialRule));
   const [actions, setActions] = useState<RuleActions>(extractActions(initialRule));
@@ -123,10 +134,6 @@ export function RuleBuilder({
       }
     }
 
-    if (actions.actions.length === 0) {
-      newErrors.push('At least one action is required');
-    }
-
     setErrors(newErrors);
     return newErrors.length === 0;
   };
@@ -138,6 +145,7 @@ export function RuleBuilder({
     const data: CreateRuleV2Input | UpdateRuleV2Input = {
       name: name.trim(),
       description: description.trim() || null,
+      severity,
       isActive,
       conditions,
       actions,
@@ -179,7 +187,6 @@ export function RuleBuilder({
   };
 
   const removeAction = (index: number) => {
-    if (actions.actions.length === 1) return; // Keep at least one action
     const newActions = actions.actions.filter((_, i) => i !== index);
     setActions({ actions: newActions });
   };
@@ -198,8 +205,8 @@ export function RuleBuilder({
         </div>
       )}
 
-      {/* Name, Description, and Active Toggle */}
-      <div className="grid items-end gap-4 sm:grid-cols-[1fr_1fr_auto]">
+      {/* Name, Description, Severity, and Active Toggle */}
+      <div className="grid items-end gap-4 sm:grid-cols-[1fr_1fr_auto_auto]">
         <div className="space-y-2">
           <Label htmlFor="rule-name">Rule Name *</Label>
           <Input
@@ -217,6 +224,21 @@ export function RuleBuilder({
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="rule-severity">Severity</Label>
+          <Select value={severity} onValueChange={(v) => setSeverity(v as ViolationSeverity)}>
+            <SelectTrigger id="rule-severity" className="w-[130px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SEVERITY_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="flex items-center gap-2 pb-2">
           <Switch id="rule-active" checked={isActive} onCheckedChange={setIsActive} />
@@ -271,23 +293,26 @@ export function RuleBuilder({
       {/* Actions Section */}
       <div className="bg-muted/30 space-y-4 rounded-lg border p-4">
         <div className="border-b pb-3">
-          <h3 className="text-base font-semibold">Actions</h3>
+          <h3 className="text-base font-semibold">Additional Actions</h3>
           <p className="text-muted-foreground text-sm">
-            What should happen when conditions are met.
+            Optional side-effects when conditions are met. A violation is always created
+            automatically.
           </p>
         </div>
 
-        <div className="space-y-3">
-          {actions.actions.map((action, index) => (
-            <ActionRow
-              key={index}
-              action={action}
-              onChange={(a) => updateAction(index, a)}
-              onRemove={() => removeAction(index)}
-              showRemove={actions.actions.length > 1}
-            />
-          ))}
-        </div>
+        {actions.actions.length > 0 && (
+          <div className="space-y-3">
+            {actions.actions.map((action, index) => (
+              <ActionRow
+                key={index}
+                action={action}
+                onChange={(a) => updateAction(index, a)}
+                onRemove={() => removeAction(index)}
+                showRemove
+              />
+            ))}
+          </div>
+        )}
 
         <Button type="button" variant="outline" onClick={addAction}>
           <Plus className="mr-2 h-4 w-4" />

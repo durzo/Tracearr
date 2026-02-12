@@ -3,11 +3,18 @@ import { useParams, Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { formatDistanceToNow, format } from 'date-fns';
 import type { ColumnDef } from '@tanstack/react-table';
-import type { ViolationSessionInfo, LocationStats } from '@tracearr/shared';
+import type {
+  ViolationSessionInfo,
+  LocationStats,
+  GroupEvidence,
+  ConditionEvidence,
+} from '@tracearr/shared';
 import {
   getViolationDescription,
   getViolationDetails,
   collectViolationSessions,
+  CONDITION_FIELD_LABELS,
+  OPERATOR_LABELS,
 } from '@tracearr/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
@@ -42,6 +49,9 @@ import {
   Clock,
   AlertCircle,
   Film,
+  CheckCircle2,
+  XCircle,
+  Shield,
 } from 'lucide-react';
 
 const StreamMap = lazy(() =>
@@ -49,6 +59,87 @@ const StreamMap = lazy(() =>
 );
 
 import { ruleIconsLarge as ruleIcons } from '@/components/violations/ruleIcons';
+
+function ConditionEvidenceRow({
+  condition,
+  unitSystem: _unitSystem,
+}: {
+  condition: ConditionEvidence;
+  unitSystem: string;
+}) {
+  const label = CONDITION_FIELD_LABELS[condition.field] ?? condition.field;
+  const op = OPERATOR_LABELS[condition.operator] ?? condition.operator;
+  const actual =
+    condition.actual !== null && condition.actual !== undefined
+      ? String(condition.actual)
+      : 'unknown';
+  const threshold = String(condition.threshold);
+
+  return (
+    <div className="flex items-start gap-3 py-2">
+      <div className="mt-0.5 shrink-0">
+        {condition.matched ? (
+          <CheckCircle2 className="h-4 w-4 text-red-500" />
+        ) : (
+          <XCircle className="text-muted-foreground h-4 w-4" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="text-sm font-medium">{label}</span>
+          <span className="text-muted-foreground text-xs">
+            {op} {threshold}
+          </span>
+        </div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span
+            className={`text-sm ${condition.matched ? 'font-semibold text-red-600' : 'text-muted-foreground'}`}
+          >
+            Actual: {actual}
+          </span>
+          {condition.relatedSessionIds && condition.relatedSessionIds.length > 0 && (
+            <span className="text-muted-foreground text-xs">
+              ({condition.relatedSessionIds.length} related session
+              {condition.relatedSessionIds.length !== 1 ? 's' : ''})
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EvidenceGroupCard({ group, unitSystem }: { group: GroupEvidence; unitSystem: string }) {
+  const matchedCount = group.conditions.filter((c) => c.matched).length;
+  const totalCount = group.conditions.length;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center justify-between text-sm">
+          <span className="flex items-center gap-2">
+            <Shield className="h-4 w-4" />
+            Condition Group {group.groupIndex + 1}
+          </span>
+          <Badge variant={group.matched ? 'destructive' : 'secondary'} className="text-xs">
+            {matchedCount}/{totalCount} matched
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <div className="divide-y">
+          {group.conditions.map((condition, idx) => (
+            <ConditionEvidenceRow
+              key={`${condition.field}-${idx}`}
+              condition={condition}
+              unitSystem={unitSystem}
+            />
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export function ViolationDetail() {
   const { t } = useTranslation(['pages', 'common']);
@@ -373,6 +464,21 @@ export function ViolationDetail() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Condition Evidence (V2 violations) */}
+      {violation.evidence && violation.evidence.length > 0 && (
+        <div className="space-y-4">
+          <h2 className="flex items-center gap-2 text-lg font-semibold">
+            <Shield className="h-5 w-5" />
+            Condition Evidence
+          </h2>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {violation.evidence.map((group) => (
+              <EvidenceGroupCard key={group.groupIndex} group={group} unitSystem={unitSystem} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Sessions Table */}
       {allSessions.length > 0 && !isInactivity && (
