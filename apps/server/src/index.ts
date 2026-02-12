@@ -132,6 +132,8 @@ let pushReceiptInterval: ReturnType<typeof setInterval> | null = null;
 let mobileTokenCleanupInterval: ReturnType<typeof setInterval> | null = null;
 let recoveryInterval: ReturnType<typeof setInterval> | null = null;
 let dbHealthInterval: ReturnType<typeof setInterval> | null = null;
+let redisCloseHandler: (() => void) | null = null;
+let redisReadyHandler: (() => void) | null = null;
 const DB_HEALTH_CHECK_MS = 15_000;
 
 // ============================================================================
@@ -598,13 +600,19 @@ async function initializeServices(app: FastifyInstance) {
   // When Redis disconnects, transition to maintenance mode so the
   // maintenance gate returns 503 instead of letting requests fail with 500.
   // When Redis reconnects, transition back to ready.
-  app.redis.on('close', () => {
+  //
+  // Remove previous listeners first to prevent stacking if initializeServices
+  // runs again after maintenance recovery.
+  if (redisCloseHandler) app.redis.removeListener('close', redisCloseHandler);
+  if (redisReadyHandler) app.redis.removeListener('ready', redisReadyHandler);
+
+  redisCloseHandler = () => {
     if (isServicesInitialized() && !isMaintenance()) {
       app.log.warn('Redis connection lost — entering MAINTENANCE mode');
       setServerMode('maintenance');
     }
-  });
-  app.redis.on('ready', () => {
+  };
+  redisReadyHandler = () => {
     void (async () => {
       if (isServicesInitialized() && isMaintenance()) {
         // Redis is back — verify DB is also reachable before going ready
@@ -619,7 +627,9 @@ async function initializeServices(app: FastifyInstance) {
         }
       }
     })();
-  });
+  };
+  app.redis.on('close', redisCloseHandler);
+  app.redis.on('ready', redisReadyHandler);
 
   // Monitor database connectivity with periodic health checks.
   // Unlike Redis (which emits connection events), pg-pool doesn't notify on
@@ -760,6 +770,10 @@ async function initializePostListen(app: FastifyInstance) {
 // ============================================================================
 
 function startRecoveryLoop(app: FastifyInstance) {
+  if (recoveryInterval) {
+    clearInterval(recoveryInterval);
+    recoveryInterval = null;
+  }
   recoveryInterval = setInterval(() => {
     void (async () => {
       app.log.info('Recovery check: probing database and Redis...');
@@ -833,28 +847,58 @@ async function start() {
       });
     }
 
-    // Pause/resume background jobs when transitioning in/out of maintenance mode.
-    // This prevents Drizzle errors from the poller and SSE processor when DB is unreachable.
+    // Tear down / rebuild services when transitioning in/out of maintenance mode.
+    // This prevents log flooding from Redis clients and BullMQ workers that keep
+    // trying to reconnect after Redis goes down.
     onModeChange((newMode, prevMode) => {
       if (newMode === 'maintenance' && prevMode === 'ready') {
-        app.log.info('Pausing background jobs for maintenance mode');
+        app.log.info('Entering maintenance mode — shutting down services');
         stopPoller();
         stopSSEProcessor();
         void sseManager.stop();
-      } else if (newMode === 'ready' && prevMode === 'maintenance') {
-        app.log.info('Resuming background jobs after maintenance recovery');
-        void (async () => {
-          try {
-            const pollerSettings = await getPollerSettings();
-            if (pollerSettings.enabled) {
-              startPoller({ enabled: true, intervalMs: pollerSettings.intervalMs });
-            }
-            startSSEProcessor();
-            await sseManager.start();
-          } catch (err) {
-            app.log.error({ err }, 'Failed to resume background jobs');
-          }
-        })();
+
+        // Disconnect extra Redis clients to stop reconnection attempts
+        if (pubSubRedis) {
+          pubSubRedis.disconnect();
+          pubSubRedis = null;
+        }
+        if (wsSubscriber) {
+          wsSubscriber.disconnect();
+          wsSubscriber = null;
+        }
+
+        // Shut down BullMQ workers/queues (closes their internal Redis connections)
+        void Promise.all([
+          shutdownNotificationQueue(),
+          shutdownImportQueue(),
+          shutdownMaintenanceQueue(),
+          shutdownLibrarySyncQueue(),
+          shutdownVersionCheckQueue(),
+          shutdownInactivityCheckQueue(),
+        ]).catch((err) => {
+          app.log.error({ err }, 'Error shutting down queues during maintenance');
+        });
+
+        // Stop the DB health interval — initializeServices will recreate it on recovery.
+        if (dbHealthInterval) {
+          clearInterval(dbHealthInterval);
+          dbHealthInterval = null;
+        }
+
+        // Clear timers that won't fire correctly without Redis/DB
+        if (pushReceiptInterval) {
+          clearInterval(pushReceiptInterval);
+          pushReceiptInterval = null;
+        }
+        if (mobileTokenCleanupInterval) {
+          clearInterval(mobileTokenCleanupInterval);
+          mobileTokenCleanupInterval = null;
+        }
+
+        // Reset so recovery loop can re-run initializeServices + initializePostListen
+        setServicesInitialized(false);
+
+        startRecoveryLoop(app);
       }
     });
 
