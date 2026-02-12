@@ -126,6 +126,10 @@ const PORT = parseInt(process.env.PORT ?? '3000', 10);
 const HOST = process.env.HOST ?? '0.0.0.0';
 const RECOVERY_INTERVAL_MS = 10_000;
 
+/** No-op callback for suppressing ioredis error events on disposable probe clients. */
+// eslint-disable-next-line @typescript-eslint/no-empty-function
+function noop() {}
+
 // Module-level references for cleanup
 let wsSubscriber: Redis | null = null;
 let pubSubRedis: Redis | null = null;
@@ -342,7 +346,7 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
       lazyConnect: true,
       retryStrategy: () => null, // Don't retry for the probe
     });
-    testRedis.on('error', () => {}); // Suppress — failure is handled via catch
+    testRedis.on('error', noop); // Suppress — failure is handled via catch
     try {
       await testRedis.connect();
       const pong = await testRedis.ping();
@@ -790,7 +794,7 @@ function startRecoveryLoop(app: FastifyInstance) {
           lazyConnect: true,
           retryStrategy: () => null,
         });
-        testRedis.on('error', () => {}); // Suppress — failure is handled via catch
+        testRedis.on('error', noop); // Suppress — failure is handled via catch
         try {
           await testRedis.connect();
           const pong = await testRedis.ping();
