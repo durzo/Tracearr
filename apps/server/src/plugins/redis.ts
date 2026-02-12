@@ -62,6 +62,7 @@ const redisPlugin: FastifyPluginAsync = async (app) => {
  * Call this after verifying Redis is reachable.
  */
 export async function connectRedis(app: FastifyInstance): Promise<void> {
+  if (app.redis.status === 'ready') return;
   await app.redis.connect();
 }
 
