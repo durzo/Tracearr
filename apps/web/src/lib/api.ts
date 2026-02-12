@@ -305,17 +305,19 @@ class ApiClient {
 
     // Detect maintenance mode (503 with maintenance flag)
     if (response.status === 503) {
-      const errorBody = await response.json().catch(() => ({}));
+      const errorBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
       if (errorBody.maintenance) {
         window.dispatchEvent(new CustomEvent('tracearr:maintenance-mode'));
         throw new Error('Server is in maintenance mode');
       }
-      throw new Error(errorBody.message ?? errorBody.error ?? 'Service Unavailable');
+      throw new Error(((errorBody.message ?? errorBody.error) as string) ?? 'Service Unavailable');
     }
 
     if (!response.ok) {
-      const errorBody = await response.json().catch(() => ({}));
-      throw new Error(errorBody.message ?? errorBody.error ?? `Request failed: ${response.status}`);
+      const errorBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      throw new Error(
+        ((errorBody.message ?? errorBody.error) as string) ?? `Request failed: ${response.status}`
+      );
     }
 
     // Handle empty responses (204 No Content) or responses without JSON
