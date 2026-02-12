@@ -211,31 +211,10 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
       dbHealthy = false;
     }
 
-    // Check Redis — when the lazy client is connected, use it directly;
-    // otherwise probe with a temporary connection (maintenance mode)
-    try {
-      if (app.redis.status === 'ready') {
-        const pong = await app.redis.ping();
-        redisHealthy = pong === 'PONG';
-      } else {
-        // Lazy client not connected yet — probe independently
-        const probe = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
-          connectTimeout: 3000,
-          maxRetriesPerRequest: 1,
-          lazyConnect: true,
-          retryStrategy: () => null,
-        });
-        try {
-          await probe.connect();
-          const pong = await probe.ping();
-          redisHealthy = pong === 'PONG';
-        } finally {
-          probe.disconnect();
-        }
-      }
-    } catch {
-      redisHealthy = false;
-    }
+    // Check Redis — trust ioredis connection state instead of probing.
+    // The client's status is updated internally via TCP events, so 'ready'
+    // means the connection is live. No ping round-trip needed.
+    redisHealthy = app.redis.status === 'ready';
 
     const mode = getServerMode();
 
