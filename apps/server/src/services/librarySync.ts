@@ -482,32 +482,43 @@ export class LibrarySyncService {
       await tx
         .insert(libraryItems)
         .values(
-          items.map((item) => ({
-            serverId,
-            libraryId,
-            ratingKey: item.ratingKey,
-            title: item.title,
-            mediaType: item.mediaType,
-            year: item.year ?? null,
-            imdbId: item.imdbId ?? null,
-            tmdbId: item.tmdbId ?? null,
-            tvdbId: item.tvdbId ?? null,
-            videoResolution: item.videoResolution ?? null,
-            videoCodec: item.videoCodec ?? null,
-            audioCodec: item.audioCodec ?? null,
-            audioChannels: item.audioChannels ?? null,
-            fileSize: item.fileSize ?? null,
-            filePath: item.filePath ?? null,
-            // Hierarchy fields (for episodes and tracks)
-            grandparentTitle: item.grandparentTitle ?? null,
-            grandparentRatingKey: item.grandparentRatingKey ?? null,
-            parentTitle: item.parentTitle ?? null,
-            parentRatingKey: item.parentRatingKey ?? null,
-            parentIndex: item.parentIndex ?? null,
-            itemIndex: item.itemIndex ?? null,
-            // Use Plex's addedAt timestamp (when item was added to library)
-            createdAt: item.addedAt,
-          }))
+          items.map((item) => {
+            // Defensive: ensure addedAt is a valid Date before passing to Drizzle.
+            // An Invalid Date object (from malformed API data) would crash toISOString()
+            let createdAt = item.addedAt;
+            if (!(createdAt instanceof Date) || isNaN(createdAt.getTime())) {
+              console.warn(
+                `[LibrarySync] Invalid addedAt for item "${item.title}" (${item.ratingKey}), using current time`
+              );
+              createdAt = new Date();
+            }
+
+            return {
+              serverId,
+              libraryId,
+              ratingKey: item.ratingKey,
+              title: item.title,
+              mediaType: item.mediaType,
+              year: item.year ?? null,
+              imdbId: item.imdbId ?? null,
+              tmdbId: item.tmdbId ?? null,
+              tvdbId: item.tvdbId ?? null,
+              videoResolution: item.videoResolution ?? null,
+              videoCodec: item.videoCodec ?? null,
+              audioCodec: item.audioCodec ?? null,
+              audioChannels: item.audioChannels ?? null,
+              fileSize: item.fileSize ?? null,
+              filePath: item.filePath ?? null,
+              // Hierarchy fields (for episodes and tracks)
+              grandparentTitle: item.grandparentTitle ?? null,
+              grandparentRatingKey: item.grandparentRatingKey ?? null,
+              parentTitle: item.parentTitle ?? null,
+              parentRatingKey: item.parentRatingKey ?? null,
+              parentIndex: item.parentIndex ?? null,
+              itemIndex: item.itemIndex ?? null,
+              createdAt,
+            };
+          })
         )
         .onConflictDoUpdate({
           target: [libraryItems.serverId, libraryItems.ratingKey],

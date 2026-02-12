@@ -1409,17 +1409,15 @@ function parseLibraryItem(item: Record<string, unknown>): MediaLibraryItem {
   let addedAt: Date;
   if (addedAtTimestamp) {
     const parsedDate = new Date(addedAtTimestamp * 1000);
-    if (parsedDate.getFullYear() >= MIN_VALID_YEAR) {
+    if (!isNaN(parsedDate.getTime()) && parsedDate.getFullYear() >= MIN_VALID_YEAR) {
       addedAt = parsedDate;
-    } else if (year && year >= MIN_VALID_YEAR) {
-      addedAt = new Date(Date.UTC(year, 0, 1));
     } else {
-      addedAt = new Date();
+      const yearDate = year && year >= MIN_VALID_YEAR ? new Date(Date.UTC(year, 0, 1)) : undefined;
+      addedAt = yearDate && !isNaN(yearDate.getTime()) ? yearDate : new Date();
     }
-  } else if (year && year >= MIN_VALID_YEAR) {
-    addedAt = new Date(Date.UTC(year, 0, 1));
   } else {
-    addedAt = new Date();
+    const yearDate = year && year >= MIN_VALID_YEAR ? new Date(Date.UTC(year, 0, 1)) : undefined;
+    addedAt = yearDate && !isNaN(yearDate.getTime()) ? yearDate : new Date();
   }
 
   const result: MediaLibraryItem = {

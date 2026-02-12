@@ -686,7 +686,11 @@ export function parseLibraryItem(item: Record<string, unknown>): MediaLibraryIte
   // Fallback chain for addedAt: DateCreated -> Jan 1 of ProductionYear -> now
   // Only use year fallback if it's >= MIN_VALID_YEAR (2015)
   const dateCreated = parseLibraryDate(item.DateCreated);
-  const yearFallback = year && year >= MIN_VALID_YEAR ? new Date(Date.UTC(year, 0, 1)) : undefined;
+  let yearFallback: Date | undefined;
+  if (year && year >= MIN_VALID_YEAR) {
+    const d = new Date(Date.UTC(year, 0, 1));
+    if (!isNaN(d.getTime())) yearFallback = d;
+  }
   const addedAt = dateCreated ?? yearFallback ?? new Date();
 
   const result: MediaLibraryItem = {
