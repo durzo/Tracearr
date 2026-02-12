@@ -3,8 +3,8 @@
  * Features infinite scroll, URL state sync, column visibility, and aggregate statistics.
  */
 
-import { useEffect, useMemo, useCallback, useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { useEffect, useMemo, useCallback, useState, useRef } from 'react';
+import { useSearchParams, useParams, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useInView } from 'react-intersection-observer';
 import { Card, CardContent } from '@/components/ui/card';
@@ -24,6 +24,7 @@ import {
   useHistoryAggregates,
   useFilterOptions,
   useBulkDeleteSessions,
+  useSession,
   type HistoryFilters,
 } from '@/hooks/queries';
 import { useServer } from '@/hooks/useServer';
@@ -176,9 +177,22 @@ function filtersToUrlParams(filters: HistoryFilters): URLSearchParams {
 
 export function History() {
   const { t } = useTranslation(['pages', 'common']);
+  const { sessionId } = useParams<{ sessionId: string }>();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { selectedServerId } = useServer();
   const [selectedSession, setSelectedSession] = useState<SessionWithDetails | null>(null);
+
+  // Deep-link: fetch session by ID from route param and auto-open sheet
+  const { data: linkedSession } = useSession(sessionId ?? '');
+  const hasOpenedLinkedSession = useRef(false);
+
+  useEffect(() => {
+    if (linkedSession && !hasOpenedLinkedSession.current) {
+      hasOpenedLinkedSession.current = true;
+      setSelectedSession(linkedSession);
+    }
+  }, [linkedSession]);
   const [columnVisibility, setColumnVisibility] = useState<ColumnVisibility>(loadColumnVisibility);
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
 
@@ -375,7 +389,12 @@ export function History() {
       <SessionDetailSheet
         session={selectedSession}
         open={!!selectedSession}
-        onOpenChange={(open) => !open && setSelectedSession(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedSession(null);
+            if (sessionId) void navigate('/history', { replace: true });
+          }
+        }}
       />
 
       {/* Bulk Actions Toolbar */}

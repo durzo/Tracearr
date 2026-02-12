@@ -719,7 +719,7 @@ class ApiClient {
       );
       return response.data;
     },
-    get: (id: string) => this.request<Session>(`/sessions/${id}`),
+    get: (id: string) => this.request<SessionWithDetails>(`/sessions/${id}`),
     terminate: (id: string, reason?: string) =>
       this.request<{ success: boolean; terminationLogId: string; message: string }>(
         `/sessions/${id}/terminate`,

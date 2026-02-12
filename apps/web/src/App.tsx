@@ -69,7 +69,7 @@ export function App() {
           <Route path="library/watch" element={<LibraryWatch />} />
 
           {/* Other routes */}
-          <Route path="history" element={<History />} />
+          <Route path="history/:sessionId?" element={<History />} />
           <Route path="users" element={<Users />} />
           <Route path="users/:id" element={<UserDetail />} />
           <Route path="rules" element={<Rules />} />
