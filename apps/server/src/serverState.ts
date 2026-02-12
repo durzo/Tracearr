@@ -32,10 +32,6 @@ export function onModeChange(listener: ModeChangeListener): void {
   _listeners.push(listener);
 }
 
-export function isReady(): boolean {
-  return _mode === 'ready';
-}
-
 export function isMaintenance(): boolean {
   return _mode === 'maintenance';
 }
