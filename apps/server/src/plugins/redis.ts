@@ -9,6 +9,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 import { Redis } from 'ioredis';
 import { setRedisPrefix } from '@tracearr/shared';
+import { isMaintenance } from '../serverState.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -45,7 +46,11 @@ const redisPlugin: FastifyPluginAsync = async (app) => {
   });
 
   redis.on('error', (err: Error) => {
-    app.log.error({ err }, 'Redis error');
+    // Suppress reconnection errors during maintenance — the recovery loop
+    // handles probing and will log when services are back.
+    if (!isMaintenance()) {
+      app.log.error({ err }, 'Redis error');
+    }
   });
 
   app.decorate('redis', redis);
