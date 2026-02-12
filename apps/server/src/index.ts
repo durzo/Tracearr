@@ -356,13 +356,15 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
     const testRedis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
       connectTimeout: 5000,
       maxRetriesPerRequest: 1,
+      lazyConnect: true,
       retryStrategy: () => null, // Don't retry for the probe
     });
     try {
+      await testRedis.connect();
       const pong = await testRedis.ping();
       redisOk = pong === 'PONG';
     } finally {
-      await testRedis.quit();
+      testRedis.disconnect();
     }
   } catch {
     redisOk = false;
@@ -789,13 +791,15 @@ function startRecoveryLoop(app: FastifyInstance) {
         const testRedis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
           connectTimeout: 5000,
           maxRetriesPerRequest: 1,
+          lazyConnect: true,
           retryStrategy: () => null,
         });
         try {
+          await testRedis.connect();
           const pong = await testRedis.ping();
           redisOk = pong === 'PONG';
         } finally {
-          await testRedis.quit();
+          testRedis.disconnect();
         }
       } catch {
         redisOk = false;
