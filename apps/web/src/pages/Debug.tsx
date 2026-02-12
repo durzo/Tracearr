@@ -37,7 +37,8 @@ import {
 } from '@/components/ui/dialog';
 import { useVersion } from '@/hooks/queries';
 import { tokenStorage, api } from '@/lib/api';
-import { API_BASE_PATH } from '@tracearr/shared';
+import { debugFetch } from '@/lib/debugFetch';
+import { TasksTab } from '@/components/debug/TasksTab';
 import { toast } from 'sonner';
 import { format, formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -120,28 +121,6 @@ const formatBytes = (bytes: string | number) => {
 const NON_SUPERVISED_MESSAGE =
   "You're running Tracearr in non-supervised mode. Log explorer is not available. " +
   'Logs can be viewed by inspecting each container directly (for example, docker logs <container_name>).';
-
-// Simple fetch helper for debug endpoints
-async function debugFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = tokenStorage.getAccessToken();
-  const headers: Record<string, string> = {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-  // Only set Content-Type for requests with a body
-  if (options.body) {
-    headers['Content-Type'] = 'application/json';
-  }
-  // Merge additional headers if provided as a plain object
-  if (options.headers && typeof options.headers === 'object' && !Array.isArray(options.headers)) {
-    Object.assign(headers, options.headers);
-  }
-  const res = await fetch(`${API_BASE_PATH}/debug${path}`, {
-    ...options,
-    headers,
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<T>;
-}
 
 export function Debug() {
   const queryClient = useQueryClient();
@@ -409,6 +388,7 @@ export function Debug() {
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="snapshots">Library Snapshots</TabsTrigger>
+          <TabsTrigger value="tasks">Tasks</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
         </TabsList>
 
@@ -902,6 +882,10 @@ export function Debug() {
               </p>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="tasks" className="space-y-6">
+          <TasksTab />
         </TabsContent>
 
         <TabsContent value="logs" className="space-y-6">

@@ -18,6 +18,7 @@ import { servers, sessions, serverUsers, users } from '../db/schema.js';
 import { createMediaServerClient } from '../services/mediaServer/index.js';
 import { sseManager } from '../services/sseManager.js';
 import type { CacheService, PubSubService } from '../services/cache.js';
+import { registerService, unregisterService } from '../services/serviceTracker.js';
 import { lookupGeoIP } from '../services/plexGeoip.js';
 import { getGeoIPSettings } from '../routes/settings.js';
 import { mapMediaSession } from './poller/sessionMapper.js';
@@ -105,6 +106,11 @@ export function startSSEProcessor(): void {
 
   console.log('[SSEProcessor] Starting');
   isRunning = true;
+  registerService('sse-processor', {
+    name: 'SSE Processor',
+    description: 'Processes real-time Plex SSE events',
+    intervalMs: 0, // event-driven, not interval-based
+  });
 
   // Subscribe to SSE events
   sseManager.on('plex:session:playing', wrappedHandlers.playing);
@@ -130,6 +136,7 @@ export function stopSSEProcessor(): void {
 
   console.log('[SSEProcessor] Stopping');
   isRunning = false;
+  unregisterService('sse-processor');
 
   sseManager.off('plex:session:playing', wrappedHandlers.playing);
   sseManager.off('plex:session:paused', wrappedHandlers.paused);

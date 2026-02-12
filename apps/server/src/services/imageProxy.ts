@@ -21,6 +21,7 @@ import { eq } from 'drizzle-orm';
 import { TIME_MS } from '@tracearr/shared';
 import { db } from '../db/client.js';
 import { servers } from '../db/schema.js';
+import { registerService, unregisterService } from './serviceTracker.js';
 // Token encryption removed - tokens now stored in plain text (DB is localhost-only)
 
 // Cache directory (in project root/data/image-cache)
@@ -159,6 +160,11 @@ async function cleanupCache(): Promise<void> {
 let cleanupInterval: NodeJS.Timeout | null = setInterval(() => {
   void cleanupCache();
 }, TIME_MS.HOUR);
+registerService('image-cache-cleanup', {
+  name: 'Image Cache Cleanup',
+  description: 'Cleans up expired cached images',
+  intervalMs: TIME_MS.HOUR,
+});
 
 // Also run on startup
 void cleanupCache();
@@ -167,6 +173,7 @@ export function stopImageCacheCleanup(): void {
   if (cleanupInterval) {
     clearInterval(cleanupInterval);
     cleanupInterval = null;
+    unregisterService('image-cache-cleanup');
   }
 }
 

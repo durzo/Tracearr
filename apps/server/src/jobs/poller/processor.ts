@@ -16,6 +16,7 @@ import {
   type RuleV2,
   type Session,
 } from '@tracearr/shared';
+import { registerService, unregisterService } from '../../services/serviceTracker.js';
 import { db } from '../../db/client.js';
 import { servers, serverUsers, sessions, users } from '../../db/schema.js';
 import { createMediaServerClient } from '../../services/mediaServer/index.js';
@@ -1047,6 +1048,11 @@ export function startPoller(config: Partial<PollerConfig> = {}): void {
 
   // Then run on interval
   pollingInterval = setInterval(() => void pollServers(), mergedConfig.intervalMs);
+  registerService('poller', {
+    name: 'Session Poller',
+    description: 'Polls media servers for active sessions',
+    intervalMs: mergedConfig.intervalMs,
+  });
 
   // Start stale session sweep (runs every 60 seconds to detect abandoned sessions)
   if (!staleSweepInterval) {
@@ -1057,6 +1063,11 @@ export function startPoller(config: Partial<PollerConfig> = {}): void {
       () => void sweepStaleSessions(),
       SESSION_LIMITS.STALE_SWEEP_INTERVAL_MS
     );
+    registerService('stale-sweep', {
+      name: 'Stale Session Sweep',
+      description: 'Detects and stops abandoned sessions',
+      intervalMs: SESSION_LIMITS.STALE_SWEEP_INTERVAL_MS,
+    });
   }
 }
 
@@ -1067,11 +1078,13 @@ export function stopPoller(): void {
   if (pollingInterval) {
     clearInterval(pollingInterval);
     pollingInterval = null;
+    unregisterService('poller');
     console.log('Session poller stopped');
   }
   if (staleSweepInterval) {
     clearInterval(staleSweepInterval);
     staleSweepInterval = null;
+    unregisterService('stale-sweep');
     console.log('Stale session sweep stopped');
   }
 }

@@ -112,6 +112,7 @@ import { initTimescaleDB, getTimescaleStatus } from './db/timescale.js';
 import { sql, eq } from 'drizzle-orm';
 import { servers } from './db/schema.js';
 import { initializeClaimCode } from './utils/claimCode.js';
+import { registerService, unregisterService } from './services/serviceTracker.js';
 import {
   getServerMode,
   setServerMode,
@@ -513,6 +514,11 @@ async function initializeServices(app: FastifyInstance) {
       },
       15 * 60 * 1000
     );
+    registerService('push-receipts', {
+      name: 'Push Receipt Processing',
+      description: 'Processes push notification delivery receipts',
+      intervalMs: 15 * 60 * 1000,
+    });
     // Cleanup expired/invalid mobile tokens every hour
     mobileTokenCleanupInterval = setInterval(
       () => {
@@ -522,6 +528,11 @@ async function initializeServices(app: FastifyInstance) {
       },
       60 * 60 * 1000 // 1 hour
     );
+    registerService('mobile-token-cleanup', {
+      name: 'Mobile Token Cleanup',
+      description: 'Cleans up expired mobile push tokens',
+      intervalMs: 60 * 60 * 1000,
+    });
     app.log.info('Notification queue initialized');
   } catch (err) {
     app.log.error({ err }, 'Failed to initialize notification queue');
@@ -656,6 +667,11 @@ async function initializeServices(app: FastifyInstance) {
       }
     })();
   }, DB_HEALTH_CHECK_MS);
+  registerService('db-health-check', {
+    name: 'DB Health Check',
+    description: 'Monitors database connectivity',
+    intervalMs: DB_HEALTH_CHECK_MS,
+  });
 
   setServicesInitialized(true);
   setServerMode('ready');
@@ -891,16 +907,19 @@ async function start() {
         if (dbHealthInterval) {
           clearInterval(dbHealthInterval);
           dbHealthInterval = null;
+          unregisterService('db-health-check');
         }
 
         // Clear timers that won't fire correctly without Redis/DB
         if (pushReceiptInterval) {
           clearInterval(pushReceiptInterval);
           pushReceiptInterval = null;
+          unregisterService('push-receipts');
         }
         if (mobileTokenCleanupInterval) {
           clearInterval(mobileTokenCleanupInterval);
           mobileTokenCleanupInterval = null;
+          unregisterService('mobile-token-cleanup');
         }
 
         // Reset so recovery loop can re-run initializeServices + initializePostListen

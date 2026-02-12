@@ -556,3 +556,34 @@ export async function shutdownVersionCheckQueue(): Promise<void> {
 
   console.log('Version check queue shutdown complete');
 }
+
+/**
+ * Get queue statistics for the version check queue
+ */
+export async function getVersionCheckQueueStats(): Promise<{
+  waiting: number;
+  active: number;
+  completed: number;
+  failed: number;
+  delayed: number;
+  schedule: string | null;
+} | null> {
+  if (!versionQueue) return null;
+
+  const [waiting, active, completed, failed, delayed] = await Promise.all([
+    versionQueue.getWaitingCount(),
+    versionQueue.getActiveCount(),
+    versionQueue.getCompletedCount(),
+    versionQueue.getFailedCount(),
+    versionQueue.getDelayedCount(),
+  ]);
+
+  return {
+    waiting,
+    active,
+    completed,
+    failed,
+    delayed,
+    schedule: `every ${CACHE_TTL.VERSION_CHECK * 1000}ms`,
+  };
+}

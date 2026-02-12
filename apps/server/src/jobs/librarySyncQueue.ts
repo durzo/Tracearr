@@ -535,3 +535,27 @@ export async function shutdownLibrarySyncQueue(): Promise<void> {
 
   console.log('Library sync queue shutdown complete');
 }
+
+/**
+ * Get queue statistics for the library sync queue
+ */
+export async function getLibrarySyncQueueStats(): Promise<{
+  waiting: number;
+  active: number;
+  completed: number;
+  failed: number;
+  delayed: number;
+  schedule: string | null;
+} | null> {
+  if (!librarySyncQueue) return null;
+
+  const [waiting, active, completed, failed, delayed] = await Promise.all([
+    librarySyncQueue.getWaitingCount(),
+    librarySyncQueue.getActiveCount(),
+    librarySyncQueue.getCompletedCount(),
+    librarySyncQueue.getFailedCount(),
+    librarySyncQueue.getDelayedCount(),
+  ]);
+
+  return { waiting, active, completed, failed, delayed, schedule: '10 */12 * * *' };
+}

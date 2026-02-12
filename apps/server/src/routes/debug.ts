@@ -11,10 +11,18 @@ import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { getActiveAggregateNames } from '../db/timescale.js';
-import { clearStuckMaintenanceJobs, obliterateMaintenanceQueue } from '../jobs/maintenanceQueue.js';
-import { obliterateImportQueue } from '../jobs/importQueue.js';
-import { obliterateLibrarySyncQueue } from '../jobs/librarySyncQueue.js';
+import {
+  clearStuckMaintenanceJobs,
+  obliterateMaintenanceQueue,
+  getMaintenanceQueueStats,
+} from '../jobs/maintenanceQueue.js';
+import { obliterateImportQueue, getImportQueueStats } from '../jobs/importQueue.js';
+import { obliterateLibrarySyncQueue, getLibrarySyncQueueStats } from '../jobs/librarySyncQueue.js';
 import { forceReleaseHeavyOpsLock } from '../jobs/heavyOpsLock.js';
+import { getQueueStats as getNotificationQueueStats } from '../jobs/notificationQueue.js';
+import { getVersionCheckQueueStats } from '../jobs/versionCheckQueue.js';
+import { getInactivityCheckQueueStats } from '../jobs/inactivityCheckQueue.js';
+import { getAllServices } from '../services/serviceTracker.js';
 import {
   sessions,
   violations,
@@ -525,6 +533,34 @@ export const debugRoutes: FastifyPluginAsync = async (app) => {
         APP_COMMIT: process.env.APP_COMMIT ?? '[not set]',
         APP_BUILD_DATE: process.env.APP_BUILD_DATE ?? '[not set]',
       },
+    };
+  });
+
+  /**
+   * GET /debug/tasks - Background task and queue status
+   */
+  app.get('/tasks', async () => {
+    const [notifications, imports, maintenance, librarySync, versionCheck, inactivityCheck] =
+      await Promise.all([
+        getNotificationQueueStats(),
+        getImportQueueStats(),
+        getMaintenanceQueueStats(),
+        getLibrarySyncQueueStats(),
+        getVersionCheckQueueStats(),
+        getInactivityCheckQueueStats(),
+      ]);
+
+    return {
+      queues: {
+        notifications,
+        imports,
+        maintenance,
+        librarySync,
+        versionCheck,
+        inactivityCheck,
+      },
+      services: getAllServices(),
+      timestamp: new Date().toISOString(),
     };
   });
 };

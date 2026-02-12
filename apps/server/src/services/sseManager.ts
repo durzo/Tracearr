@@ -18,6 +18,7 @@ import {
   type SSEConnectionStatus,
   type PlexPlaySessionNotification,
 } from '@tracearr/shared';
+import { registerService, unregisterService } from './serviceTracker.js';
 import { db } from '../db/client.js';
 import { servers } from '../db/schema.js';
 import { PlexEventSource } from './mediaServer/plex/eventSource.js';
@@ -103,6 +104,11 @@ export class SSEManager extends EventEmitter {
 
     // Start reconciliation timer
     this.startReconciliation();
+    registerService('sse-manager', {
+      name: 'SSE Manager',
+      description: 'Manages real-time Plex SSE connections',
+      intervalMs: POLLING_INTERVALS.SSE_RECONCILIATION,
+    });
   }
 
   /**
@@ -116,6 +122,7 @@ export class SSEManager extends EventEmitter {
       clearInterval(this.reconciliationTimer);
       this.reconciliationTimer = null;
     }
+    unregisterService('sse-manager');
 
     // Disconnect all SSE connections
     for (const connection of this.connections.values()) {

@@ -461,3 +461,27 @@ export async function shutdownInactivityCheckQueue(): Promise<void> {
 export function getInactivityQueue(): Queue<InactivityCheckJobData> | null {
   return inactivityQueue;
 }
+
+/**
+ * Get queue statistics for the inactivity check queue
+ */
+export async function getInactivityCheckQueueStats(): Promise<{
+  waiting: number;
+  active: number;
+  completed: number;
+  failed: number;
+  delayed: number;
+  schedule: string | null;
+} | null> {
+  if (!inactivityQueue) return null;
+
+  const [waiting, active, completed, failed, delayed] = await Promise.all([
+    inactivityQueue.getWaitingCount(),
+    inactivityQueue.getActiveCount(),
+    inactivityQueue.getCompletedCount(),
+    inactivityQueue.getFailedCount(),
+    inactivityQueue.getDelayedCount(),
+  ]);
+
+  return { waiting, active, completed, failed, delayed, schedule: `every ${CHECK_INTERVAL_MS}ms` };
+}
