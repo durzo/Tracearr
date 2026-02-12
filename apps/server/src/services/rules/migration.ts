@@ -15,6 +15,7 @@ import type {
   RuleType,
   RuleConditions,
   RuleActions,
+  ViolationSeverity,
   Condition,
   ImpossibleTravelParams,
   SimultaneousLocationsParams,
@@ -37,6 +38,7 @@ export interface LegacyRule {
 
 export interface MigratedRule {
   id: string;
+  severity: ViolationSeverity;
   conditions: RuleConditions;
   actions: RuleActions;
 }
@@ -282,16 +284,11 @@ function convertAccountInactivity(params: AccountInactivityParams): RuleConditio
 
 /**
  * Create default actions for migrated rules.
- * All legacy rules created violations, so we preserve that behavior.
+ * Violations are auto-created from rule severity, so no violation action needed.
  */
 function createDefaultActions(): RuleActions {
   return {
-    actions: [
-      {
-        type: 'create_violation',
-        severity: 'warning',
-      },
-    ],
+    actions: [],
   };
 }
 
@@ -330,6 +327,7 @@ export function convertLegacyRule(rule: LegacyRule): MigratedRule | null {
 
     return {
       id: rule.id,
+      severity: 'warning' as ViolationSeverity,
       conditions,
       actions: createDefaultActions(),
     };

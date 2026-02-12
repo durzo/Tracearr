@@ -1,8 +1,6 @@
 import type {
   Action,
   ActionType,
-  ViolationSeverity,
-  CreateViolationAction,
   LogOnlyAction,
   NotifyAction,
   AdjustTrustAction,
@@ -29,15 +27,6 @@ export interface ActionResult {
  * These are injected to allow for testing and avoid circular dependencies.
  */
 export interface ActionExecutorDeps {
-  createViolation: (params: {
-    ruleId: string;
-    ruleName: string;
-    sessionId: string;
-    serverUserId: string;
-    serverId: string;
-    severity: ViolationSeverity;
-    details: Record<string, unknown>;
-  }) => Promise<void>;
   logAudit: (params: {
     sessionId: string;
     serverUserId: string;
@@ -77,9 +66,6 @@ export interface ActionExecutorDeps {
 
 // Default no-op dependencies for testing
 const noopDeps: ActionExecutorDeps = {
-  createViolation: async () => {
-    /* no-op */
-  },
   logAudit: async () => {
     /* no-op */
   },
@@ -175,32 +161,6 @@ function requiresConfirmation(action: Action): boolean {
 // ============================================================================
 // Action Executors
 // ============================================================================
-
-/**
- * Create a violation record.
- */
-const executeCreateViolation: ActionExecutor = async (
-  context: EvaluationContext,
-  action: Action
-): Promise<void> => {
-  const { session, serverUser, server, rule } = context;
-  const typedAction = action as CreateViolationAction;
-  const severity = typedAction.severity;
-
-  await currentDeps.createViolation({
-    ruleId: rule.id,
-    ruleName: rule.name,
-    sessionId: session.id,
-    serverUserId: serverUser.id,
-    serverId: server.id,
-    severity,
-    details: {
-      sessionKey: session.sessionKey,
-      mediaTitle: session.mediaTitle,
-      ipAddress: session.ipAddress,
-    },
-  });
-};
 
 /**
  * Log to audit log without creating a violation.
@@ -371,7 +331,6 @@ const executeMessageClient: ActionExecutor = async (
 // ============================================================================
 
 export const executorRegistry: Record<ActionType, ActionExecutor> = {
-  create_violation: executeCreateViolation,
   log_only: executeLogOnly,
   notify: executeNotify,
   adjust_trust: executeAdjustTrust,

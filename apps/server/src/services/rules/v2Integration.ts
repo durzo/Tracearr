@@ -62,15 +62,6 @@ export async function storeActionResults(
 export function createActionExecutorDeps(redis: Redis): ActionExecutorDeps {
   return {
     /**
-     * Create violation - No-op here.
-     * Violation creation is handled directly in sessionLifecycle transaction
-     * to ensure atomicity with session creation and trust score updates.
-     */
-    createViolation: async () => {
-      // Handled in transaction by sessionLifecycle
-    },
-
-    /**
      * Log audit entry using the rules logger.
      */
     logAudit: async (params) => {
@@ -101,10 +92,9 @@ export function createActionExecutorDeps(redis: Redis): ActionExecutorDeps {
         message: params.message,
       });
 
-      // The notification is typically sent as part of violation creation.
-      // For standalone notify actions (without create_violation), we create
-      // a minimal violation-like payload. The notification worker will handle
-      // routing based on global settings.
+      // Violations are auto-created on rule match. For standalone notify actions,
+      // we create a minimal violation-like payload. The notification worker will
+      // handle routing based on global settings.
       await enqueueNotification({
         type: 'violation',
         payload: {
@@ -362,6 +352,7 @@ export async function runV1ToV2Migration(): Promise<{
       await db
         .update(rules)
         .set({
+          severity: migratedRule.severity,
           conditions: migratedRule.conditions,
           actions: migratedRule.actions,
           // Clear legacy fields after migration

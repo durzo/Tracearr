@@ -1,4 +1,12 @@
-import type { Condition, RuleV2, Action, Session, ServerUser, Server } from '@tracearr/shared';
+import type {
+  Condition,
+  RuleV2,
+  Action,
+  Session,
+  ServerUser,
+  Server,
+  GroupEvidence,
+} from '@tracearr/shared';
 
 export interface EvaluationContext {
   session: Session;
@@ -9,10 +17,17 @@ export interface EvaluationContext {
   rule: RuleV2;
 }
 
+export interface EvaluatorResult {
+  matched: boolean;
+  actual: unknown;
+  relatedSessionIds?: string[];
+  details?: Record<string, unknown>;
+}
+
 export type ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-) => boolean | Promise<boolean>;
+) => EvaluatorResult | Promise<EvaluatorResult>;
 
 export type ActionExecutor = (context: EvaluationContext, action: Action) => void | Promise<void>;
 
@@ -22,4 +37,5 @@ export interface EvaluationResult {
   matched: boolean;
   matchedGroups: number[];
   actions: Action[];
+  evidence?: GroupEvidence[];
 }

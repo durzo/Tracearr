@@ -6,7 +6,7 @@ import type {
   Platform,
   TranscodingConditionValue,
 } from '@tracearr/shared';
-import type { ConditionEvaluator, EvaluationContext } from '../types.js';
+import type { ConditionEvaluator, EvaluationContext, EvaluatorResult } from '../types.js';
 import { compare } from '../comparisons.js';
 import { geoipService } from '../../geoip.js';
 import { normalizeResolution } from '../../../utils/resolutionNormalizer.js';
@@ -162,7 +162,7 @@ function normalizePlatform(platform: string | null): Platform {
 const evaluateConcurrentStreams: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session, activeSessions, serverUser } = context;
   const excludeSameDevice = condition.params?.exclude_same_device ?? false;
 
@@ -182,13 +182,17 @@ const evaluateConcurrentStreams: ConditionEvaluator = (
   // Add 1 for the current session
   const count = userActiveSessions.length + 1;
 
-  return compare(count, condition.operator, condition.value);
+  return {
+    matched: compare(count, condition.operator, condition.value),
+    actual: count,
+    relatedSessionIds: userActiveSessions.map((s) => s.id),
+  };
 };
 
 const evaluateActiveSessionDistanceKm: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session, activeSessions, serverUser } = context;
   const excludeSameDevice = condition.params?.exclude_same_device ?? false;
 
@@ -206,11 +210,16 @@ const evaluateActiveSessionDistanceKm: ConditionEvaluator = (
   }
 
   if (otherSessions.length === 0) {
-    return compare(0, condition.operator, condition.value);
+    return {
+      matched: compare(0, condition.operator, condition.value),
+      actual: 0,
+      relatedSessionIds: [],
+    };
   }
 
   // Calculate max distance from current session to any other active session
   let maxDistance = 0;
+  const distances: Record<string, number> = {};
   for (const other of otherSessions) {
     const distance = calculateDistanceKm(
       session.geoLat,
@@ -218,18 +227,26 @@ const evaluateActiveSessionDistanceKm: ConditionEvaluator = (
       other.geoLat,
       other.geoLon
     );
-    if (distance !== null && distance > maxDistance) {
-      maxDistance = distance;
+    if (distance !== null) {
+      distances[other.id] = Math.round(distance * 100) / 100;
+      if (distance > maxDistance) {
+        maxDistance = distance;
+      }
     }
   }
 
-  return compare(maxDistance, condition.operator, condition.value);
+  return {
+    matched: compare(maxDistance, condition.operator, condition.value),
+    actual: Math.round(maxDistance * 100) / 100,
+    relatedSessionIds: otherSessions.map((s) => s.id),
+    details: { distances },
+  };
 };
 
 const evaluateTravelSpeedKmh: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session, recentSessions, serverUser } = context;
   const excludeSameDevice = condition.params?.exclude_same_device ?? false;
 
@@ -247,12 +264,18 @@ const evaluateTravelSpeedKmh: ConditionEvaluator = (
   }
 
   if (previousSessions.length === 0) {
-    return compare(0, condition.operator, condition.value);
+    return {
+      matched: compare(0, condition.operator, condition.value),
+      actual: 0,
+    };
   }
 
   const previous = previousSessions[0];
   if (!previous) {
-    return compare(0, condition.operator, condition.value);
+    return {
+      matched: compare(0, condition.operator, condition.value),
+      actual: 0,
+    };
   }
 
   const distance = calculateDistanceKm(
@@ -263,28 +286,52 @@ const evaluateTravelSpeedKmh: ConditionEvaluator = (
   );
 
   if (distance === null) {
-    return compare(0, condition.operator, condition.value);
+    return {
+      matched: compare(0, condition.operator, condition.value),
+      actual: 0,
+      relatedSessionIds: [previous.id],
+    };
   }
 
   const timeDeltaMs =
     new Date(session.startedAt).getTime() - new Date(previous.startedAt).getTime();
   const timeDeltaHours = timeDeltaMs / (1000 * 60 * 60);
 
+  let speedKmh: number;
   if (timeDeltaHours <= 0) {
     // If sessions are at the same time with distance, speed is effectively infinite
-    return distance > 0
-      ? compare(Infinity, condition.operator, condition.value)
-      : compare(0, condition.operator, condition.value);
+    speedKmh = distance > 0 ? Infinity : 0;
+  } else {
+    speedKmh = distance / timeDeltaHours;
   }
 
-  const speedKmh = distance / timeDeltaHours;
-  return compare(speedKmh, condition.operator, condition.value);
+  return {
+    matched: compare(speedKmh, condition.operator, condition.value),
+    actual: Math.round(speedKmh * 100) / 100,
+    relatedSessionIds: [previous.id],
+    details: {
+      distance: Math.round(distance * 100) / 100,
+      timeDeltaHours: Math.round(timeDeltaHours * 100) / 100,
+      previousLocation: {
+        lat: previous.geoLat,
+        lon: previous.geoLon,
+        city: previous.geoCity,
+        country: previous.geoCountry,
+      },
+      currentLocation: {
+        lat: session.geoLat,
+        lon: session.geoLon,
+        city: session.geoCity,
+        country: session.geoCountry,
+      },
+    },
+  };
 };
 
 const evaluateUniqueIpsInWindow: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session, recentSessions, serverUser } = context;
   const windowHours = condition.params?.window_hours ?? 24;
 
@@ -304,13 +351,17 @@ const evaluateUniqueIpsInWindow: ConditionEvaluator = (
     allIps.add(s.ipAddress);
   }
 
-  return compare(allIps.size, condition.operator, condition.value);
+  return {
+    matched: compare(allIps.size, condition.operator, condition.value),
+    actual: allIps.size,
+    details: { ips: Array.from(allIps), windowHours },
+  };
 };
 
 const evaluateUniqueDevicesInWindow: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session, recentSessions, serverUser } = context;
   const windowHours = condition.params?.window_hours ?? 24;
 
@@ -334,28 +385,36 @@ const evaluateUniqueDevicesInWindow: ConditionEvaluator = (
     addDevice(s.deviceId, s.playerName);
   }
 
-  return compare(devices.size, condition.operator, condition.value);
+  return {
+    matched: compare(devices.size, condition.operator, condition.value),
+    actual: devices.size,
+    details: { devices: Array.from(devices), windowHours },
+  };
 };
 
 const evaluateInactiveDays: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { serverUser } = context;
 
+  let inactiveDays: number;
   if (!serverUser.lastActivityAt) {
     // Never had activity - treat as maximum inactivity
-    const accountAgeDays = Math.floor(
+    inactiveDays = Math.floor(
       (Date.now() - new Date(serverUser.createdAt).getTime()) / (1000 * 60 * 60 * 24)
     );
-    return compare(accountAgeDays, condition.operator, condition.value);
+  } else {
+    inactiveDays = Math.floor(
+      (Date.now() - new Date(serverUser.lastActivityAt).getTime()) / (1000 * 60 * 60 * 24)
+    );
   }
 
-  const inactiveDays = Math.floor(
-    (Date.now() - new Date(serverUser.lastActivityAt).getTime()) / (1000 * 60 * 60 * 24)
-  );
-
-  return compare(inactiveDays, condition.operator, condition.value);
+  return {
+    matched: compare(inactiveDays, condition.operator, condition.value),
+    actual: inactiveDays,
+    details: { lastActivityAt: serverUser.lastActivityAt },
+  };
 };
 
 // ============================================================================
@@ -365,7 +424,7 @@ const evaluateInactiveDays: ConditionEvaluator = (
 const evaluateSourceResolution: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session } = context;
 
   const resolution = getResolution(session.sourceVideoWidth, session.sourceVideoHeight);
@@ -377,16 +436,22 @@ const evaluateSourceResolution: ConditionEvaluator = (
 
   // For 'in' and 'not_in' operators, compare strings directly
   if (condition.operator === 'in' || condition.operator === 'not_in') {
-    return compare(resolution, condition.operator, condition.value);
+    return {
+      matched: compare(resolution, condition.operator, condition.value),
+      actual: resolution,
+    };
   }
 
-  return compare(resolutionValue, condition.operator, targetValue);
+  return {
+    matched: compare(resolutionValue, condition.operator, targetValue),
+    actual: resolution,
+  };
 };
 
 const evaluateOutputResolution: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session } = context;
 
   // Use stream video details for output resolution
@@ -402,45 +467,77 @@ const evaluateOutputResolution: ConditionEvaluator = (
 
   // For 'in' and 'not_in' operators, compare strings directly
   if (condition.operator === 'in' || condition.operator === 'not_in') {
-    return compare(resolution, condition.operator, condition.value);
+    return {
+      matched: compare(resolution, condition.operator, condition.value),
+      actual: resolution,
+    };
   }
 
-  return compare(resolutionValue, condition.operator, targetValue);
+  return {
+    matched: compare(resolutionValue, condition.operator, targetValue),
+    actual: resolution,
+  };
 };
 
 const evaluateIsTranscoding: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session } = context;
   const value = condition.value;
 
+  const details: Record<string, unknown> = {
+    videoDecision: session.videoDecision,
+    audioDecision: session.audioDecision,
+  };
+
   // Handle new string values
   if (typeof value === 'string') {
+    let matched: boolean;
+    let actual: string;
     switch (value as TranscodingConditionValue) {
       case 'video':
-        return session.videoDecision === 'transcode';
+        matched = session.videoDecision === 'transcode';
+        actual = session.videoDecision ?? 'unknown';
+        break;
       case 'audio':
-        return session.audioDecision === 'transcode';
+        matched = session.audioDecision === 'transcode';
+        actual = session.audioDecision ?? 'unknown';
+        break;
       case 'video_or_audio':
-        return session.isTranscode;
+        matched = session.isTranscode;
+        actual = session.isTranscode ? 'transcoding' : 'direct';
+        break;
       case 'neither':
-        return !session.isTranscode;
+        matched = !session.isTranscode;
+        actual = session.isTranscode ? 'transcoding' : 'direct';
+        break;
+      default:
+        matched = false;
+        actual = 'unknown';
     }
+    return { matched, actual, details };
   }
 
   // Backwards compatibility: handle boolean values
-  return compare(session.isTranscode, condition.operator, condition.value);
+  return {
+    matched: compare(session.isTranscode, condition.operator, condition.value),
+    actual: session.isTranscode,
+    details,
+  };
 };
 
 const evaluateIsTranscodeDowngrade: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session } = context;
 
   if (!session.isTranscode) {
-    return compare(false, condition.operator, condition.value);
+    return {
+      matched: compare(false, condition.operator, condition.value),
+      actual: false,
+    };
   }
 
   // Compare source resolution to output resolution
@@ -451,20 +548,27 @@ const evaluateIsTranscodeDowngrade: ConditionEvaluator = (
 
   const isDowngrade = resolutionToNumber(sourceRes) > resolutionToNumber(outputRes);
 
-  return compare(isDowngrade, condition.operator, condition.value);
+  return {
+    matched: compare(isDowngrade, condition.operator, condition.value),
+    actual: isDowngrade,
+    details: { sourceResolution: sourceRes, outputResolution: outputRes },
+  };
 };
 
 const evaluateSourceBitrateMbps: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session } = context;
 
   // Use source video details bitrate if available, otherwise fall back to session bitrate
   const bitrateBps = session.sourceVideoDetails?.bitrate ?? session.bitrate ?? 0;
   const bitrateMbps = bitrateBps / 1_000_000;
 
-  return compare(bitrateMbps, condition.operator, condition.value);
+  return {
+    matched: compare(bitrateMbps, condition.operator, condition.value),
+    actual: Math.round(bitrateMbps * 100) / 100,
+  };
 };
 
 // ============================================================================
@@ -474,32 +578,41 @@ const evaluateSourceBitrateMbps: ConditionEvaluator = (
 const evaluateUserId: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { serverUser } = context;
 
-  return compare(serverUser.id, condition.operator, condition.value);
+  return {
+    matched: compare(serverUser.id, condition.operator, condition.value),
+    actual: serverUser.id,
+  };
 };
 
 const evaluateTrustScore: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { serverUser } = context;
 
-  return compare(serverUser.trustScore, condition.operator, condition.value);
+  return {
+    matched: compare(serverUser.trustScore, condition.operator, condition.value),
+    actual: serverUser.trustScore,
+  };
 };
 
 const evaluateAccountAgeDays: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { serverUser } = context;
 
   const ageDays = Math.floor(
     (Date.now() - new Date(serverUser.createdAt).getTime()) / (1000 * 60 * 60 * 24)
   );
 
-  return compare(ageDays, condition.operator, condition.value);
+  return {
+    matched: compare(ageDays, condition.operator, condition.value),
+    actual: ageDays,
+  };
 };
 
 // ============================================================================
@@ -509,35 +622,44 @@ const evaluateAccountAgeDays: ConditionEvaluator = (
 const evaluateDeviceType: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session } = context;
 
   const deviceType = normalizeDeviceType(session.device, session.platform);
 
-  return compare(deviceType, condition.operator, condition.value);
+  return {
+    matched: compare(deviceType, condition.operator, condition.value),
+    actual: deviceType,
+  };
 };
 
 const evaluateClientName: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session } = context;
 
   // Use product as client name (e.g., "Plex for iOS", "Plex Web")
   const clientName = session.product ?? session.playerName ?? '';
 
-  return compare(clientName, condition.operator, condition.value);
+  return {
+    matched: compare(clientName, condition.operator, condition.value),
+    actual: clientName,
+  };
 };
 
 const evaluatePlatform: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session } = context;
 
   const platform = normalizePlatform(session.platform);
 
-  return compare(platform, condition.operator, condition.value);
+  return {
+    matched: compare(platform, condition.operator, condition.value),
+    actual: platform,
+  };
 };
 
 // ============================================================================
@@ -547,23 +669,29 @@ const evaluatePlatform: ConditionEvaluator = (
 const evaluateIsLocalNetwork: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session } = context;
 
   const isLocal = geoipService.isPrivateIP(session.ipAddress);
 
-  return compare(isLocal, condition.operator, condition.value);
+  return {
+    matched: compare(isLocal, condition.operator, condition.value),
+    actual: isLocal,
+  };
 };
 
 const evaluateCountry: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session } = context;
 
   const country = session.geoCountry ?? '';
 
-  return compare(country, condition.operator, condition.value);
+  return {
+    matched: compare(country, condition.operator, condition.value),
+    actual: country,
+  };
 };
 
 /**
@@ -608,35 +736,40 @@ function isIpInCidr(ip: string, cidr: string): boolean {
 const evaluateIpInRange: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session } = context;
   const ip = session.ipAddress;
 
-  if (!ip) return false;
+  if (!ip) {
+    return { matched: false, actual: null };
+  }
 
   // Handle 'in' and 'not_in' operators with array of CIDR ranges
   if (condition.operator === 'in' || condition.operator === 'not_in') {
-    if (!Array.isArray(condition.value)) return false;
+    if (!Array.isArray(condition.value)) {
+      return { matched: false, actual: ip };
+    }
 
     const inRange = condition.value.some((cidr) => {
       if (typeof cidr !== 'string') return false;
       return isIpInCidr(ip, cidr);
     });
 
-    return condition.operator === 'in' ? inRange : !inRange;
+    const matched = condition.operator === 'in' ? inRange : !inRange;
+    return { matched, actual: ip };
   }
 
   // Handle 'eq' operator with single CIDR range
   if (condition.operator === 'eq' && typeof condition.value === 'string') {
-    return isIpInCidr(ip, condition.value);
+    return { matched: isIpInCidr(ip, condition.value), actual: ip };
   }
 
   // Handle 'neq' operator with single CIDR range
   if (condition.operator === 'neq' && typeof condition.value === 'string') {
-    return !isIpInCidr(ip, condition.value);
+    return { matched: !isIpInCidr(ip, condition.value), actual: ip };
   }
 
-  return false;
+  return { matched: false, actual: ip };
 };
 
 // ============================================================================
@@ -646,30 +779,39 @@ const evaluateIpInRange: ConditionEvaluator = (
 const evaluateServerId: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { server } = context;
 
-  return compare(server.id, condition.operator, condition.value);
+  return {
+    matched: compare(server.id, condition.operator, condition.value),
+    actual: server.id,
+  };
 };
 
 const evaluateLibraryId: ConditionEvaluator = (
   _context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   // Note: Session type doesn't have libraryId based on the types.ts file
   // This would need to be added to the Session type or fetched separately
   // For now, this is a placeholder that always returns false
   // TODO: Add libraryId to Session type or context
-  return compare('', condition.operator, condition.value);
+  return {
+    matched: compare('', condition.operator, condition.value),
+    actual: '',
+  };
 };
 
 const evaluateMediaType: ConditionEvaluator = (
   context: EvaluationContext,
   condition: Condition
-): boolean => {
+): EvaluatorResult => {
   const { session } = context;
 
-  return compare(session.mediaType, condition.operator, condition.value);
+  return {
+    matched: compare(session.mediaType, condition.operator, condition.value),
+    actual: session.mediaType,
+  };
 };
 
 // ============================================================================

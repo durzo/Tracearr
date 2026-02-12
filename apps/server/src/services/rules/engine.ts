@@ -4,15 +4,22 @@ import type {
   Condition,
   ConditionField,
   RuleV2,
+  ConditionEvidence,
+  GroupEvidence,
 } from '@tracearr/shared';
-import type { EvaluationContext, EvaluationResult, ConditionEvaluator } from './types.js';
+import type {
+  EvaluationContext,
+  EvaluationResult,
+  ConditionEvaluator,
+  EvaluatorResult,
+} from './types.js';
 import { evaluatorRegistry } from './evaluators/index.js';
 import { rulesLogger as logger } from '../../utils/logger.js';
 
 /**
  * Condition fields whose evaluated value changes when transcode state changes mid-session.
  * Rules containing at least one of these fields are re-evaluated on transcode state transitions
- * (e.g., direct play → transcode). Rules with only non-transcode fields (like concurrent_streams)
+ * (e.g., direct play -> transcode). Rules with only non-transcode fields (like concurrent_streams)
  * are skipped to avoid false positives since those conditions don't change mid-session.
  */
 const TRANSCODE_CONDITION_FIELDS: ReadonlySet<ConditionField> = new Set([
@@ -33,16 +40,22 @@ export function hasTranscodeConditions(rule: RuleV2): boolean {
 }
 
 /**
- * Evaluate a single condition using the appropriate evaluator.
+ * Evaluate a single condition and return evidence.
  */
-function evaluateCondition(context: EvaluationContext, condition: Condition): boolean {
+function evaluateCondition(context: EvaluationContext, condition: Condition): ConditionEvidence {
   const evaluator: ConditionEvaluator | undefined = evaluatorRegistry[condition.field];
 
   if (!evaluator) {
     logger.warn(`No evaluator found for condition field: ${condition.field}`, {
       field: condition.field,
     });
-    return false;
+    return {
+      field: condition.field,
+      operator: condition.operator,
+      threshold: condition.value,
+      actual: null,
+      matched: false,
+    };
   }
 
   try {
@@ -52,58 +65,112 @@ function evaluateCondition(context: EvaluationContext, condition: Condition): bo
       logger.warn(`Async evaluator called synchronously for field: ${condition.field}`, {
         field: condition.field,
       });
-      return false;
+      return {
+        field: condition.field,
+        operator: condition.operator,
+        threshold: condition.value,
+        actual: null,
+        matched: false,
+      };
     }
-    return result;
+    return toConditionEvidence(condition, result);
   } catch (error) {
     logger.error(`Error evaluating condition field ${condition.field}`, {
       field: condition.field,
       error,
     });
-    return false;
+    return {
+      field: condition.field,
+      operator: condition.operator,
+      threshold: condition.value,
+      actual: null,
+      matched: false,
+    };
   }
+}
+
+/**
+ * Convert an evaluator result to condition evidence.
+ */
+function toConditionEvidence(condition: Condition, result: EvaluatorResult): ConditionEvidence {
+  const evidence: ConditionEvidence = {
+    field: condition.field,
+    operator: condition.operator,
+    threshold: condition.value,
+    actual: result.actual,
+    matched: result.matched,
+  };
+  if (result.relatedSessionIds?.length) {
+    evidence.relatedSessionIds = result.relatedSessionIds;
+  }
+  if (result.details && Object.keys(result.details).length > 0) {
+    evidence.details = result.details;
+  }
+  return evidence;
+}
+
+interface GroupResult {
+  matched: boolean;
+  conditions: ConditionEvidence[];
 }
 
 /**
  * Evaluate a condition group (conditions within a group are OR'd).
- * Returns true if ANY condition in the group matches.
+ * Evaluates ALL conditions to collect full evidence.
  */
-function evaluateConditionGroup(context: EvaluationContext, group: ConditionGroup): boolean {
+function evaluateConditionGroup(context: EvaluationContext, group: ConditionGroup): GroupResult {
   if (group.conditions.length === 0) {
-    return true; // Empty group is always true
+    return { matched: true, conditions: [] };
   }
 
+  // Evaluate ALL conditions (no short-circuit) to collect full evidence
+  const conditions = group.conditions.map((condition) => evaluateCondition(context, condition));
+
   // OR logic - any condition matching makes the group true
-  return group.conditions.some((condition) => evaluateCondition(context, condition));
+  const matched = conditions.some((c) => c.matched);
+
+  return { matched, conditions };
+}
+
+interface AllGroupsResult {
+  matchedGroups: number[] | null;
+  evidence: GroupEvidence[];
 }
 
 /**
  * Evaluate all condition groups (groups are AND'd together).
- * Returns indices of matched groups, or null if any group fails.
+ * Returns evidence for all evaluated groups.
  */
 function evaluateAllGroups(
   context: EvaluationContext,
   conditions: RuleConditions
-): number[] | null {
+): AllGroupsResult {
   if (conditions.groups.length === 0) {
-    return []; // No conditions = always match
+    return { matchedGroups: [], evidence: [] };
   }
 
   const matchedGroups: number[] = [];
+  const evidence: GroupEvidence[] = [];
 
   // AND logic - all groups must match
   for (let i = 0; i < conditions.groups.length; i++) {
     const group = conditions.groups[i];
     if (!group) continue;
 
-    const groupMatched = evaluateConditionGroup(context, group);
-    if (!groupMatched) {
-      return null; // Any group failing = rule doesn't match
+    const groupResult = evaluateConditionGroup(context, group);
+    evidence.push({
+      groupIndex: i,
+      matched: groupResult.matched,
+      conditions: groupResult.conditions,
+    });
+
+    if (!groupResult.matched) {
+      return { matchedGroups: null, evidence }; // Any group failing = rule doesn't match
     }
     matchedGroups.push(i);
   }
 
-  return matchedGroups;
+  return { matchedGroups, evidence };
 }
 
 /**
@@ -123,7 +190,7 @@ export function evaluateRule(context: EvaluationContext): EvaluationResult {
     };
   }
 
-  const matchedGroups = evaluateAllGroups(context, rule.conditions);
+  const { matchedGroups, evidence } = evaluateAllGroups(context, rule.conditions);
   const matched = matchedGroups !== null;
 
   return {
@@ -132,6 +199,7 @@ export function evaluateRule(context: EvaluationContext): EvaluationResult {
     matched,
     matchedGroups: matchedGroups ?? [],
     actions: matched ? (rule.actions?.actions ?? []) : [],
+    evidence: matched ? evidence : undefined,
   };
 }
 
@@ -173,31 +241,44 @@ export function evaluateRules(
 }
 
 /**
- * Async version of evaluateCondition for evaluators that require async operations.
+ * Async version of evaluateCondition.
  */
 async function evaluateConditionAsync(
   context: EvaluationContext,
   condition: Condition
-): Promise<boolean> {
+): Promise<ConditionEvidence> {
   const evaluator: ConditionEvaluator | undefined = evaluatorRegistry[condition.field];
 
   if (!evaluator) {
     logger.warn(`No evaluator found for condition field: ${condition.field}`, {
       field: condition.field,
     });
-    return false;
+    return {
+      field: condition.field,
+      operator: condition.operator,
+      threshold: condition.value,
+      actual: null,
+      matched: false,
+    };
   }
 
   try {
     const result = evaluator(context, condition);
     // Handle both sync and async evaluators
-    return result instanceof Promise ? await result : result;
+    const resolved = result instanceof Promise ? await result : result;
+    return toConditionEvidence(condition, resolved);
   } catch (error) {
     logger.error(`Error evaluating condition field ${condition.field}`, {
       field: condition.field,
       error,
     });
-    return false;
+    return {
+      field: condition.field,
+      operator: condition.operator,
+      threshold: condition.value,
+      actual: null,
+      matched: false,
+    };
   }
 }
 
@@ -207,17 +288,17 @@ async function evaluateConditionAsync(
 async function evaluateConditionGroupAsync(
   context: EvaluationContext,
   group: ConditionGroup
-): Promise<boolean> {
+): Promise<GroupResult> {
   if (group.conditions.length === 0) {
-    return true;
+    return { matched: true, conditions: [] };
   }
 
-  // Evaluate all conditions in parallel, return true if any match (OR logic)
-  const results = await Promise.all(
+  // Evaluate all conditions in parallel, collecting full evidence
+  const conditions = await Promise.all(
     group.conditions.map((condition) => evaluateConditionAsync(context, condition))
   );
 
-  return results.some((result) => result);
+  return { matched: conditions.some((c) => c.matched), conditions };
 }
 
 /**
@@ -226,26 +307,33 @@ async function evaluateConditionGroupAsync(
 async function evaluateAllGroupsAsync(
   context: EvaluationContext,
   conditions: RuleConditions
-): Promise<number[] | null> {
+): Promise<AllGroupsResult> {
   if (conditions.groups.length === 0) {
-    return [];
+    return { matchedGroups: [], evidence: [] };
   }
 
   const matchedGroups: number[] = [];
+  const evidence: GroupEvidence[] = [];
 
   // Evaluate groups sequentially (AND logic requires early exit on failure)
   for (let i = 0; i < conditions.groups.length; i++) {
     const group = conditions.groups[i];
     if (!group) continue;
 
-    const groupMatched = await evaluateConditionGroupAsync(context, group);
-    if (!groupMatched) {
-      return null;
+    const groupResult = await evaluateConditionGroupAsync(context, group);
+    evidence.push({
+      groupIndex: i,
+      matched: groupResult.matched,
+      conditions: groupResult.conditions,
+    });
+
+    if (!groupResult.matched) {
+      return { matchedGroups: null, evidence };
     }
     matchedGroups.push(i);
   }
 
-  return matchedGroups;
+  return { matchedGroups, evidence };
 }
 
 /**
@@ -264,7 +352,7 @@ export async function evaluateRuleAsync(context: EvaluationContext): Promise<Eva
     };
   }
 
-  const matchedGroups = await evaluateAllGroupsAsync(context, rule.conditions);
+  const { matchedGroups, evidence } = await evaluateAllGroupsAsync(context, rule.conditions);
   const matched = matchedGroups !== null;
 
   return {
@@ -273,6 +361,7 @@ export async function evaluateRuleAsync(context: EvaluationContext): Promise<Eva
     matched,
     matchedGroups: matchedGroups ?? [],
     actions: matched ? (rule.actions?.actions ?? []) : [],
+    evidence: matched ? evidence : undefined,
   };
 }
 
