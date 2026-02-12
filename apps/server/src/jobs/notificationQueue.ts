@@ -82,6 +82,9 @@ export function initNotificationQueue(redisUrl: string): void {
       },
     },
   });
+  notificationQueue.on('error', (err) => {
+    if (!isMaintenance()) console.error('Notification queue error:', err);
+  });
 
   // Create dead letter queue for jobs that fail all retries
   dlqQueue = new Queue<NotificationJobData>(DLQ_NAME, {
@@ -97,6 +100,9 @@ export function initNotificationQueue(redisUrl: string): void {
         age: 14 * 24 * 60 * 60, // 14 days
       },
     },
+  });
+  dlqQueue.on('error', (err) => {
+    if (!isMaintenance()) console.error('Notification DLQ error:', err);
   });
 
   console.log('Notification queue initialized');

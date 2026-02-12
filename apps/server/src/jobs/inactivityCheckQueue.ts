@@ -116,6 +116,9 @@ export function initInactivityCheckQueue(
       },
     },
   });
+  inactivityQueue.on('error', (err) => {
+    if (!isMaintenance()) console.error('[Inactivity] Queue error:', err);
+  });
 
   console.log('[Inactivity] Queue initialized');
 }

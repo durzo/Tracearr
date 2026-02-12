@@ -106,6 +106,9 @@ export function initImportQueue(redisUrl: string): void {
       },
     },
   });
+  importQueue.on('error', (err) => {
+    if (!isMaintenance()) console.error('[Import] Queue error:', err);
+  });
 
   dlqQueue = new Queue<ImportJobData>(DLQ_NAME, {
     connection: connectionOptions,
@@ -120,6 +123,9 @@ export function initImportQueue(redisUrl: string): void {
         age: 14 * 24 * 60 * 60,
       },
     },
+  });
+  dlqQueue.on('error', (err) => {
+    if (!isMaintenance()) console.error('[Import] DLQ error:', err);
   });
 
   console.log('Import queue initialized');

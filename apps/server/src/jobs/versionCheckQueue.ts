@@ -91,6 +91,9 @@ export function initVersionCheckQueue(
       },
     },
   });
+  versionQueue.on('error', (err) => {
+    if (!isMaintenance()) console.error('Version check queue error:', err);
+  });
 
   console.log('Version check queue initialized');
 }

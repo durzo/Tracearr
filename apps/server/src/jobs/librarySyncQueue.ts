@@ -112,6 +112,9 @@ export function initLibrarySyncQueue(redisUrl: string): void {
       },
     },
   });
+  librarySyncQueue.on('error', (err) => {
+    if (!isMaintenance()) console.error('[LibrarySync] Queue error:', err);
+  });
 
   console.log('Library sync queue initialized');
 }

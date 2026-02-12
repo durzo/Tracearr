@@ -116,6 +116,9 @@ export function initMaintenanceQueue(redisUrl: string): void {
       },
     },
   });
+  maintenanceQueue.on('error', (err) => {
+    if (!isMaintenance()) console.error('[Maintenance] Queue error:', err);
+  });
 
   console.log('Maintenance queue initialized');
 }
