@@ -817,7 +817,7 @@ function startRecoveryLoop(app: FastifyInstance) {
           startRecoveryLoop(app);
         }
       } else {
-        app.log.info({ db: dbOk, redis: redisOk }, 'Recovery check: services still unavailable');
+        app.log.info(`Recovery check: services still unavailable (db:${dbOk}, redis:${redisOk})`);
       }
     })();
   }, RECOVERY_INTERVAL_MS);
