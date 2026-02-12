@@ -1,4 +1,5 @@
 -- Fix engagement functions: align play counting with our "watched" tier (85%)
+-- Use plpgsql to defer validation (daily_content_engagement may not exist during migrations)
 DROP FUNCTION IF EXISTS get_content_engagement(timestamptz, timestamptz, uuid, text);
 --> statement-breakpoint
 DROP FUNCTION IF EXISTS get_show_engagement(timestamptz, timestamptz, uuid);
@@ -26,6 +27,8 @@ RETURNS TABLE (
   completions bigint,
   completion_rate numeric
 ) AS $$
+BEGIN
+  RETURN QUERY
   -- Level 1: Aggregate per (user, content) across all matching days
   WITH user_content AS (
     SELECT
@@ -77,8 +80,9 @@ RETURNS TABLE (
         AND uc.watched_ms >= uc.content_duration_ms * 0.85
     ) / NULLIF(COUNT(DISTINCT uc.server_user_id), 0), 1) AS completion_rate
   FROM user_content uc
-  GROUP BY uc.rating_key
-$$ LANGUAGE sql STABLE;
+  GROUP BY uc.rating_key;
+END;
+$$ LANGUAGE plpgsql STABLE;
 --> statement-breakpoint
 
 CREATE OR REPLACE FUNCTION get_show_engagement(
@@ -97,6 +101,8 @@ RETURNS TABLE (
   avg_completion_rate numeric,
   binge_score numeric
 ) AS $$
+BEGIN
+  RETURN QUERY
   -- Level 1: Aggregate per (user, episode) across all matching days
   WITH user_episodes AS (
     SELECT
@@ -160,5 +166,6 @@ RETURNS TABLE (
       30 * (SUM(us.completed_episodes)::numeric / NULLIF(SUM(us.episodes_watched), 0))
     , 0)) AS binge_score
   FROM user_shows us
-  GROUP BY us.show_title
-$$ LANGUAGE sql STABLE;
+  GROUP BY us.show_title;
+END;
+$$ LANGUAGE plpgsql STABLE;

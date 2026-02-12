@@ -69,6 +69,7 @@ beforeAll(async () => {
     // Migrations may have already been applied - that's OK
     if (error instanceof Error && !error.message.includes('already exists')) {
       console.error('[Test Setup] Migration error:', error.message);
+      if (error.cause) console.error('[Test Setup] Cause:', error.cause);
       throw error;
     }
   }
