@@ -340,6 +340,7 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
       lazyConnect: true,
       retryStrategy: () => null, // Don't retry for the probe
     });
+    testRedis.on('error', () => {}); // Suppress — failure is handled via catch
     try {
       await testRedis.connect();
       const pong = await testRedis.ping();
@@ -787,6 +788,7 @@ function startRecoveryLoop(app: FastifyInstance) {
           lazyConnect: true,
           retryStrategy: () => null,
         });
+        testRedis.on('error', () => {}); // Suppress — failure is handled via catch
         try {
           await testRedis.connect();
           const pong = await testRedis.ping();
