@@ -988,4 +988,280 @@ describe('Plex Auth Routes', () => {
       });
     });
   });
+
+  /**
+   * Security tests for GitHub Issue #392
+   * Ensures only the owner can log in - no other users should have access
+   */
+  describe('Security: Owner-Only Access (Issue #392)', () => {
+    const mockPlexAuthResult = {
+      id: 'new-plex-account-456',
+      username: 'attacker',
+      email: 'attacker@example.com',
+      thumb: 'https://example.com/attacker.jpg',
+      token: 'attacker-plex-token',
+    };
+
+    const existingOwner = {
+      id: randomUUID(),
+      username: 'owner',
+      email: 'owner@example.com',
+      role: 'owner' as const,
+      plexAccountId: 'owner-plex-123',
+      name: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      thumbnail: null,
+      passwordHash: null,
+      apiToken: null,
+      aggregateTrustScore: 100,
+      totalViolations: 0,
+    };
+
+    const existingViewer = {
+      id: randomUUID(),
+      username: 'viewer',
+      email: 'viewer@example.com',
+      role: 'viewer' as const,
+      plexAccountId: 'viewer-plex-456',
+      name: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      thumbnail: null,
+      passwordHash: null,
+      apiToken: null,
+      aggregateTrustScore: 100,
+      totalViolations: 0,
+    };
+
+    beforeEach(() => {
+      vi.mocked(isClaimCodeEnabled).mockReturnValue(false);
+    });
+
+    afterEach(async () => {
+      if (app) await app.close();
+      vi.clearAllMocks();
+      mockRedis.get.mockReset();
+      mockRedis.setex.mockReset();
+      mockRedis.del.mockReset();
+    });
+
+    describe('POST /plex/check-pin - Blocks new users when owner exists', () => {
+      it('rejects new Plex user with no servers when owner exists', async () => {
+        app = await buildUnauthenticatedTestApp();
+
+        vi.mocked(PlexClient.checkOAuthPin).mockResolvedValue(mockPlexAuthResult);
+
+        // No existing plex accounts for this user
+        const selectMock = {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue([]),
+        };
+        vi.mocked(db.select).mockReturnValue(selectMock as never);
+
+        // No existing user
+        vi.mocked(getUserByPlexAccountId).mockResolvedValue(null);
+
+        // No servers owned by attacker
+        vi.mocked(PlexClient.getServers).mockResolvedValue([]);
+
+        // Owner already exists - THIS IS THE KEY CHECK
+        vi.mocked(getOwnerUser).mockResolvedValue(existingOwner);
+
+        const response = await app.inject({
+          method: 'POST',
+          url: '/plex/check-pin',
+          payload: { pinId: 'attacker-pin' },
+        });
+
+        expect(response.statusCode).toBe(403);
+        expect(response.json().message).toContain('already has an owner');
+      });
+
+      it('rejects new Plex user with servers when owner exists', async () => {
+        app = await buildUnauthenticatedTestApp();
+
+        vi.mocked(PlexClient.checkOAuthPin).mockResolvedValue(mockPlexAuthResult);
+
+        const selectMock = {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue([]),
+        };
+        vi.mocked(db.select).mockReturnValue(selectMock as never);
+
+        vi.mocked(getUserByPlexAccountId).mockResolvedValue(null);
+
+        // Attacker owns a Plex server
+        vi.mocked(PlexClient.getServers).mockResolvedValue([mockPlexServer]);
+
+        // Owner already exists
+        vi.mocked(getOwnerUser).mockResolvedValue(existingOwner);
+
+        const response = await app.inject({
+          method: 'POST',
+          url: '/plex/check-pin',
+          payload: { pinId: 'attacker-pin' },
+        });
+
+        expect(response.statusCode).toBe(403);
+        expect(response.json().message).toContain('already has an owner');
+      });
+
+      it('rejects existing non-owner user via plex_accounts', async () => {
+        app = await buildUnauthenticatedTestApp();
+
+        vi.mocked(PlexClient.checkOAuthPin).mockResolvedValue({
+          ...mockPlexAuthResult,
+          id: existingViewer.plexAccountId,
+        });
+
+        // Found in plex_accounts with allowLogin=true
+        const selectMock = {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          limit: vi
+            .fn()
+            .mockResolvedValue([{ id: randomUUID(), userId: existingViewer.id, allowLogin: true }]),
+        };
+        vi.mocked(db.select).mockReturnValue(selectMock as never);
+
+        // Return viewer user (not owner)
+        vi.mocked(getUserById).mockResolvedValue(existingViewer);
+
+        const response = await app.inject({
+          method: 'POST',
+          url: '/plex/check-pin',
+          payload: { pinId: 'viewer-pin' },
+        });
+
+        expect(response.statusCode).toBe(403);
+        expect(response.json().message).toContain('Only the owner can log in');
+      });
+
+      it('rejects existing non-owner user via legacy plexAccountId lookup', async () => {
+        app = await buildUnauthenticatedTestApp();
+
+        vi.mocked(PlexClient.checkOAuthPin).mockResolvedValue({
+          ...mockPlexAuthResult,
+          id: existingViewer.plexAccountId,
+        });
+
+        // Not found in plex_accounts
+        const selectMock = {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue([]),
+        };
+        vi.mocked(db.select).mockReturnValue(selectMock as never);
+
+        // Found via legacy lookup - viewer role
+        vi.mocked(getUserByPlexAccountId).mockResolvedValue(existingViewer);
+
+        const response = await app.inject({
+          method: 'POST',
+          url: '/plex/check-pin',
+          payload: { pinId: 'viewer-pin' },
+        });
+
+        expect(response.statusCode).toBe(403);
+        expect(response.json().message).toContain('Only the owner can log in');
+      });
+
+      it('allows existing owner user to log in', async () => {
+        app = await buildUnauthenticatedTestApp();
+
+        vi.mocked(PlexClient.checkOAuthPin).mockResolvedValue({
+          ...mockPlexAuthResult,
+          id: existingOwner.plexAccountId,
+        });
+
+        // Found in plex_accounts
+        const selectMock = {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          limit: vi
+            .fn()
+            .mockResolvedValue([{ id: randomUUID(), userId: existingOwner.id, allowLogin: true }]),
+        };
+        vi.mocked(db.select).mockReturnValue(selectMock as never);
+
+        // Return owner user
+        vi.mocked(getUserById).mockResolvedValue(existingOwner);
+
+        // Mock the update calls
+        vi.mocked(db.update).mockReturnValue({
+          set: vi.fn().mockReturnThis(),
+          where: vi.fn().mockResolvedValue(undefined),
+        } as never);
+
+        const response = await app.inject({
+          method: 'POST',
+          url: '/plex/check-pin',
+          payload: { pinId: 'owner-pin' },
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toHaveProperty('accessToken');
+      });
+    });
+
+    describe('POST /plex/connect - Re-validates owner at connection time', () => {
+      const tempToken = 'attacker-temp-token';
+      const storedData = {
+        plexAccountId: 'attacker-plex-456',
+        plexUsername: 'attacker',
+        plexEmail: 'attacker@example.com',
+        plexThumb: 'https://example.com/attacker.jpg',
+        plexToken: 'attacker-plex-token',
+        // Note: isFirstUser is NOT stored anymore - we re-check at connect time
+      };
+
+      it('rejects connection if owner was created after check-pin (race condition fix)', async () => {
+        app = await buildUnauthenticatedTestApp();
+
+        // Temp token exists (was created when no owner existed)
+        mockRedis.get.mockResolvedValue(JSON.stringify(storedData));
+        mockRedis.del.mockResolvedValue(1);
+
+        // Admin verification succeeds
+        vi.mocked(PlexClient.verifyServerAdmin).mockResolvedValue({ success: true });
+
+        // Mock PlexClient for getUsers
+        const mockPmsClient = { getUsers: vi.fn().mockResolvedValue([{ id: '1', isAdmin: true }]) };
+        vi.mocked(PlexClient).mockImplementation(() => mockPmsClient as any);
+
+        // Server doesn't exist yet
+        const selectMock = {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue([]),
+        };
+        vi.mocked(db.select).mockReturnValue(selectMock as never);
+
+        // Mock server insert
+        vi.mocked(db.insert).mockReturnValue({
+          values: vi.fn().mockReturnThis(),
+          returning: vi.fn().mockResolvedValue([{ id: randomUUID() }]),
+        } as never);
+
+        // KEY: Owner now exists (created by another user in the meantime)
+        vi.mocked(getOwnerUser).mockResolvedValue(existingOwner);
+
+        const response = await app.inject({
+          method: 'POST',
+          url: '/plex/connect',
+          payload: {
+            tempToken,
+            serverUri: 'http://localhost:32400',
+            serverName: 'Attacker Server',
+          },
+        });
+
+        expect(response.statusCode).toBe(403);
+        expect(response.json().message).toContain('already has an owner');
+      });
+    });
+  });
 });

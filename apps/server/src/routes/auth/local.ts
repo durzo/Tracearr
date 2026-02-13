@@ -85,12 +85,16 @@ export const localRoutes: FastifyPluginAsync = async (app) => {
       return reply.conflict('Email already registered');
     }
 
-    // Check if this is the first user (will be owner)
+    // Only the first user can sign up
     const owner = await getOwnerUser();
-    const isFirstUser = !owner;
+    if (owner) {
+      return reply.forbidden(
+        'This Tracearr instance already has an owner. Only the owner can log in.'
+      );
+    }
 
-    // If this is the first user and claim code is enabled, validate it
-    if (isFirstUser && isClaimCodeEnabled()) {
+    // First user setup - validate claim code if enabled
+    if (isClaimCodeEnabled()) {
       if (!claimCode) {
         return reply.forbidden('Claim code is required for first-time setup');
       }
@@ -100,10 +104,8 @@ export const localRoutes: FastifyPluginAsync = async (app) => {
       app.log.info('First-time setup with valid claim code');
     }
 
-    // Create user with password hash
-    // First user becomes owner, subsequent users are viewers
     const passwordHashValue = await hashPassword(password);
-    const role = isFirstUser ? 'owner' : 'viewer';
+    const role = 'owner';
 
     const [newUser] = await db
       .insert(users)

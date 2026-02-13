@@ -170,6 +170,11 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
         const user = await getUserById(account.userId);
 
         if (user) {
+          // Only the owner can log in
+          if (user.role !== 'owner') {
+            return reply.forbidden('Only the owner can log in to this Tracearr instance.');
+          }
+
           // Update plex account info
           await db
             .update(plexAccounts)
@@ -223,6 +228,11 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
         // Returning Plex user via legacy lookup - auto-migrate to plex_accounts
         const user = existingUser;
 
+        // Only the owner can log in
+        if (user.role !== 'owner') {
+          return reply.forbidden('Only the owner can log in to this Tracearr instance.');
+        }
+
         // Check if plex_account already exists (without allowLogin)
         const existingPlexAccount = await db
           .select({ id: plexAccounts.id })
@@ -267,12 +277,17 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
         };
       }
 
-      // New Plex user - check if they own any servers
-      const plexServers = await PlexClient.getServers(authResult.token);
-
-      // Check if this is the first owner
+      // SECURITY: Check if owner already exists BEFORE doing anything else
       const owner = await getOwnerUser();
-      const isFirstUser = !owner;
+      if (owner) {
+        // Owner already exists - no new users can sign up
+        return reply.forbidden(
+          'This Tracearr instance already has an owner. Only the owner can log in.'
+        );
+      }
+
+      // First user setup - check if they own any servers
+      const plexServers = await PlexClient.getServers(authResult.token);
 
       // Store temp token for completing registration
       const tempToken = generateTempToken();
@@ -285,7 +300,6 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
           plexEmail: authResult.email,
           plexThumb: authResult.thumb,
           plexToken: authResult.token,
-          isFirstUser,
         })
       );
 
@@ -318,16 +332,15 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
         };
       }
 
-      // No servers - create account without server connection
-      // First user becomes owner, subsequent users are viewers
-      const role = isFirstUser ? 'owner' : 'viewer';
-
-      // Validate claim code for first user if enabled
-      if (isFirstUser && isClaimCodeEnabled()) {
+      // No servers - create first user account without server connection
+      // Validate claim code if enabled
+      if (isClaimCodeEnabled()) {
         if (!claimCode || !validateClaimCode(claimCode)) {
           return reply.forbidden('Claim code required for first-time setup');
         }
       }
+
+      const role = 'owner';
 
       const [newUser] = await db
         .insert(users)
@@ -390,15 +403,13 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
     // Delete temp token (one-time use)
     await app.redis.del(REDIS_KEYS.PLEX_TEMP_TOKEN(tempToken));
 
-    const { plexAccountId, plexUsername, plexEmail, plexThumb, plexToken, isFirstUser } =
-      JSON.parse(stored) as {
-        plexAccountId: string;
-        plexUsername: string;
-        plexEmail: string;
-        plexThumb: string;
-        plexToken: string;
-        isFirstUser: boolean;
-      };
+    const { plexAccountId, plexUsername, plexEmail, plexThumb, plexToken } = JSON.parse(stored) as {
+      plexAccountId: string;
+      plexUsername: string;
+      plexEmail: string;
+      plexThumb: string;
+      plexToken: string;
+    };
 
     try {
       // Verify user is admin on the selected server
@@ -453,16 +464,25 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
 
       const serverId = server[0]!.id;
 
-      // Create user identity (no serverId on users table)
-      // First user becomes owner, subsequent users are viewers
-      const role = isFirstUser ? 'owner' : 'viewer';
+      // Re-check if owner exists at connection time
+      // Do NOT trust the isFirstUser flag from temp token - it may be stale
+      const currentOwner = await getOwnerUser();
+      const actuallyFirstUser = !currentOwner;
+
+      if (!actuallyFirstUser) {
+        return reply.forbidden(
+          'This Tracearr instance already has an owner. Only the owner can log in.'
+        );
+      }
 
       // Validate claim code for first user if enabled
-      if (isFirstUser && isClaimCodeEnabled()) {
+      if (isClaimCodeEnabled()) {
         if (!claimCode || !validateClaimCode(claimCode)) {
           return reply.forbidden('Claim code required for first-time setup');
         }
       }
+
+      const role = 'owner';
 
       const [newUser] = await db
         .insert(users)

@@ -9,12 +9,12 @@ import type { FastifyPluginAsync } from 'fastify';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../../db/client.js';
-import { servers, users } from '../../db/schema.js';
+import { servers } from '../../db/schema.js';
 import { JellyfinClient } from '../../services/mediaServer/index.js';
 // Token encryption removed - tokens now stored in plain text (DB is localhost-only)
 import { generateTokens } from './utils.js';
 import { syncServer } from '../../services/sync.js';
-import { getUserByUsername, createUser } from '../../services/userService.js';
+import { getUserByUsername } from '../../services/userService.js';
 
 // Schema for Jellyfin login
 const jellyfinLoginSchema = z.object({
@@ -68,30 +68,14 @@ export const jellyfinRoutes: FastifyPluginAsync = async (app) => {
             let user = await getUserByUsername(username);
 
             if (!user) {
-              // Create new user with admin role
-              user = await createUser({
-                username,
-                role: 'admin',
-                email: undefined, // Jellyfin doesn't expose email in auth response
-                thumbnail: undefined, // Can be populated later via sync
-              });
-              app.log.info(
-                { userId: user.id, username },
-                'Created new user from Jellyfin admin login'
+              // Only the owner (created via Plex or local signup) can log in
+              return reply.forbidden(
+                'This Tracearr instance already has an owner. Only the owner can log in.'
               );
-            } else {
-              // Update existing user role to admin if not already
-              if (user.role !== 'admin' && user.role !== 'owner') {
-                await db
-                  .update(users)
-                  .set({ role: 'admin', updatedAt: new Date() })
-                  .where(eq(users.id, user.id));
-                user.role = 'admin';
-                app.log.info(
-                  { userId: user.id, username },
-                  'Updated user role to admin from Jellyfin login'
-                );
-              }
+            }
+
+            if (user.role !== 'owner') {
+              return reply.forbidden('Only the owner can log in to this Tracearr instance.');
             }
 
             // Generate and return tokens

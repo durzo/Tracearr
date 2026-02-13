@@ -180,7 +180,7 @@ describe('Local Auth Routes', () => {
         expect(response.json()).toHaveProperty('refreshToken');
       });
 
-      it('does not require claim code for subsequent users', async () => {
+      it('rejects signup when owner already exists (Issue #392)', async () => {
         app = await buildTestApp();
 
         vi.mocked(getUserByEmail).mockResolvedValue(null);
@@ -200,21 +200,6 @@ describe('Local Auth Routes', () => {
           totalViolations: 0,
         }); // Owner exists
 
-        // Mock db insert to return new user
-        const mockInsertChain = {
-          values: vi.fn().mockReturnValue({
-            returning: vi.fn().mockResolvedValue([
-              {
-                id: 'user-456',
-                username: 'viewer',
-                email: 'viewer@example.com',
-                role: 'viewer',
-              },
-            ]),
-          }),
-        };
-        vi.mocked(db.insert).mockImplementation(() => mockInsertChain as any);
-
         const response = await app.inject({
           method: 'POST',
           url: '/auth/signup',
@@ -225,9 +210,9 @@ describe('Local Auth Routes', () => {
           },
         });
 
-        expect(response.statusCode).toBe(200);
-        expect(mockRedis.get).not.toHaveBeenCalled(); // Should not check Redis for non-first users
-        expect(response.json()).toHaveProperty('accessToken');
+        // SECURITY: Only the first user can sign up - all subsequent signups are rejected
+        expect(response.statusCode).toBe(403);
+        expect(response.json().message).toContain('already has an owner');
       });
     });
 
