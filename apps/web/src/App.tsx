@@ -1,4 +1,6 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router';
+import { Loader2 } from 'lucide-react';
 import { Toaster } from '@/components/ui/sonner';
 import { Layout } from '@/components/layout/Layout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
@@ -17,11 +19,13 @@ import { Violations } from '@/pages/Violations';
 import { ViolationDetail } from '@/pages/ViolationDetail';
 import { History } from '@/pages/History';
 import { Settings } from '@/pages/Settings';
-import { ApiDocs } from '@/pages/ApiDocs';
 import { Debug } from '@/pages/Debug';
 import { NotFound } from '@/pages/NotFound';
 import { Maintenance } from '@/pages/Maintenance';
 import { useMaintenanceMode } from '@/hooks/useMaintenanceMode';
+
+// Lazy load ApiDocs to avoid loading swagger-ui-react (which uses Node's Buffer) on app startup
+const ApiDocs = lazy(() => import('@/pages/ApiDocs').then((m) => ({ default: m.ApiDocs })));
 
 export function App() {
   // Automatically update document title based on current route
@@ -76,7 +80,20 @@ export function App() {
           <Route path="violations" element={<Violations />} />
           <Route path="violations/:id" element={<ViolationDetail />} />
           <Route path="settings/*" element={<Settings />} />
-          <Route path="api-docs" element={<ApiDocs />} />
+          <Route
+            path="api-docs"
+            element={
+              <Suspense
+                fallback={
+                  <div className="flex h-full items-center justify-center">
+                    <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
+                  </div>
+                }
+              >
+                <ApiDocs />
+              </Suspense>
+            }
+          />
 
           {/* Hidden debug page (owner only) */}
           <Route path="debug" element={<Debug />} />
