@@ -46,6 +46,7 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
         id: rules.id,
         name: rules.name,
         description: rules.description,
+        severity: rules.severity,
         // Legacy fields
         type: rules.type,
         params: rules.params,
@@ -234,6 +235,7 @@ export const ruleRoutes: FastifyPluginAsync = async (app) => {
         id: rules.id,
         name: rules.name,
         description: rules.description,
+        severity: rules.severity,
         // Legacy fields
         type: rules.type,
         params: rules.params,
