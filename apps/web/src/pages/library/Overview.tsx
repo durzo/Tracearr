@@ -11,6 +11,7 @@ import { useLibraryStats, useLibraryGrowth, useLibraryStatus } from '@/hooks/que
 import { useServer } from '@/hooks/useServer';
 import { useTimeRange } from '@/hooks/useTimeRange';
 import { formatBytes } from '@/lib/formatters';
+import { getHour12 } from '@/lib/timeFormat';
 
 /**
  * Format date for last updated display
@@ -24,6 +25,7 @@ function formatLastUpdated(dateStr: string | null | undefined): string {
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    hour12: getHour12(),
   });
 }
 

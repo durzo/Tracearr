@@ -39,6 +39,7 @@ import {
   Palette,
   Settings as SettingsIcon,
   Languages,
+  Clock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -51,6 +52,7 @@ import {
   changeLanguage,
   useTranslation,
 } from '@tracearr/translations';
+import { getTimeFormat, setTimeFormat, type TimeFormat } from '@/lib/timeFormat';
 
 type ThemeMode = 'light' | 'dark' | 'system';
 
@@ -219,6 +221,39 @@ function LanguageField() {
           <ExternalLink className="h-3 w-3" />
         </a>
       </FieldDescription>
+    </Field>
+  );
+}
+
+/**
+ * Time format selector field with localStorage persistence.
+ */
+function TimeFormatField() {
+  const { t } = useTranslation('settings');
+  const [timeFormat, setTimeFormatState] = useState<TimeFormat>(getTimeFormat);
+
+  const handleTimeFormatChange = (value: string) => {
+    const tf = value as TimeFormat;
+    setTimeFormatState(tf);
+    setTimeFormat(tf);
+  };
+
+  return (
+    <Field>
+      <FieldLabel htmlFor="timeFormat" className="flex items-center gap-2">
+        <Clock className="h-4 w-4" />
+        {t('general.timeFormat')}
+      </FieldLabel>
+      <Select value={timeFormat} onValueChange={handleTimeFormatChange}>
+        <SelectTrigger id="timeFormat" className="w-full max-w-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="12h">{t('general.timeFormat12h')}</SelectItem>
+          <SelectItem value="24h">{t('general.timeFormat24h')}</SelectItem>
+        </SelectContent>
+      </Select>
+      <FieldDescription>{t('general.timeFormatDescription')}</FieldDescription>
     </Field>
   );
 }
@@ -415,6 +450,8 @@ export function GeneralSettings() {
             />
 
             <LanguageField />
+
+            <TimeFormatField />
 
             <AutosaveSwitchField
               id="pollerEnabled"

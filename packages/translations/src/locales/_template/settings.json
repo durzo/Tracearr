@@ -16,7 +16,11 @@
     "primaryAuth": "Primary Authentication Method",
     "localAccount": "Local Account",
     "plexAccount": "Plex Account",
-    "jellyfinAccount": "Jellyfin Account"
+    "jellyfinAccount": "Jellyfin Account",
+    "timeFormat": "Time Format",
+    "timeFormatDescription": "Choose how times are displayed.",
+    "timeFormat12h": "12-hour (1:30 PM)",
+    "timeFormat24h": "24-hour (13:30)"
   },
   "servers": {
     "title": "Connected Servers",

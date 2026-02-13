@@ -2,6 +2,7 @@ import { useState, useMemo, lazy, Suspense } from 'react';
 import { useParams, Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { formatDistanceToNow, format } from 'date-fns';
+import { getFullDateTimeFormatString } from '@/lib/timeFormat';
 import type { ColumnDef } from '@tanstack/react-table';
 import type {
   ViolationSessionInfo,
@@ -630,7 +631,10 @@ export function ViolationDetail() {
                 ) : violation.data.lastActivityAt ? (
                   <div>
                     <p className="font-medium">
-                      {format(new Date(violation.data.lastActivityAt as string), 'PPpp')}
+                      {format(
+                        new Date(violation.data.lastActivityAt as string),
+                        getFullDateTimeFormatString()
+                      )}
                     </p>
                     <p className="text-muted-foreground text-xs">
                       {formatDistanceToNow(new Date(violation.data.lastActivityAt as string), {
@@ -670,7 +674,9 @@ export function ViolationDetail() {
               <p className="text-muted-foreground mb-1 text-xs">
                 {t('pages:violations.detail.created')}
               </p>
-              <p className="text-sm font-medium">{format(new Date(violation.createdAt), 'PPpp')}</p>
+              <p className="text-sm font-medium">
+                {format(new Date(violation.createdAt), getFullDateTimeFormatString())}
+              </p>
               <p className="text-muted-foreground text-xs">
                 {formatDistanceToNow(new Date(violation.createdAt), { addSuffix: true })}
               </p>
@@ -681,7 +687,7 @@ export function ViolationDetail() {
                   {t('pages:violations.detail.acknowledged')}
                 </p>
                 <p className="text-sm font-medium">
-                  {format(new Date(violation.acknowledgedAt), 'PPpp')}
+                  {format(new Date(violation.acknowledgedAt), getFullDateTimeFormatString())}
                 </p>
                 <p className="text-muted-foreground text-xs">
                   {formatDistanceToNow(new Date(violation.acknowledgedAt), { addSuffix: true })}

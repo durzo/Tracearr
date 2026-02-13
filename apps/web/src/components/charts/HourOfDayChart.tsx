@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import Highcharts from 'highcharts';
 import HighchartsReact from 'highcharts-react-official';
+import { getHour12 } from '@/lib/timeFormat';
 import { ChartSkeleton } from '@/components/ui/skeleton';
 
 interface HourOfDayData {
@@ -20,8 +21,11 @@ export function HourOfDayChart({ data, isLoading, height = 250 }: HourOfDayChart
       return {};
     }
 
-    // Format hour labels (12am, 1am, ... 11pm)
+    // Format hour labels based on time format preference
     const formatHour = (hour: number): string => {
+      if (!getHour12()) {
+        return `${hour.toString().padStart(2, '0')}:00`;
+      }
       if (hour === 0) return '12am';
       if (hour === 12) return '12pm';
       return hour < 12 ? `${hour}am` : `${hour - 12}pm`;

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import Highcharts from 'highcharts';
 import HighchartsReact from 'highcharts-react-official';
+import { getHour12 } from '@/lib/timeFormat';
 import { ChartSkeleton } from '@/components/ui/skeleton';
 
 interface ConcurrentData {
@@ -79,7 +80,7 @@ export function ConcurrentChart({
             }
             if (period === 'day') {
               // Hourly - show time only
-              return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+              return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: getHour12() });
             }
             // week (6-hour) / month (daily): M/D format
             return `${date.getMonth() + 1}/${date.getDate()}`;
@@ -154,7 +155,7 @@ export function ConcurrentChart({
               });
             } else {
               // day (hourly) or week (6-hour) - show date and time
-              dateStr = `${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })}`;
+              dateStr = `${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: getHour12() })}`;
             }
           }
           let html = `<b>${dateStr}</b>`;

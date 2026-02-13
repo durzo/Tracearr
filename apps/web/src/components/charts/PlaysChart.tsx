@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import Highcharts from 'highcharts';
 import HighchartsReact from 'highcharts-react-official';
 import type { PlayStats } from '@tracearr/shared';
+import { getHour12 } from '@/lib/timeFormat';
 import { ChartSkeleton } from '@/components/ui/skeleton';
 
 interface PlaysChartProps {
@@ -57,7 +58,7 @@ export function PlaysChart({ data, isLoading, height = 200, period = 'month' }: 
             }
             if (period === 'day') {
               // Hourly - show time only
-              return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+              return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: getHour12() });
             }
             // week (6-hour) / month (daily): M/D format
             return `${date.getMonth() + 1}/${date.getDate()}`;
@@ -136,7 +137,7 @@ export function PlaysChart({ data, isLoading, height = 200, period = 'month' }: 
               });
             } else {
               // day (hourly) or week (6-hour) - show date and time
-              dateStr = `${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })}`;
+              dateStr = `${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: getHour12() })}`;
             }
           }
           return `<b>${dateStr}</b><br/>Plays: ${this.y}`;

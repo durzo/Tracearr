@@ -29,6 +29,10 @@
     "metric": "Métrique (km, km/h)",
     "plexAccount": "Compte Plex",
     "primaryAuth": "Méthode d'authentification principale",
+    "timeFormat": "Time Format",
+    "timeFormat12h": "12-hour (1:30 PM)",
+    "timeFormat24h": "24-hour (13:30)",
+    "timeFormatDescription": "Choose how times are displayed.",
     "timezone": "Fuseau horaire",
     "title": "Réglages généraux",
     "unitSystem": "Système d'unité"

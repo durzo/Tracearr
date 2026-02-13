@@ -21,7 +21,11 @@
     "jellyfinAccount": "Jellyfin Account",
     "language": "Language",
     "languageDescription": "Choose your preferred display language.",
-    "helpTranslate": "Help translate Tracearr"
+    "helpTranslate": "Help translate Tracearr",
+    "timeFormat": "Time Format",
+    "timeFormatDescription": "Choose how times are displayed.",
+    "timeFormat12h": "12-hour (1:30 PM)",
+    "timeFormat24h": "24-hour (13:30)"
   },
   "servers": {
     "title": "Connected Servers",

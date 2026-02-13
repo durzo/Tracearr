@@ -3,6 +3,7 @@
  * Centralizes duplicated logic from multiple components.
  */
 import { formatDistanceToNow, format } from 'date-fns';
+import { getTimeFormatString, getDateTimeFormatString } from '@/lib/timeFormat';
 
 /**
  * Safely parse a date that might be a Date object, string, null, or undefined.
@@ -167,7 +168,7 @@ export function formatListTimestamp(date: Date | string | null | undefined): str
   yesterday.setDate(yesterday.getDate() - 1);
 
   const dateOnly = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
-  const timeStr = format(parsed, 'h:mm a');
+  const timeStr = format(parsed, getTimeFormatString());
 
   if (dateOnly.getTime() === today.getTime()) {
     return `Today ${timeStr}`;
@@ -175,7 +176,7 @@ export function formatListTimestamp(date: Date | string | null | undefined): str
   if (dateOnly.getTime() === yesterday.getTime()) {
     return `Yesterday ${timeStr}`;
   }
-  return format(parsed, 'MMM d, h:mm a');
+  return format(parsed, getDateTimeFormatString());
 }
 
 /**

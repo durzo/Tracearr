@@ -52,6 +52,7 @@ import type {
   ServerType,
 } from '@tracearr/shared';
 import { format, formatDistanceToNow } from 'date-fns';
+import { getDateTimeFormatString } from '@/lib/timeFormat';
 
 // Accept both SessionWithDetails (history) and ActiveSession (now playing)
 // Both types have the same nested user/server structure
@@ -333,7 +334,7 @@ export function SessionDetailSheet({ session, open, onOpenChange }: Props) {
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Started</span>
                 <span>
-                  {format(new Date(session.startedAt), 'MMM d, h:mm a')}
+                  {format(new Date(session.startedAt), getDateTimeFormatString())}
                   <span className="text-muted-foreground ml-1.5 text-xs">
                     ({formatDistanceToNow(new Date(session.startedAt), { addSuffix: true })})
                   </span>
@@ -342,7 +343,7 @@ export function SessionDetailSheet({ session, open, onOpenChange }: Props) {
               {session.stoppedAt && (
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Stopped</span>
-                  <span>{format(new Date(session.stoppedAt), 'MMM d, h:mm a')}</span>
+                  <span>{format(new Date(session.stoppedAt), getDateTimeFormatString())}</span>
                 </div>
               )}
               <div className="flex items-center justify-between">

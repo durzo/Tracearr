@@ -44,6 +44,7 @@ import { getAvatarUrl } from '@/components/users/utils';
 import type { SessionWithDetails, SessionState, MediaType, EngagementTier } from '@tracearr/shared';
 import type { ColumnVisibility } from './HistoryFilters';
 import { format } from 'date-fns';
+import { getTimeFormatString } from '@/lib/timeFormat';
 
 // Engagement tier config
 const ENGAGEMENT_TIER_CONFIG: Record<
@@ -243,7 +244,7 @@ export const HistoryTableRow = forwardRef<
                 {format(new Date(session.startedAt), 'MMM d, yyyy')}
               </div>
               <div className="text-muted-foreground text-xs">
-                {format(new Date(session.startedAt), 'h:mm a')}
+                {format(new Date(session.startedAt), getTimeFormatString())}
               </div>
             </div>
           </div>

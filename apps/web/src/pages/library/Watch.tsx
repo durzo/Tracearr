@@ -15,9 +15,13 @@ import {
 } from '@/components/charts';
 import { useLibraryWatch, useLibraryCompletion, useLibraryPatterns } from '@/hooks/queries';
 import { useServer } from '@/hooks/useServer';
+import { getHour12 } from '@/lib/timeFormat';
 
 function formatPeakHour(hour: number | undefined): string {
   if (hour === undefined) return '-';
+  if (!getHour12()) {
+    return `${hour.toString().padStart(2, '0')}:00`;
+  }
   if (hour === 0) return '12 AM';
   if (hour === 12) return '12 PM';
   return hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
