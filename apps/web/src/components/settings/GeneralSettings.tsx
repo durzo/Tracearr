@@ -7,6 +7,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Field, FieldGroup, FieldLabel, FieldDescription, FieldError } from '@/components/ui/field';
 import {
   AutosaveTextField,
@@ -31,12 +38,19 @@ import {
   RotateCcw,
   Palette,
   Settings as SettingsIcon,
+  Languages,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useTheme, ACCENT_PRESETS } from '@/components/theme-provider';
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
 import { useSettings, useApiKey, useRegenerateApiKey } from '@/hooks/queries';
+import {
+  languageNames,
+  getCurrentLanguage,
+  changeLanguage,
+  useTranslation,
+} from '@tracearr/translations';
 
 type ThemeMode = 'light' | 'dark' | 'system';
 
@@ -160,6 +174,52 @@ function ApiKeyCard() {
         onConfirm={confirmRegenerate}
       />
     </>
+  );
+}
+
+/**
+ * Language selector field with localStorage persistence.
+ */
+function LanguageField() {
+  const { t } = useTranslation('settings');
+  const [language, setLanguage] = useState(getCurrentLanguage);
+
+  const handleLanguageChange = (lang: string) => {
+    setLanguage(lang);
+    void changeLanguage(lang);
+  };
+
+  return (
+    <Field>
+      <FieldLabel htmlFor="language" className="flex items-center gap-2">
+        <Languages className="h-4 w-4" />
+        {t('general.language')}
+      </FieldLabel>
+      <Select value={language} onValueChange={handleLanguageChange}>
+        <SelectTrigger id="language" className="w-full max-w-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {Object.entries(languageNames).map(([code, name]) => (
+            <SelectItem key={code} value={code}>
+              {name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <FieldDescription>
+        {t('general.languageDescription')}{' '}
+        <a
+          href="https://crowdin.com/project/tracearr"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1"
+        >
+          {t('general.helpTranslate')}
+          <ExternalLink className="h-3 w-3" />
+        </a>
+      </FieldDescription>
+    </Field>
   );
 }
 
@@ -353,6 +413,8 @@ export function GeneralSettings() {
               onRetry={unitSystemField.retry}
               onReset={unitSystemField.reset}
             />
+
+            <LanguageField />
 
             <AutosaveSwitchField
               id="pollerEnabled"

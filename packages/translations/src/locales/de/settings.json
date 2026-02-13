@@ -18,7 +18,10 @@
     "primaryAuth": "Primäre Authentifizierungsmethode",
     "localAccount": "Lokales Konto",
     "plexAccount": "Plex-Konto",
-    "jellyfinAccount": "Jellyfin-Konto"
+    "jellyfinAccount": "Jellyfin-Konto",
+    "language": "Sprache",
+    "languageDescription": "Wählen Sie Ihre bevorzugte Anzeigesprache.",
+    "helpTranslate": "Hilf bei der Übersetzung von Tracearr"
   },
   "servers": {
     "title": "Verbundene Server",
