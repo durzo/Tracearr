@@ -1177,13 +1177,23 @@ describe('Plex Auth Routes', () => {
           id: existingOwner.plexAccountId,
         });
 
-        // Found in plex_accounts
+        let selectCallCount = 0;
         const selectMock = {
-          from: vi.fn().mockReturnThis(),
-          where: vi.fn().mockReturnThis(),
-          limit: vi
-            .fn()
-            .mockResolvedValue([{ id: randomUUID(), userId: existingOwner.id, allowLogin: true }]),
+          from: vi.fn().mockImplementation(() => {
+            selectCallCount++;
+            if (selectCallCount === 1) {
+              return {
+                where: vi.fn().mockReturnThis(),
+                limit: vi
+                  .fn()
+                  .mockResolvedValue([
+                    { id: randomUUID(), userId: existingOwner.id, allowLogin: true },
+                  ]),
+              };
+            } else {
+              return Promise.resolve([]);
+            }
+          }),
         };
         vi.mocked(db.select).mockReturnValue(selectMock as never);
 
@@ -1227,10 +1237,6 @@ describe('Plex Auth Routes', () => {
 
         // Admin verification succeeds
         vi.mocked(PlexClient.verifyServerAdmin).mockResolvedValue({ success: true });
-
-        // Mock PlexClient for getUsers
-        const mockPmsClient = { getUsers: vi.fn().mockResolvedValue([{ id: '1', isAdmin: true }]) };
-        vi.mocked(PlexClient).mockImplementation(() => mockPmsClient as any);
 
         // Server doesn't exist yet
         const selectMock = {
