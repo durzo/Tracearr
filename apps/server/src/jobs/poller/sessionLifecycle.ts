@@ -584,7 +584,7 @@ export async function createSessionWithRulesAtomic(
             sessionCount: serverUser.sessionCount,
             joinedAt: null,
             lastActivityAt: serverUser.lastActivityAt,
-            createdAt: new Date(),
+            createdAt: serverUser.createdAt,
             updatedAt: new Date(),
           };
 
@@ -1115,7 +1115,7 @@ export async function reEvaluateRulesOnTranscodeChange(
     sessionCount: serverUser.sessionCount,
     joinedAt: null,
     lastActivityAt: serverUser.lastActivityAt,
-    createdAt: new Date(),
+    createdAt: serverUser.createdAt,
     updatedAt: new Date(),
   };
 

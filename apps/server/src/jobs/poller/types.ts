@@ -223,6 +223,7 @@ export interface SessionCreationInput {
     trustScore: number;
     sessionCount: number;
     lastActivityAt: Date | null;
+    createdAt: Date;
   };
   /** GeoIP location data */
   geo: GeoLocation;
@@ -318,6 +319,7 @@ export interface MediaChangeInput {
     trustScore: number;
     sessionCount: number;
     lastActivityAt: Date | null;
+    createdAt: Date;
   };
   /** GeoIP location data */
   geo: GeoLocation;
@@ -369,6 +371,7 @@ export interface TranscodeReEvalInput {
     trustScore: number;
     sessionCount: number;
     lastActivityAt: Date | null;
+    createdAt: Date;
   };
   /** Active V2 rules (will be filtered to transcode-related) */
   activeRulesV2: RuleV2[];

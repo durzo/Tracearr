@@ -318,6 +318,7 @@ async function processServerSessions(
             trustScore: serverUserFromCache.trustScore,
             sessionCount: serverUserFromCache.sessionCount,
             lastActivityAt: serverUserFromCache.lastActivityAt,
+            createdAt: serverUserFromCache.createdAt,
           }
         : {
             id: serverUserId,
@@ -327,6 +328,7 @@ async function processServerSessions(
             trustScore: 100,
             sessionCount: 0,
             lastActivityAt: null,
+            createdAt: new Date(), // Brand new users genuinely have 0-day account age
           };
 
       // Get GeoIP location (uses Plex API if enabled, falls back to MaxMind)

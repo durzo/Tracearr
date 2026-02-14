@@ -434,8 +434,9 @@ export const violations = pgTable(
     // Partial unique index to prevent duplicate unacknowledged session-based violations
     // Defense-in-depth: catches race conditions that bypass application-level dedup
     // Only applies to violations with a session (session-based rules)
-    uniqueIndex('violations_unique_active_user_session_type')
-      .on(table.serverUserId, table.sessionId, table.ruleType)
+    // Uses ruleId instead of ruleType because V2 rules don't have a type field (ruleType is null)
+    uniqueIndex('violations_unique_active_user_session_rule')
+      .on(table.serverUserId, table.sessionId, table.ruleId)
       .where(sql`${table.acknowledgedAt} IS NULL AND ${table.sessionId} IS NOT NULL`),
     // Index for inactivity rule deduplication queries
     // SELECT ... WHERE serverUserId = ? AND ruleId = ? AND acknowledgedAt IS NULL

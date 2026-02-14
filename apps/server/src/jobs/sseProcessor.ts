@@ -487,6 +487,7 @@ async function createNewSession(
       trustScore: serverUsers.trustScore,
       sessionCount: serverUsers.sessionCount,
       lastActivityAt: serverUsers.lastActivityAt,
+      createdAt: serverUsers.createdAt,
     })
     .from(serverUsers)
     .innerJoin(users, eq(serverUsers.userId, users.id))
@@ -509,6 +510,7 @@ async function createNewSession(
     trustScore: serverUserFromDb.trustScore,
     sessionCount: serverUserFromDb.sessionCount,
     lastActivityAt: serverUserFromDb.lastActivityAt,
+    createdAt: serverUserFromDb.createdAt,
   };
 
   // Get GeoIP location (uses Plex API if enabled, falls back to MaxMind)
@@ -619,6 +621,7 @@ async function handleMediaChange(
       trustScore: serverUsers.trustScore,
       sessionCount: serverUsers.sessionCount,
       lastActivityAt: serverUsers.lastActivityAt,
+      createdAt: serverUsers.createdAt,
     })
     .from(serverUsers)
     .innerJoin(users, eq(serverUsers.userId, users.id))
@@ -782,6 +785,7 @@ async function updateExistingSession(
             trustScore: serverUsers.trustScore,
             sessionCount: serverUsers.sessionCount,
             lastActivityAt: serverUsers.lastActivityAt,
+            createdAt: serverUsers.createdAt,
           })
           .from(serverUsers)
           .where(eq(serverUsers.id, existingSession.serverUserId))
