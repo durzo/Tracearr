@@ -65,6 +65,10 @@
       "dependsOn": ["^build"],
       "outputs": ["coverage/routes/**"]
     },
+    "test:e2e": {
+      "dependsOn": ["^build"],
+      "cache": false
+    },
     "test:watch": {
       "cache": false,
       "persistent": true

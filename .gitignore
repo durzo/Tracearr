@@ -25,6 +25,11 @@ out
 # Testing
 coverage
 
+# Playwright E2E
+apps/e2e/.auth/
+apps/e2e/test-results/
+apps/e2e/playwright-report/
+
 # Logs
 *.log
 npm-debug.log*

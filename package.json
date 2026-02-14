@@ -25,6 +25,7 @@
     "test:routes": "turbo test:routes",
     "test:security": "turbo test:security",
     "test:integration": "turbo test:integration",
+    "test:e2e": "turbo test:e2e",
     "test:watch": "turbo test:watch",
     "test:coverage": "turbo test:coverage",
     "test:unit:coverage": "turbo test:unit:coverage",
