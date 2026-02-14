@@ -10,6 +10,9 @@ try {
 
 const isCI = !!process.env.CI;
 
+// Ensure CLAIM_CODE is available to both the test process and webServer
+process.env.CLAIM_CODE ??= 'tracearr-e2e-test-claim-code';
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: false,
@@ -57,7 +60,7 @@ export default defineConfig({
         NODE_ENV: 'development',
         LOG_LEVEL: 'warn',
         PORT: '3000',
-        CLAIM_CODE: process.env.CLAIM_CODE ?? 'tracearr-e2e-test-claim-code',
+        CLAIM_CODE: process.env.CLAIM_CODE!,
       },
     },
     {
