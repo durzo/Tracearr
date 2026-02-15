@@ -86,6 +86,20 @@ export function LibraryStorage() {
     (staleSummary.data?.summary.neverWatched.sizeBytes ?? 0) +
     (staleSummary.data?.summary.stale.sizeBytes ?? 0);
 
+  // Growth rate display - show "0 GB/mo" for zero/negative/NaN growth
+  const insufficientData =
+    storage.data?.predictions.currentDataDays &&
+    storage.data.predictions.currentDataDays < (storage.data.predictions.minDataDays ?? 7);
+  const growthBytes = Number(storage.data?.growthRate?.bytesPerMonth ?? 0);
+  const growthRateDisplay = insufficientData
+    ? 'Insufficient data'
+    : growthBytes > 0
+      ? `+${formatBytes(storage.data?.growthRate.bytesPerMonth)}/mo`
+      : '0 GB/mo';
+  const growthRateSubValue = insufficientData
+    ? `${storage.data?.predictions.currentDataDays} of ${storage.data?.predictions.minDataDays} days`
+    : undefined;
+
   // Header component (used in all states)
   const header = (
     <div>
@@ -136,18 +150,8 @@ export function LibraryStorage() {
         <StatCard
           icon={TrendingUp}
           label="Growth Rate"
-          value={
-            storage.data?.predictions.currentDataDays &&
-            storage.data.predictions.currentDataDays < (storage.data.predictions.minDataDays ?? 7)
-              ? 'Insufficient data'
-              : `+${formatBytes(storage.data?.growthRate.bytesPerMonth)}/mo`
-          }
-          subValue={
-            storage.data?.predictions.currentDataDays &&
-            storage.data.predictions.currentDataDays < (storage.data.predictions.minDataDays ?? 7)
-              ? `${storage.data.predictions.currentDataDays} of ${storage.data.predictions.minDataDays} days`
-              : undefined
-          }
+          value={growthRateDisplay}
+          subValue={growthRateSubValue}
           isLoading={storage.isLoading}
         />
         <StatCard
