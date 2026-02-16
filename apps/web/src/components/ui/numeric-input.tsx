@@ -79,10 +79,7 @@ const NumericInput = React.forwardRef<HTMLInputElement, NumericInputProps>(
       // Parse and emit if it's a valid number
       const parsed = allowDecimals ? parseFloat(newValue) : parseInt(newValue, 10);
       if (!isNaN(parsed)) {
-        let clamped = parsed;
-        if (min !== undefined && clamped < min) clamped = min;
-        if (max !== undefined && clamped > max) clamped = max;
-        onChange(clamped);
+        onChange(parsed);
       }
     };
 

@@ -4,8 +4,13 @@ import { useUpdateSettings } from './queries/useSettings';
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
-interface UseDebouncedSaveOptions {
+/** Longer debounce delay for typed inputs (text, number, textarea, secret) */
+export const TEXT_INPUT_DELAY = 1000;
+
+interface UseDebouncedSaveOptions<K extends keyof Settings = keyof Settings> {
   delay?: number;
+  /** Transform the value before saving (e.g. clamping). Runs when the debounce fires, not on every keystroke. */
+  transform?: (value: Settings[K]) => Settings[K];
   onSaved?: () => void;
   onError?: (error: Error) => void;
 }
@@ -18,9 +23,9 @@ interface UseDebouncedSaveOptions {
 export function useDebouncedSave<K extends keyof Settings>(
   key: K,
   serverValue: Settings[K] | undefined,
-  options: UseDebouncedSaveOptions = {}
+  options: UseDebouncedSaveOptions<K> = {}
 ) {
-  const { delay = 500, onSaved, onError } = options;
+  const { delay = 500, transform, onSaved, onError } = options;
 
   const [value, setValue] = useState<Settings[K] | undefined>(serverValue);
   const [status, setStatus] = useState<SaveStatus>('idle');
@@ -29,6 +34,7 @@ export function useDebouncedSave<K extends keyof Settings>(
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef<Settings[K] | undefined>(serverValue);
+  const valueRef = useRef<Settings[K] | undefined>(serverValue);
   const hasErrorRef = useRef(false);
   const userHasEditedRef = useRef(false);
   const isSavingRef = useRef(false);
@@ -104,21 +110,26 @@ export function useDebouncedSave<K extends keyof Settings>(
       setErrorMessage(null);
     }
 
-    // Show saving indicator during debounce
-    setStatus('saving');
-
     timeoutRef.current = setTimeout(() => {
+      const finalValue = transform
+        ? (transform(value as Settings[K]) as Settings[K] | undefined)
+        : value;
+      // Update display if transform changed the value (e.g. clamping)
+      if (finalValue !== value) {
+        lastSavedRef.current = finalValue;
+        setValue(finalValue);
+      }
       // Check if a save is already in progress
       if (isSavingRef.current) {
         // Schedule another check after the current save completes
         timeoutRef.current = setTimeout(() => {
-          if (value !== lastSavedRef.current) {
-            performSave(value);
+          if (finalValue !== lastSavedRef.current) {
+            performSave(finalValue);
           }
         }, delay);
         return;
       }
-      performSave(value);
+      performSave(finalValue);
     }, delay);
 
     return () => {
@@ -130,13 +141,14 @@ export function useDebouncedSave<K extends keyof Settings>(
 
   const setValueWithTracking = useCallback((newValue: Settings[K] | undefined) => {
     userHasEditedRef.current = true;
+    valueRef.current = newValue;
     setValue(newValue);
   }, []);
 
   // Force immediate save (useful for programmatic changes like "Detect" button)
   const saveNow = useCallback(() => {
     // Prevent concurrent saves
-    if (status === 'saving') {
+    if (isSavingRef.current) {
       return;
     }
 
@@ -144,10 +156,11 @@ export function useDebouncedSave<K extends keyof Settings>(
       clearTimeout(timeoutRef.current);
     }
     userHasEditedRef.current = true;
-    if (value !== lastSavedRef.current) {
-      performSave(value);
+    const currentValue = valueRef.current;
+    if (currentValue !== lastSavedRef.current) {
+      performSave(currentValue);
     }
-  }, [value, performSave, status]);
+  }, [performSave]);
 
   const reset = useCallback(() => {
     hasErrorRef.current = false;

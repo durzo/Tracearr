@@ -44,7 +44,7 @@ import {
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useTheme, ACCENT_PRESETS } from '@/components/theme-provider';
-import { useDebouncedSave } from '@/hooks/useDebouncedSave';
+import { useDebouncedSave, TEXT_INPUT_DELAY } from '@/hooks/useDebouncedSave';
 import { useSettings, useApiKey, useRegenerateApiKey } from '@/hooks/queries';
 import {
   languageNames,
@@ -265,18 +265,24 @@ export function GeneralSettings() {
   // General settings fields
   const unitSystemField = useDebouncedSave('unitSystem', settings?.unitSystem);
   const pollerEnabledField = useDebouncedSave('pollerEnabled', settings?.pollerEnabled);
-  const pollerIntervalField = useDebouncedSave('pollerIntervalMs', settings?.pollerIntervalMs);
+  const pollerIntervalField = useDebouncedSave('pollerIntervalMs', settings?.pollerIntervalMs, {
+    delay: TEXT_INPUT_DELAY,
+    transform: (ms) => Math.max(5000, Math.min(300000, ms)),
+  });
   const usePlexGeoipField = useDebouncedSave('usePlexGeoip', settings?.usePlexGeoip);
 
   // Network settings fields
-  const externalUrlField = useDebouncedSave('externalUrl', settings?.externalUrl);
-  const basePathField = useDebouncedSave('basePath', settings?.basePath);
+  const externalUrlField = useDebouncedSave('externalUrl', settings?.externalUrl, {
+    delay: TEXT_INPUT_DELAY,
+  });
+  const basePathField = useDebouncedSave('basePath', settings?.basePath, {
+    delay: TEXT_INPUT_DELAY,
+  });
 
   const intervalSeconds = Math.round((pollerIntervalField.value ?? 15000) / 1000);
 
   const handleIntervalChange = (seconds: number) => {
-    const clamped = Math.max(5, Math.min(300, seconds));
-    pollerIntervalField.setValue(clamped * 1000);
+    pollerIntervalField.setValue(seconds * 1000);
   };
 
   const handleDetectUrl = () => {
