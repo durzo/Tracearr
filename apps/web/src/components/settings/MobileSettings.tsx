@@ -40,6 +40,7 @@ import {
   useRevokeMobileSessions,
 } from '@/hooks/queries';
 import type { MobileSession, MobileQRPayload } from '@tracearr/shared';
+import { BASE_PATH } from '@/lib/basePath';
 
 function MobileSessionCard({ session }: { session: MobileSession }) {
   const revokeSession = useRevokeSession();
@@ -233,9 +234,12 @@ export function MobileSettings() {
     if (settings?.externalUrl) {
       return settings.externalUrl;
     }
-    let serverUrl = window.location.origin;
+    let serverUrl: string = window.location.origin as string;
     if (import.meta.env.DEV) {
       serverUrl = serverUrl.replace(':5173', ':3000');
+    }
+    if (BASE_PATH) {
+      serverUrl += BASE_PATH;
     }
     return serverUrl;
   };

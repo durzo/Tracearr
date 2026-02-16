@@ -1,5 +1,6 @@
 import { Globe, MessageSquare, Bell, Share2, Smartphone, Webhook } from 'lucide-react';
 import type { AgentConfig, NotificationAgentType } from './types';
+import { BASE_URL } from '@/lib/basePath';
 
 /**
  * Static configuration for all notification agent types.
@@ -21,7 +22,7 @@ export const AGENT_CONFIGS: Record<NotificationAgentType, AgentConfig> = {
     type: 'discord',
     name: 'Discord',
     icon: MessageSquare,
-    imagePath: '/images/notification-agents/discord.png',
+    imagePath: `${BASE_URL}images/notification-agents/discord.png`,
     description: 'Send notifications to a Discord channel',
     isRemovable: true,
     routingChannel: 'discord',
@@ -40,7 +41,7 @@ export const AGENT_CONFIGS: Record<NotificationAgentType, AgentConfig> = {
     type: 'ntfy',
     name: 'ntfy',
     icon: Bell,
-    imagePath: '/images/notification-agents/ntfy.png',
+    imagePath: `${BASE_URL}images/notification-agents/ntfy.png`,
     description: 'Push notifications via ntfy.sh',
     isRemovable: true,
     webhookFormat: 'ntfy',
@@ -94,7 +95,7 @@ export const AGENT_CONFIGS: Record<NotificationAgentType, AgentConfig> = {
     type: 'apprise',
     name: 'Apprise',
     icon: Share2,
-    imagePath: '/images/notification-agents/apprise.png',
+    imagePath: `${BASE_URL}images/notification-agents/apprise.png`,
     description: 'Multi-service notifications via Apprise API',
     isRemovable: true,
     webhookFormat: 'apprise',
@@ -114,7 +115,7 @@ export const AGENT_CONFIGS: Record<NotificationAgentType, AgentConfig> = {
     type: 'pushover',
     name: 'Pushover',
     icon: Smartphone,
-    imagePath: '/images/notification-agents/pushover.png',
+    imagePath: `${BASE_URL}images/notification-agents/pushover.png`,
     description: 'Push notifications via Pushover',
     isRemovable: true,
     webhookFormat: 'pushover',

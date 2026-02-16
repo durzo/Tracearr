@@ -1,4 +1,4 @@
-import { tokenStorage } from '@/lib/api';
+import { tokenStorage, BASE_PATH } from '@/lib/api';
 import { API_BASE_PATH } from '@tracearr/shared';
 
 /**
@@ -17,7 +17,7 @@ export async function debugFetch<T>(path: string, options: RequestInit = {}): Pr
   if (options.headers && typeof options.headers === 'object' && !Array.isArray(options.headers)) {
     Object.assign(headers, options.headers);
   }
-  const res = await fetch(`${API_BASE_PATH}/debug${path}`, {
+  const res = await fetch(`${BASE_PATH}${API_BASE_PATH}/debug${path}`, {
     ...options,
     headers,
   });

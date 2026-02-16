@@ -31,7 +31,7 @@ function verifyToken(token: string): AuthUser {
   return decoded;
 }
 
-export function initializeWebSocket(httpServer: HttpServer): TypedServer {
+export function initializeWebSocket(httpServer: HttpServer, basePath = ''): TypedServer {
   io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
     cors: {
       origin: process.env.CORS_ORIGIN || true,
@@ -39,6 +39,9 @@ export function initializeWebSocket(httpServer: HttpServer): TypedServer {
     },
     pingTimeout: 60000,
     pingInterval: 25000,
+    // When basePath is set, Socket.io must listen on the prefixed path.
+    // Socket.io runs on the raw HTTP server (not Fastify), so rewriteUrl doesn't apply.
+    ...(basePath && { path: `${basePath}/socket.io` }),
   });
 
   // Authentication middleware

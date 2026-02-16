@@ -12,7 +12,6 @@
     "waitingForPlex": "Waiting for Plex authorization..."
   },
   "advanced": {
-    "basePath": "Base Path",
     "connectionScenarios": "Connection Scenarios",
     "externalUrl": "External URL",
     "reverseProxy": "Reverse Proxy",

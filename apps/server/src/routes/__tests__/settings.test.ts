@@ -93,7 +93,6 @@ const mockSettingsRow = {
   tautulliUrl: 'http://localhost:8181',
   tautulliApiKey: 'secret-api-key',
   externalUrl: 'https://tracearr.example.com',
-  basePath: '/app',
   trustProxy: true,
   mobileEnabled: false,
   createdAt: new Date(),
@@ -126,7 +125,6 @@ describe('Settings Routes', () => {
       expect(body.pollerEnabled).toBe(true);
       expect(body.pollerIntervalMs).toBe(15000);
       expect(body.externalUrl).toBe('https://tracearr.example.com');
-      expect(body.basePath).toBe('/app');
       expect(body.trustProxy).toBe(true);
     });
 
@@ -178,7 +176,6 @@ describe('Settings Routes', () => {
         tautulliUrl: null,
         tautulliApiKey: null,
         externalUrl: null,
-        basePath: '',
         trustProxy: false,
         mobileEnabled: false,
       };
@@ -420,43 +417,6 @@ describe('Settings Routes', () => {
       const body = response.json();
       expect(body.externalUrl).toBe('https://new-url.com');
       expect(body.trustProxy).toBe(false);
-    });
-
-    it('normalizes basePath by adding leading slash', async () => {
-      app = await buildTestApp(ownerUser);
-
-      let selectCount = 0;
-      vi.mocked(db.select).mockImplementation(() => {
-        selectCount++;
-        const chain = {
-          from: vi.fn().mockReturnThis(),
-          where: vi.fn().mockReturnThis(),
-          limit: vi.fn().mockResolvedValue(
-            selectCount === 1
-              ? [mockSettingsRow]
-              : [
-                  {
-                    ...mockSettingsRow,
-                    basePath: '/custom-path', // Should have leading slash
-                  },
-                ]
-          ),
-        };
-        return chain as never;
-      });
-      mockDbUpdate();
-
-      const response = await app.inject({
-        method: 'PATCH',
-        url: '/settings',
-        payload: {
-          basePath: 'custom-path', // Without leading slash
-        },
-      });
-
-      expect(response.statusCode).toBe(200);
-      const body = response.json();
-      expect(body.basePath).toBe('/custom-path');
     });
 
     it('creates settings when none exist', async () => {

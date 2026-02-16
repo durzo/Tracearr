@@ -864,7 +864,6 @@ export interface Settings {
   tautulliApiKey: string | null;
   // Network/access settings
   externalUrl: string | null;
-  basePath: string;
   trustProxy: boolean;
   // Mobile access
   mobileEnabled: boolean;

@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
-import { api, tokenStorage } from '@/lib/api';
+import { api, tokenStorage, BASE_URL } from '@/lib/api';
 import type { PlexDiscoveredServer } from '@tracearr/shared';
 import { LogoIcon } from '@/components/brand/Logo';
 import { PlexServerSelector } from '@/components/auth/PlexServerSelector';
@@ -188,7 +188,7 @@ export function Login() {
 
     try {
       // Pass callback URL so Plex redirects back to our domain after auth
-      const callbackUrl = `${window.location.origin}/auth/plex-callback`;
+      const callbackUrl = `${window.location.origin}${BASE_URL}auth/plex-callback`;
       const result = await api.auth.loginPlex(callbackUrl);
       setPlexAuthUrl(result.authUrl);
 

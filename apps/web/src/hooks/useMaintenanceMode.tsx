@@ -7,6 +7,7 @@ import {
   useRef,
   type ReactNode,
 } from 'react';
+import { BASE_PATH } from '@/lib/basePath';
 
 interface HealthResponse {
   mode?: string;
@@ -45,15 +46,15 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
 
   const checkHealth = useCallback(async () => {
     try {
-      const res = await fetch('/health');
+      const res = await fetch(`${BASE_PATH}/health`);
       const data = (await res.json()) as HealthResponse;
       const inMaintenance = data.mode === 'maintenance' || data.mode === 'starting';
-      setState(() => ({
+      setState({
         isInMaintenance: inMaintenance,
         wasReady: data.wasReady === true || !inMaintenance,
         db: data.db ?? false,
         redis: data.redis ?? false,
-      }));
+      });
     } catch {
       // Server completely unreachable
       setState((prev) => ({ ...prev, isInMaintenance: true, db: false, redis: false }));
