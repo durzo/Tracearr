@@ -17,9 +17,9 @@ export const languageNames = {
   en: 'English',
   de: 'Deutsch',
   pt: 'Português (Portugal)',
+  fr: 'Français',
   // Add new languages here:
   // es: 'Español',
-  // fr: 'Français',
   // ja: '日本語',
   // zh: '中文',
 } as const;

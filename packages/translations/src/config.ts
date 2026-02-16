@@ -32,6 +32,16 @@ import pagesPt from './locales/pt/pages.json' with { type: 'json' };
 import mobilePt from './locales/pt/mobile.json' with { type: 'json' };
 
 // ============================================================================
+// French Translations
+// ============================================================================
+import commonFr from './locales/fr/common.json' with { type: 'json' };
+import notificationsFr from './locales/fr/notifications.json' with { type: 'json' };
+import settingsFr from './locales/fr/settings.json' with { type: 'json' };
+import navFr from './locales/fr/nav.json' with { type: 'json' };
+import pagesFr from './locales/fr/pages.json' with { type: 'json' };
+import mobileFr from './locales/fr/mobile.json' with { type: 'json' };
+
+// ============================================================================
 // Add New Languages Here
 // ============================================================================
 // To add a new language (e.g., Spanish):
@@ -83,6 +93,14 @@ export const resources = {
     nav: navPt,
     pages: pagesPt,
     mobile: mobilePt,
+  },
+  fr: {
+    common: commonFr,
+    notifications: notificationsFr,
+    settings: settingsFr,
+    nav: navFr,
+    pages: pagesFr,
+    mobile: mobileFr,
   },
   // Add new languages here:
   // es: {
