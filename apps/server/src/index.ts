@@ -109,7 +109,7 @@ import { processPushReceipts } from './services/pushNotification.js';
 import { cleanupMobileTokens } from './jobs/cleanupMobileTokens.js';
 import { db, checkDatabaseConnection, runMigrations } from './db/client.js';
 import { initTimescaleDB, getTimescaleStatus } from './db/timescale.js';
-import { sql, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { servers } from './db/schema.js';
 import { initializeClaimCode } from './utils/claimCode.js';
 import { registerService, unregisterService } from './services/serviceTracker.js';
@@ -121,6 +121,8 @@ import {
   setServicesInitialized,
   onModeChange,
   wasEverReady,
+  isDbHealthy,
+  setDbHealthy,
 } from './serverState.js';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
@@ -208,21 +210,14 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
 
   // Health check endpoint — always reachable, even in maintenance mode
   app.get('/health', async () => {
-    let dbHealthy = false;
-    let redisHealthy = false;
-
-    // Check database
-    try {
-      await db.execute(sql`SELECT 1`);
-      dbHealthy = true;
-    } catch {
-      dbHealthy = false;
-    }
+    // Use cached health from the background interval (every 15s) so that
+    // /health never blocks on a slow or unreachable database.
+    const dbHealthy = isDbHealthy();
 
     // Check Redis — trust ioredis connection state instead of probing.
     // The client's status is updated internally via TCP events, so 'ready'
     // means the connection is live. No ping round-trip needed.
-    redisHealthy = app.redis.status === 'ready';
+    const redisHealthy = app.redis.status === 'ready';
 
     const mode = getServerMode();
 
@@ -657,6 +652,7 @@ async function initializeServices(app: FastifyInstance) {
       if (!isServicesInitialized()) return;
 
       const dbOk = await checkDatabaseConnection();
+      setDbHealthy(dbOk);
 
       if (!dbOk && !isMaintenance()) {
         app.log.warn('Database connection lost — entering MAINTENANCE mode');
@@ -673,6 +669,7 @@ async function initializeServices(app: FastifyInstance) {
     intervalMs: DB_HEALTH_CHECK_MS,
   });
 
+  setDbHealthy(true);
   setServicesInitialized(true);
   setServerMode('ready');
 }
@@ -802,6 +799,7 @@ function startRecoveryLoop(app: FastifyInstance) {
       app.log.info('Recovery check: probing database and Redis...');
 
       const dbOk = await checkDatabaseConnection();
+      setDbHealthy(dbOk);
       let redisOk = false;
       try {
         const testRedis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
@@ -909,6 +907,7 @@ async function start() {
           dbHealthInterval = null;
           unregisterService('db-health-check');
         }
+        setDbHealthy(false);
 
         // Clear timers that won't fire correctly without Redis/DB
         if (pushReceiptInterval) {
