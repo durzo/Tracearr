@@ -13,6 +13,28 @@ import {
 } from '../../../utils/parsing.js';
 
 // ============================================================================
+// Live TV UUID Extraction
+// ============================================================================
+
+const LIVE_TV_SESSION_PREFIX = '/livetv/sessions/';
+
+/**
+ * Extract live UUID from a Plex SSE notification key.
+ * Live TV sessions use a stable UUID in the key path that persists across
+ * channel changes, unlike ratingKey which changes with each channel.
+ *
+ * @param key - The SSE notification key field (e.g., "/livetv/sessions/abc123")
+ * @returns The live UUID if this is a Live TV session, otherwise undefined
+ */
+export function extractLiveUuid(key: string | undefined | null): string | undefined {
+  if (!key || !key.startsWith(LIVE_TV_SESSION_PREFIX)) {
+    return undefined;
+  }
+  const uuid = key.slice(LIVE_TV_SESSION_PREFIX.length);
+  return uuid || undefined;
+}
+
+// ============================================================================
 // Live TV Metadata Extraction
 // ============================================================================
 

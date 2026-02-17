@@ -7,6 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { findStreamByType, deriveDynamicRange, STREAM_TYPE } from '../plex/parser.js';
+import { extractLiveUuid } from '../plex/plexUtils.js';
 
 // ============================================================================
 // findStreamByType Tests
@@ -261,5 +262,45 @@ describe('deriveDynamicRange', () => {
       };
       expect(deriveDynamicRange(stream)).toBe('HDR10');
     });
+  });
+});
+
+// ============================================================================
+// extractLiveUuid Tests
+// ============================================================================
+
+describe('extractLiveUuid', () => {
+  it('should extract UUID from Live TV session key', () => {
+    expect(extractLiveUuid('/livetv/sessions/abc123')).toBe('abc123');
+  });
+
+  it('should extract long UUID from Live TV session key', () => {
+    expect(extractLiveUuid('/livetv/sessions/550e8400-e29b-41d4-a716-446655440000')).toBe(
+      '550e8400-e29b-41d4-a716-446655440000'
+    );
+  });
+
+  it('should return undefined for non-Live TV keys', () => {
+    expect(extractLiveUuid('/library/metadata/12345')).toBeUndefined();
+  });
+
+  it('should return undefined for movie/episode keys', () => {
+    expect(extractLiveUuid('/library/parts/123/file.mkv')).toBeUndefined();
+  });
+
+  it('should return undefined for null key', () => {
+    expect(extractLiveUuid(null)).toBeUndefined();
+  });
+
+  it('should return undefined for undefined key', () => {
+    expect(extractLiveUuid(undefined)).toBeUndefined();
+  });
+
+  it('should return undefined for empty string', () => {
+    expect(extractLiveUuid('')).toBeUndefined();
+  });
+
+  it('should return undefined for empty Live TV path', () => {
+    expect(extractLiveUuid('/livetv/sessions/')).toBeUndefined();
   });
 });
