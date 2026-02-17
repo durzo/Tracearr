@@ -1,5 +1,6 @@
 import { Film, Tv, Music, Radio } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { BASE_URL } from '@/lib/api';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface MediaCardProps {
@@ -42,7 +43,7 @@ function getImageUrl(
   height = 450
 ) {
   if (!serverId || !thumbPath) return null;
-  return `/api/v1/images/proxy?server=${encodeURIComponent(serverId)}&url=${encodeURIComponent(thumbPath)}&width=${width}&height=${height}&fallback=poster`;
+  return `${BASE_URL}/api/v1/images/proxy?server=${encodeURIComponent(serverId)}&url=${encodeURIComponent(thumbPath)}&width=${width}&height=${height}&fallback=poster`;
 }
 
 export function MediaCard({

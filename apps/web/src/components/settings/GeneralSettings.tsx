@@ -16,7 +16,6 @@ import {
 } from '@/components/ui/select';
 import { Field, FieldGroup, FieldLabel, FieldDescription, FieldError } from '@/components/ui/field';
 import {
-  AutosaveTextField,
   AutosaveNumberField,
   AutosaveSelectField,
   AutosaveSwitchField,
@@ -275,10 +274,6 @@ export function GeneralSettings() {
   const externalUrlField = useDebouncedSave('externalUrl', settings?.externalUrl, {
     delay: TEXT_INPUT_DELAY,
   });
-  const basePathField = useDebouncedSave('basePath', settings?.basePath, {
-    delay: TEXT_INPUT_DELAY,
-  });
-
   const intervalSeconds = Math.round((pollerIntervalField.value ?? 15000) / 1000);
 
   const handleIntervalChange = (seconds: number) => {
@@ -593,19 +588,6 @@ export function GeneralSettings() {
                 </div>
               )}
             </Field>
-
-            <AutosaveTextField
-              id="basePath"
-              label="Base Path"
-              description="Only needed if running behind a reverse proxy with a path prefix (e.g., example.com/tracearr). Leave empty for root-level deployments."
-              placeholder="/tracearr"
-              value={basePathField.value ?? ''}
-              onChange={basePathField.setValue}
-              status={basePathField.status}
-              errorMessage={basePathField.errorMessage}
-              onRetry={basePathField.retry}
-              onReset={basePathField.reset}
-            />
           </FieldGroup>
         </CardContent>
       </Card>

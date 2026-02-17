@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { io, type Socket } from 'socket.io-client';
+import { BASE_PATH } from '@/lib/basePath';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import type {
@@ -115,7 +116,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     // Create socket connection with auth token
     const newSocket: TypedSocket = io({
-      path: '/socket.io',
+      path: `${BASE_PATH}/socket.io`,
       withCredentials: true,
       autoConnect: true,
       reconnection: true,

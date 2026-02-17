@@ -80,6 +80,9 @@ export type {
   PlexAccountsResponse,
 };
 import { API_BASE_PATH, getClientTimezone } from '@tracearr/shared';
+
+import { BASE_PATH } from '@/lib/basePath';
+export { BASE_PATH, BASE_URL } from '@/lib/basePath';
 import { MAINTENANCE_EVENT } from '@/hooks/useMaintenanceMode';
 
 // Stats time range parameters
@@ -198,7 +201,7 @@ class ApiClient {
   private isRefreshing = false;
   private refreshPromise: Promise<boolean> | null = null;
 
-  constructor(baseUrl: string = API_BASE_PATH) {
+  constructor(baseUrl: string = `${BASE_PATH}${API_BASE_PATH}`) {
     this.baseUrl = baseUrl;
   }
 

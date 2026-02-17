@@ -51,7 +51,6 @@ describe('NotificationManager', () => {
     tautulliUrl: null,
     tautulliApiKey: null,
     externalUrl: null,
-    basePath: '',
     trustProxy: false,
     mobileEnabled: false,
     primaryAuthMethod: 'local',

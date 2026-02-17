@@ -36,7 +36,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useVersion } from '@/hooks/queries';
-import { tokenStorage, api } from '@/lib/api';
+import { tokenStorage, api, BASE_URL } from '@/lib/api';
 import { debugFetch } from '@/lib/debugFetch';
 import { TasksTab } from '@/components/debug/TasksTab';
 import { toast } from 'sonner';
@@ -169,7 +169,7 @@ export function Debug() {
       // Factory reset: clear tokens and redirect to login
       if (variables.action === 'reset') {
         tokenStorage.clearTokens(true);
-        window.location.href = '/login';
+        window.location.href = `${BASE_URL}login`;
         return;
       }
       void queryClient.invalidateQueries();

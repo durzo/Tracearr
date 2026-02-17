@@ -6,6 +6,7 @@
 
 import { Link } from 'react-router';
 import { ArrowLeft, Loader2 } from 'lucide-react';
+import { BASE_PATH } from '@/lib/basePath';
 import { Button } from '@/components/ui/button';
 import SwaggerUI from 'swagger-ui-react';
 import 'swagger-ui-react/swagger-ui.css';
@@ -13,7 +14,7 @@ import './ApiDocs.css';
 import { useApiKey } from '@/hooks/queries/useSettings';
 
 // Get the API base URL for fetching the OpenAPI spec
-const API_BASE = import.meta.env.VITE_API_URL || '';
+const API_BASE = import.meta.env.VITE_API_URL || BASE_PATH;
 
 export function ApiDocs() {
   const { data: apiKeyData, isLoading } = useApiKey();

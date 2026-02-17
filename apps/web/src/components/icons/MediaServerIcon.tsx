@@ -1,5 +1,6 @@
 import { Server } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { BASE_URL } from '@/lib/basePath';
 
 // Import server type from shared
 import type { ServerType } from '@tracearr/shared';
@@ -31,13 +32,14 @@ export function MediaServerIcon({ type, className, alt }: MediaServerIconProps) 
 }
 
 function getIconPath(type: ServerType): string | null {
+  const base = BASE_URL;
   switch (type) {
     case 'plex':
-      return '/images/servers/plex.png';
+      return `${base}images/servers/plex.png`;
     case 'jellyfin':
-      return '/images/servers/jellyfin.png';
+      return `${base}images/servers/jellyfin.png`;
     case 'emby':
-      return '/images/servers/emby.png';
+      return `${base}images/servers/emby.png`;
     default:
       return null;
   }

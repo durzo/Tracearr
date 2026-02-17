@@ -69,7 +69,6 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
           tautulliUrl: settings.tautulliUrl,
           tautulliApiKey: settings.tautulliApiKey,
           externalUrl: settings.externalUrl,
-          basePath: settings.basePath,
           trustProxy: settings.trustProxy,
           mobileEnabled: settings.mobileEnabled,
           updatedAt: settings.updatedAt,
@@ -133,7 +132,6 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
       tautulliUrl: row.tautulliUrl,
       tautulliApiKey: row.tautulliApiKey ? '********' : null, // Mask API key
       externalUrl: row.externalUrl,
-      basePath: row.basePath,
       trustProxy: row.trustProxy,
       mobileEnabled: row.mobileEnabled,
       primaryAuthMethod,
@@ -175,7 +173,6 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
       tautulliUrl: string | null;
       tautulliApiKey: string | null;
       externalUrl: string | null;
-      basePath: string;
       trustProxy: boolean;
       primaryAuthMethod: 'jellyfin' | 'local';
       updatedAt: Date;
@@ -245,16 +242,6 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
       updateData.externalUrl = body.data.externalUrl?.replace(/\/+$/, '') ?? null;
     }
 
-    if (body.data.basePath !== undefined) {
-      // Normalize base path: ensure leading slash, no trailing slash
-      let path = body.data.basePath.trim();
-      if (path && !path.startsWith('/')) {
-        path = '/' + path;
-      }
-      path = path.replace(/\/+$/, '');
-      updateData.basePath = path;
-    }
-
     if (body.data.trustProxy !== undefined) {
       updateData.trustProxy = body.data.trustProxy;
     }
@@ -285,7 +272,6 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
         tautulliUrl: updateData.tautulliUrl ?? null,
         tautulliApiKey: updateData.tautulliApiKey ?? null,
         externalUrl: updateData.externalUrl ?? null,
-        basePath: updateData.basePath ?? '',
         trustProxy: updateData.trustProxy ?? false,
         primaryAuthMethod: updateData.primaryAuthMethod ?? 'local',
       });
@@ -328,7 +314,6 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
       tautulliUrl: row.tautulliUrl,
       tautulliApiKey: row.tautulliApiKey ? '********' : null, // Mask API key
       externalUrl: row.externalUrl,
-      basePath: row.basePath,
       trustProxy: row.trustProxy,
       mobileEnabled: row.mobileEnabled,
       primaryAuthMethod,
@@ -595,13 +580,11 @@ export async function getGeoIPSettings(): Promise<{ usePlexGeoip: boolean }> {
  */
 export async function getNetworkSettings(): Promise<{
   externalUrl: string | null;
-  basePath: string;
   trustProxy: boolean;
 }> {
   const row = await db
     .select({
       externalUrl: settings.externalUrl,
-      basePath: settings.basePath,
       trustProxy: settings.trustProxy,
     })
     .from(settings)
@@ -610,13 +593,11 @@ export async function getNetworkSettings(): Promise<{
 
   const settingsRow = row[0];
   if (!settingsRow) {
-    // Return defaults if settings don't exist yet
-    return { externalUrl: null, basePath: '', trustProxy: false };
+    return { externalUrl: null, trustProxy: false };
   }
 
   return {
     externalUrl: settingsRow.externalUrl,
-    basePath: settingsRow.basePath,
     trustProxy: settingsRow.trustProxy,
   };
 }

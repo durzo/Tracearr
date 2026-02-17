@@ -1,7 +1,7 @@
 import { createContext, useContext, useCallback, useMemo, useEffect, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { AuthUser } from '@tracearr/shared';
-import { api, tokenStorage, AUTH_STATE_CHANGE_EVENT } from '@/lib/api';
+import { api, tokenStorage, AUTH_STATE_CHANGE_EVENT, BASE_URL } from '@/lib/api';
 
 interface UserProfile extends AuthUser {
   email: string | null;
@@ -90,7 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Immediately clear auth data and redirect to login
       queryClient.setQueryData(['auth', 'me'], null);
       queryClient.clear();
-      window.location.href = '/login';
+      window.location.href = `${BASE_URL}login`;
     };
 
     window.addEventListener(AUTH_STATE_CHANGE_EVENT, handleAuthChange);
@@ -112,7 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Always redirect, whether success or failure
       queryClient.setQueryData(['auth', 'me'], null);
       queryClient.clear();
-      window.location.href = '/login';
+      window.location.href = `${BASE_URL}login`;
     },
   });
 
@@ -159,7 +159,7 @@ export function useRequireAuth(): AuthContextValue {
     // isAuthenticated is now token-based (optimistic auth)
     // So this only triggers when tokens don't exist (never logged in, or explicitly logged out)
     if (!auth.isAuthenticated) {
-      window.location.href = '/login';
+      window.location.href = `${BASE_URL}login`;
     }
   }, [auth.isAuthenticated]);
 

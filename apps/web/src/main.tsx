@@ -7,6 +7,7 @@ import { ServerProvider } from '@/hooks/useServer';
 import { SocketProvider } from '@/hooks/useSocket';
 import { MaintenanceProvider } from '@/hooks/useMaintenanceMode';
 import { ThemeProvider } from '@/components/theme-provider';
+import { BASE_URL } from '@/lib/basePath';
 import { App } from './App';
 import './i18n';
 import './styles/globals.css';
@@ -35,7 +36,7 @@ createRoot(root).render(
   <StrictMode>
     <ThemeProvider defaultTheme="dark" storageKey="tracearr-theme">
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
+        <BrowserRouter basename={BASE_URL}>
           <MaintenanceProvider>
             <AuthProvider>
               <ServerProvider>

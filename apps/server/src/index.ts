@@ -8,7 +8,7 @@ import sensible from '@fastify/sensible';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { Redis } from 'ioredis';
 import { API_BASE_PATH, REDIS_KEYS, WS_EVENTS } from '@tracearr/shared';
 
@@ -142,6 +142,9 @@ let redisCloseHandler: (() => void) | null = null;
 let redisReadyHandler: (() => void) | null = null;
 const DB_HEALTH_CHECK_MS = 15_000;
 
+// basePath from env var — always known at startup, never changes at runtime.
+const BASE_PATH = process.env.BASE_PATH?.replace(/\/+$/, '').replace(/^\/?/, '/') || '';
+
 // ============================================================================
 // Phase 1: Build the Fastify app (always succeeds, even without DB/Redis)
 // ============================================================================
@@ -158,6 +161,18 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
     // Trust proxy if enabled in settings or via env var
     // This respects X-Forwarded-For, X-Forwarded-Proto headers from reverse proxies
     trustProxy: options.trustProxy ?? process.env.TRUST_PROXY === 'true',
+    // Strip basePath prefix from incoming URLs before routing.
+    // All existing routes (/api/v1/..., /health, etc.) match without changes.
+    // Fastify automatically stores the original URL as request.originalUrl.
+    rewriteUrl(req) {
+      const url = req.url ?? '/';
+      if (BASE_PATH) {
+        if (url.startsWith(`${BASE_PATH}/`) || url === BASE_PATH) {
+          return url.slice(BASE_PATH.length) || '/';
+        }
+      }
+      return url;
+    },
   });
 
   // Maintenance gate hook — MUST be registered before rate limiter so it
@@ -166,7 +181,7 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
     // Always allow health endpoint
     if (request.url === '/health') return;
 
-    // Allow static files (non-API routes) so frontend can load and show maintenance page
+    // Allow static files and SPA routes so frontend can load and show maintenance page
     if (!request.url.startsWith('/api/')) return;
 
     if (isMaintenance()) {
@@ -291,18 +306,50 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
 
   // Serve static frontend in production
   const webDistPath = resolve(PROJECT_ROOT, 'apps/web/dist');
+
   if (process.env.NODE_ENV === 'production' && existsSync(webDistPath)) {
+    // Read index.html once at startup for <base> tag injection
+    const indexHtmlPath = resolve(webDistPath, 'index.html');
+    const cachedIndexHtml = readFileSync(indexHtmlPath, 'utf-8');
+
+    // Register @fastify/static for reply.sendFile() without auto-serving routes.
+    // We handle all routing ourselves to inject <base> into index.html responses.
     await app.register(fastifyStatic, {
       root: webDistPath,
       prefix: '/',
+      serve: false,
     });
 
-    // SPA fallback - serve index.html for all non-API routes
-    app.setNotFoundHandler((request, reply) => {
+    // All non-API requests: serve static assets or SPA fallback with <base> tag
+    app.setNotFoundHandler(async (request, reply) => {
       if (request.url.startsWith('/api/') || request.url === '/health') {
         return reply.code(404).send({ error: 'Not Found' });
       }
-      return reply.sendFile('index.html');
+
+      // Redirect to basePath if original URL isn't under it (e.g. "/" → "/tracearr/")
+      if (BASE_PATH) {
+        const originalUrl = request.originalUrl;
+        if (!originalUrl.startsWith(`${BASE_PATH}/`) && originalUrl !== BASE_PATH) {
+          return reply.redirect(`${BASE_PATH}/`);
+        }
+      }
+
+      // request.url is already stripped by rewriteUrl
+      const urlPath = request.url.split('?')[0]!;
+
+      // Serve static files (paths with a file extension)
+      if (urlPath !== '/' && /\.\w+$/.test(urlPath)) {
+        const fullPath = resolve(webDistPath, urlPath.slice(1));
+        if (existsSync(fullPath)) {
+          return reply.sendFile(urlPath.slice(1));
+        }
+      }
+
+      // SPA fallback — always inject <base> tag so relative asset paths (./assets/...)
+      // resolve correctly on nested routes like /library/watch
+      const baseHref = BASE_PATH ? `${BASE_PATH}/` : '/';
+      const html = cachedIndexHtml.replace('<head>', `<head>\n    <base href="${baseHref}">`);
+      return reply.type('text/html').send(html);
     });
 
     app.log.info('Static file serving enabled for production');
@@ -684,7 +731,7 @@ async function initializeServices(app: FastifyInstance) {
 async function initializePostListen(app: FastifyInstance) {
   // Initialize WebSocket server using Fastify's underlying HTTP server
   const httpServer = app.server;
-  initializeWebSocket(httpServer);
+  initializeWebSocket(httpServer, BASE_PATH);
   app.log.info('WebSocket server initialized');
 
   // Set up Redis pub/sub to forward events to WebSocket clients
@@ -782,9 +829,6 @@ async function initializePostListen(app: FastifyInstance) {
   }
   if (networkSettings.externalUrl) {
     app.log.info(`External URL configured: ${networkSettings.externalUrl}`);
-  }
-  if (networkSettings.basePath) {
-    app.log.info(`Base path configured: ${networkSettings.basePath}`);
   }
 }
 
@@ -931,6 +975,9 @@ async function start() {
 
     await app.listen({ port: PORT, host: HOST });
     app.log.info(`Server running at http://${HOST}:${PORT}`);
+    if (BASE_PATH) {
+      app.log.info(`Base path: ${BASE_PATH}`);
+    }
 
     if (isMaintenance()) {
       app.log.warn('Waiting for database and Redis to become available...');
