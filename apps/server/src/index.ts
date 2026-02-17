@@ -71,6 +71,7 @@ import {
   initializeSSEProcessor,
   startSSEProcessor,
   stopSSEProcessor,
+  cleanupOrphanedPendingSessions,
 } from './jobs/sseProcessor.js';
 import { initializeWebSocket, broadcastToSessions } from './websocket/index.js';
 import {
@@ -811,6 +812,8 @@ async function initializePostListen(app: FastifyInstance) {
 
   // Start SSE connections for Plex servers (real-time updates)
   try {
+    // Clean up any orphaned pending sessions from previous server instance
+    await cleanupOrphanedPendingSessions();
     startSSEProcessor(); // Subscribe to SSE events
     await sseManager.start(); // Start SSE connections
     app.log.info('SSE connections started for Plex servers');

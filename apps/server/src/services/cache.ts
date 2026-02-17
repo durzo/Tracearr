@@ -6,6 +6,7 @@
 import type { Redis } from 'ioredis';
 import { REDIS_KEYS, CACHE_TTL } from '@tracearr/shared';
 import type { ActiveSession, DashboardStats } from '@tracearr/shared';
+import type { PendingSessionData } from '../jobs/poller/types.js';
 
 export interface CacheService {
   // Active sessions (legacy - JSON array, deprecated)
@@ -58,6 +59,13 @@ export interface CacheService {
   // Termination cooldown (prevents re-creating recently terminated sessions)
   setTerminationCooldown(serverId: string, sessionKey: string, ratingKey: string): Promise<void>;
   hasTerminationCooldown(serverId: string, sessionKey: string, ratingKey: string): Promise<boolean>;
+
+  // Pending sessions (Redis-first, not yet in DB)
+  // Sessions stay here until 30s confirmation threshold, then persist to DB
+  getPendingSession(serverId: string, sessionKey: string): Promise<PendingSessionData | null>;
+  setPendingSession(serverId: string, sessionKey: string, data: PendingSessionData): Promise<void>;
+  deletePendingSession(serverId: string, sessionKey: string): Promise<void>;
+  getAllPendingSessionKeys(): Promise<Array<{ serverId: string; sessionKey: string }>>;
 
   // Health check
   ping(): Promise<boolean>;
@@ -411,6 +419,61 @@ export function createCacheService(redis: Redis): CacheService {
       const cooldownKey = REDIS_KEYS.TERMINATION_COOLDOWN(serverId, sessionKey, ratingKey);
       const exists = await redis.exists(cooldownKey);
       return exists === 1;
+    },
+
+    // Pending sessions (Redis-first architecture)
+    // Sessions stay in Redis until 30s confirmation, then persist to DB
+    async getPendingSession(
+      serverId: string,
+      sessionKey: string
+    ): Promise<PendingSessionData | null> {
+      const key = REDIS_KEYS.PENDING_SESSION(serverId, sessionKey);
+      const data = await redis.get(key);
+      if (!data) return null;
+      try {
+        return JSON.parse(data) as PendingSessionData;
+      } catch {
+        return null;
+      }
+    },
+
+    async setPendingSession(
+      serverId: string,
+      sessionKey: string,
+      data: PendingSessionData
+    ): Promise<void> {
+      const key = REDIS_KEYS.PENDING_SESSION(serverId, sessionKey);
+      const memberKey = `${serverId}:${sessionKey}`;
+      const pipeline = redis.multi();
+      // Store session data with TTL matching active sessions
+      pipeline.setex(key, CACHE_TTL.ACTIVE_SESSIONS, JSON.stringify(data));
+      // Track in pending session IDs set for enumeration
+      pipeline.sadd(REDIS_KEYS.PENDING_SESSION_IDS, memberKey);
+      pipeline.expire(REDIS_KEYS.PENDING_SESSION_IDS, CACHE_TTL.ACTIVE_SESSIONS);
+      const results = await pipeline.exec();
+      if (!results || results.some(([err]) => err !== null)) {
+        console.error('[Cache] setPendingSession pipeline failed:', results);
+      }
+    },
+
+    async deletePendingSession(serverId: string, sessionKey: string): Promise<void> {
+      const key = REDIS_KEYS.PENDING_SESSION(serverId, sessionKey);
+      const memberKey = `${serverId}:${sessionKey}`;
+      const pipeline = redis.multi();
+      pipeline.del(key);
+      pipeline.srem(REDIS_KEYS.PENDING_SESSION_IDS, memberKey);
+      const results = await pipeline.exec();
+      if (!results || results.some(([err]) => err !== null)) {
+        console.error('[Cache] deletePendingSession pipeline failed:', results);
+      }
+    },
+
+    async getAllPendingSessionKeys(): Promise<Array<{ serverId: string; sessionKey: string }>> {
+      const members = await redis.smembers(REDIS_KEYS.PENDING_SESSION_IDS);
+      return members.map((m) => {
+        const [serverId, ...rest] = m.split(':');
+        return { serverId: serverId!, sessionKey: rest.join(':') };
+      });
     },
 
     // Health check

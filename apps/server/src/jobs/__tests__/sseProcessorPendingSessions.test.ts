@@ -1,0 +1,641 @@
+/**
+ * SSE Processor Tests - Pending Session Flow (Delayed Rule Evaluation)
+ *
+ * Tests the Redis-first architecture for session creation:
+ * - New sessions are stored in Redis as "pending" (not in DB)
+ * - Sessions remain pending until 30s confirmation threshold met
+ * - Once confirmed, session is persisted to DB and rules are evaluated
+ * - If stopped before confirmation, session is discarded (phantom session)
+ *
+ * This prevents Plex prefetch events (phantom sessions) from triggering rule violations.
+ */
+
+import { randomUUID } from 'node:crypto';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { EventEmitter } from 'events';
+import type { PendingSessionData } from '../poller/types.js';
+
+// Create mocks using vi.hoisted
+const {
+  mockSseManager,
+  mockEnqueueNotification,
+  mockFindActiveSession,
+  mockFindActiveSessionsAll,
+  mockConfirmAndPersistSession,
+  mockStopSessionAtomic,
+  mockBuildActiveSession,
+  mockBuildPendingActiveSession,
+  mockIsPlaybackConfirmed,
+  mockCreateInitialConfirmationState,
+  mockUpdateConfirmationState,
+  mockDetectMediaChange,
+  mockGetActiveRulesV2,
+  mockBatchGetRecentUserSessions,
+  mockBroadcastViolations,
+  mockMapMediaSession,
+  mockCreateMediaServerClient,
+  mockDb,
+} = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { EventEmitter: EE } = require('events');
+  return {
+    mockSseManager: new EE() as EventEmitter,
+    mockEnqueueNotification: vi.fn().mockResolvedValue('job-id'),
+    mockFindActiveSession: vi.fn().mockResolvedValue(null),
+    mockFindActiveSessionsAll: vi.fn().mockResolvedValue([]),
+    mockConfirmAndPersistSession: vi.fn(),
+    mockStopSessionAtomic: vi.fn().mockResolvedValue({ wasUpdated: true }),
+    mockBuildActiveSession: vi.fn(),
+    mockBuildPendingActiveSession: vi.fn().mockImplementation((data) => ({
+      id: data.id,
+      serverId: data.server.id,
+      serverName: data.server.name,
+      sessionKey: data.processed.sessionKey,
+      mediaTitle: data.processed.mediaTitle,
+    })),
+    mockIsPlaybackConfirmed: vi.fn().mockReturnValue(false),
+    mockCreateInitialConfirmationState: vi.fn().mockReturnValue({
+      rulesEvaluated: false,
+      confirmedPlayback: false,
+      firstSeenAt: Date.now(),
+      maxViewOffset: 0,
+    }),
+    mockUpdateConfirmationState: vi.fn().mockImplementation((state) => state),
+    mockDetectMediaChange: vi.fn().mockReturnValue(false),
+    mockGetActiveRulesV2: vi.fn().mockResolvedValue([]),
+    mockBatchGetRecentUserSessions: vi.fn().mockResolvedValue(new Map()),
+    mockBroadcastViolations: vi.fn(),
+    mockMapMediaSession: vi.fn(),
+    mockCreateMediaServerClient: vi.fn().mockReturnValue({
+      getSessions: vi.fn().mockResolvedValue([]),
+    }),
+    mockDb: {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([]),
+          }),
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      }),
+      update: vi.fn(),
+    },
+  };
+});
+
+// Mock the sseManager
+vi.mock('../../services/sseManager.js', () => ({
+  sseManager: mockSseManager,
+}));
+
+// Mock enqueueNotification
+vi.mock('../notificationQueue.js', () => ({
+  enqueueNotification: mockEnqueueNotification,
+}));
+
+// Mock database
+vi.mock('../../db/client.js', () => ({
+  db: mockDb,
+}));
+
+vi.mock('../../services/mediaServer/index.js', () => ({
+  createMediaServerClient: mockCreateMediaServerClient,
+}));
+
+vi.mock('../../services/plexGeoip.js', () => ({
+  lookupGeoIP: vi.fn().mockResolvedValue({
+    country: 'US',
+    region: 'CA',
+    city: 'Los Angeles',
+    latitude: 34.0522,
+    longitude: -118.2437,
+    timezone: 'America/Los_Angeles',
+  }),
+}));
+
+vi.mock('../../routes/settings.js', () => ({
+  getGeoIPSettings: vi.fn().mockResolvedValue({ usePlexGeoip: false }),
+}));
+
+vi.mock('../poller/index.js', () => ({
+  triggerReconciliationPoll: vi.fn(),
+}));
+
+vi.mock('../poller/sessionMapper.js', () => ({
+  mapMediaSession: mockMapMediaSession,
+}));
+
+vi.mock('../poller/stateTracker.js', () => ({
+  calculatePauseAccumulation: vi.fn(),
+  checkWatchCompletion: vi.fn(),
+  detectMediaChange: mockDetectMediaChange,
+  isPlaybackConfirmed: mockIsPlaybackConfirmed,
+  createInitialConfirmationState: mockCreateInitialConfirmationState,
+  updateConfirmationState: mockUpdateConfirmationState,
+}));
+
+vi.mock('../poller/database.js', () => ({
+  getActiveRulesV2: mockGetActiveRulesV2,
+  batchGetRecentUserSessions: mockBatchGetRecentUserSessions,
+}));
+
+vi.mock('../poller/violations.js', () => ({
+  broadcastViolations: mockBroadcastViolations,
+}));
+
+vi.mock('../poller/sessionLifecycle.js', () => ({
+  stopSessionAtomic: mockStopSessionAtomic,
+  findActiveSession: mockFindActiveSession,
+  findActiveSessionsAll: mockFindActiveSessionsAll,
+  buildActiveSession: mockBuildActiveSession,
+  buildPendingActiveSession: mockBuildPendingActiveSession,
+  handleMediaChangeAtomic: vi.fn(),
+  reEvaluateRulesOnTranscodeChange: vi.fn(),
+  confirmAndPersistSession: mockConfirmAndPersistSession,
+}));
+
+vi.mock('../../services/serviceTracker.js', () => ({
+  registerService: vi.fn(),
+  unregisterService: vi.fn(),
+}));
+
+// Import after mocking
+import {
+  initializeSSEProcessor,
+  startSSEProcessor,
+  stopSSEProcessor,
+  cleanupOrphanedPendingSessions,
+} from '../sseProcessor.js';
+
+// Mock cache service with pending session methods
+const mockCacheService = {
+  getAllActiveSessions: vi.fn().mockResolvedValue([]),
+  getSessionById: vi.fn(),
+  addActiveSession: vi.fn(),
+  updateActiveSession: vi.fn(),
+  removeActiveSession: vi.fn(),
+  addUserSession: vi.fn(),
+  removeUserSession: vi.fn(),
+  withSessionCreateLock: vi.fn().mockImplementation(async (_s, _k, op) => op()),
+  hasTerminationCooldown: vi.fn().mockResolvedValue(false),
+  setTerminationCooldown: vi.fn(),
+  // Pending session methods
+  getPendingSession: vi.fn().mockResolvedValue(null),
+  setPendingSession: vi.fn(),
+  deletePendingSession: vi.fn(),
+  getAllPendingSessionKeys: vi.fn().mockResolvedValue([]),
+};
+
+const mockPubSubService = {
+  publish: vi.fn(),
+  subscribe: vi.fn(),
+};
+
+// Helper to create a mock pending session
+function createMockPendingSession(overrides: Partial<PendingSessionData> = {}): PendingSessionData {
+  const now = Date.now();
+  const baseSession = {
+    id: randomUUID(),
+    confirmation: {
+      rulesEvaluated: false,
+      confirmedPlayback: false,
+      firstSeenAt: now,
+      maxViewOffset: 0,
+    },
+    processed: {
+      sessionKey: 'test-session-key',
+      ratingKey: '12345',
+      externalUserId: 'user-123',
+      username: 'testuser',
+      userThumb: '',
+      mediaTitle: 'Test Movie',
+      mediaType: 'movie',
+      grandparentTitle: '',
+      seasonNumber: 0,
+      episodeNumber: 0,
+      year: 2024,
+      thumbPath: '',
+      channelTitle: null,
+      channelIdentifier: null,
+      channelThumb: null,
+      artistName: null,
+      albumName: null,
+      trackNumber: null,
+      discNumber: null,
+      ipAddress: '192.168.1.100',
+      playerName: 'Test Player',
+      deviceId: 'device-123',
+      product: 'Plex for iOS',
+      device: 'iPhone',
+      platform: 'iOS',
+      quality: '1080p',
+      isTranscode: false,
+      videoDecision: 'directplay',
+      audioDecision: 'directplay',
+      bitrate: 10000,
+      state: 'playing',
+      totalDurationMs: 7200000,
+      progressMs: 0,
+      plexSessionId: 'plex-session-123',
+      // StreamDetailFields (all nullable for compatibility)
+      sourceVideoCodec: 'h264',
+      sourceAudioCodec: 'aac',
+      sourceAudioChannels: 2,
+      sourceVideoWidth: 1920,
+      sourceVideoHeight: 1080,
+      sourceVideoDetails: null,
+      sourceAudioDetails: null,
+      streamVideoCodec: 'h264',
+      streamAudioCodec: 'aac',
+      streamVideoDetails: null,
+      streamAudioDetails: null,
+      transcodeInfo: null,
+      subtitleInfo: null,
+    },
+    server: { id: 'server-123', name: 'Test Server', type: 'plex' },
+    serverUser: {
+      id: 'server-user-123',
+      username: 'testuser',
+      thumbUrl: null,
+      identityName: 'Test User',
+      trustScore: 100,
+      sessionCount: 10,
+      lastActivityAt: new Date(),
+      createdAt: new Date(),
+    },
+    geo: {
+      city: 'Los Angeles',
+      region: 'CA',
+      country: 'US',
+      countryCode: 'US',
+      continent: 'NA',
+      postal: '90001',
+      lat: 34.0522,
+      lon: -118.2437,
+      asnNumber: null,
+      asnOrganization: null,
+    },
+    startedAt: now,
+    lastSeenAt: now,
+    currentState: 'playing',
+    pausedDurationMs: 0,
+    lastPausedAt: null,
+  };
+  return { ...baseSession, ...overrides } as PendingSessionData;
+}
+
+describe('SSE Processor - Pending Session Flow', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    initializeSSEProcessor(
+      mockCacheService as unknown as Parameters<typeof initializeSSEProcessor>[0],
+      mockPubSubService as unknown as Parameters<typeof initializeSSEProcessor>[1]
+    );
+    startSSEProcessor();
+  });
+
+  afterEach(() => {
+    stopSSEProcessor();
+    vi.useRealTimers();
+  });
+
+  describe('handleStopped - Phantom Session Detection', () => {
+    it('discards pending session when stopped before confirmation (phantom session)', async () => {
+      const pendingSession = createMockPendingSession();
+      mockCacheService.getPendingSession.mockResolvedValueOnce(pendingSession);
+
+      // Emit stopped event
+      mockSseManager.emit('plex:session:stopped', {
+        serverId: 'server-123',
+        notification: { sessionKey: 'test-session-key', viewOffset: 5000 },
+      });
+
+      // Wait for async handler
+      await vi.waitFor(() => {
+        expect(mockCacheService.deletePendingSession).toHaveBeenCalledWith(
+          'server-123',
+          'test-session-key'
+        );
+      });
+
+      // Should NOT have tried to stop a DB session
+      expect(mockFindActiveSessionsAll).not.toHaveBeenCalled();
+      expect(mockStopSessionAtomic).not.toHaveBeenCalled();
+    });
+
+    it('stops confirmed session normally when stopped', async () => {
+      const confirmedSession = {
+        id: 'session-id-123',
+        serverId: 'server-123',
+        sessionKey: 'test-session-key',
+        serverUserId: 'server-user-123',
+      };
+
+      // No pending session
+      mockCacheService.getPendingSession.mockResolvedValueOnce(null);
+      // Has confirmed session in DB
+      mockFindActiveSessionsAll.mockResolvedValueOnce([confirmedSession]);
+
+      // Emit stopped event
+      mockSseManager.emit('plex:session:stopped', {
+        serverId: 'server-123',
+        notification: { sessionKey: 'test-session-key', viewOffset: 60000 },
+      });
+
+      // Wait for async handler
+      await vi.waitFor(() => {
+        expect(mockFindActiveSessionsAll).toHaveBeenCalledWith('server-123', 'test-session-key');
+      });
+
+      // Should have tried to stop the DB session
+      expect(mockStopSessionAtomic).toHaveBeenCalledWith({
+        session: confirmedSession,
+        stoppedAt: expect.any(Date),
+      });
+    });
+  });
+
+  describe('handlePlaying - Pending Session Updates', () => {
+    it('updates pending session state on resume from pause', async () => {
+      const pendingSession = createMockPendingSession({
+        currentState: 'paused',
+        lastPausedAt: Date.now() - 5000,
+      });
+      mockCacheService.getPendingSession.mockResolvedValueOnce(pendingSession);
+      mockIsPlaybackConfirmed.mockReturnValueOnce(false);
+
+      // Emit playing event (resume)
+      mockSseManager.emit('plex:session:playing', {
+        serverId: 'server-123',
+        notification: { sessionKey: 'test-session-key', viewOffset: 10000 },
+      });
+
+      // Wait for async handler
+      await vi.waitFor(() => {
+        expect(mockCacheService.setPendingSession).toHaveBeenCalled();
+      });
+
+      // Should have updated the pending session
+      const callArgs = mockCacheService.setPendingSession.mock.calls[0];
+      expect(callArgs?.[0]).toBe('server-123');
+      expect(callArgs?.[1]).toBe('test-session-key');
+      // State should be updated to playing
+      const updatedData = callArgs?.[2] as PendingSessionData;
+      expect(updatedData.currentState).toBe('playing');
+    });
+  });
+
+  describe('handlePaused - Pending Session Updates', () => {
+    it('updates pending session state to paused', async () => {
+      const pendingSession = createMockPendingSession({
+        currentState: 'playing',
+      });
+      mockCacheService.getPendingSession.mockResolvedValueOnce(pendingSession);
+      mockIsPlaybackConfirmed.mockReturnValueOnce(false);
+
+      // Emit paused event
+      mockSseManager.emit('plex:session:paused', {
+        serverId: 'server-123',
+        notification: { sessionKey: 'test-session-key', viewOffset: 10000 },
+      });
+
+      // Wait for async handler
+      await vi.waitFor(() => {
+        expect(mockCacheService.setPendingSession).toHaveBeenCalled();
+      });
+
+      // Should have updated the pending session
+      const callArgs = mockCacheService.setPendingSession.mock.calls[0];
+      const updatedData = callArgs?.[2] as PendingSessionData;
+      expect(updatedData.currentState).toBe('paused');
+      expect(updatedData.lastPausedAt).not.toBeNull();
+    });
+  });
+
+  describe('handleProgress - Confirmation Threshold', () => {
+    it('confirms pending session when viewOffset exceeds 30s threshold', async () => {
+      const pendingSession = createMockPendingSession();
+      mockCacheService.getPendingSession.mockResolvedValueOnce(pendingSession);
+
+      // First call returns true (threshold exceeded)
+      mockIsPlaybackConfirmed.mockReturnValueOnce(true);
+
+      // Mock confirmation result
+      mockConfirmAndPersistSession.mockResolvedValueOnce({
+        insertedSession: {
+          id: 'inserted-session-123',
+          serverId: 'server-123',
+          serverUserId: 'server-user-123',
+          sessionKey: 'test-session-key',
+          startedAt: new Date(),
+          state: 'playing',
+        },
+        violationResults: [],
+        qualityChange: null,
+        referenceId: null,
+        wasTerminatedByRule: false,
+      });
+
+      mockBuildActiveSession.mockReturnValueOnce({
+        id: 'inserted-session-123',
+        serverId: 'server-123',
+        serverUserId: 'server-user-123',
+        sessionKey: 'test-session-key',
+      });
+
+      // Emit progress event with viewOffset > 30s
+      mockSseManager.emit('plex:session:progress', {
+        serverId: 'server-123',
+        notification: { sessionKey: 'test-session-key', viewOffset: 35000 },
+      });
+
+      // Wait for async handler
+      await vi.waitFor(() => {
+        expect(mockCacheService.deletePendingSession).toHaveBeenCalledWith(
+          'server-123',
+          'test-session-key'
+        );
+      });
+
+      // Should have called confirmAndPersistSession
+      await vi.waitFor(() => {
+        expect(mockConfirmAndPersistSession).toHaveBeenCalled();
+      });
+
+      // Should have updated the session in cache (same ID, just confirming status)
+      expect(mockCacheService.updateActiveSession).toHaveBeenCalled();
+    });
+
+    it('keeps session pending when viewOffset below threshold', async () => {
+      const pendingSession = createMockPendingSession();
+      mockCacheService.getPendingSession.mockResolvedValueOnce(pendingSession);
+
+      // Below threshold
+      mockIsPlaybackConfirmed.mockReturnValueOnce(false);
+
+      // Emit progress event with viewOffset < 30s
+      mockSseManager.emit('plex:session:progress', {
+        serverId: 'server-123',
+        notification: { sessionKey: 'test-session-key', viewOffset: 15000 },
+      });
+
+      // Wait for async handler
+      await vi.waitFor(() => {
+        expect(mockCacheService.setPendingSession).toHaveBeenCalled();
+      });
+
+      // Should NOT have called confirmAndPersistSession
+      expect(mockConfirmAndPersistSession).not.toHaveBeenCalled();
+      // Should NOT have deleted the pending session
+      expect(mockCacheService.deletePendingSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handlePlaying - Media Change on Pending Session', () => {
+    // Helper to setup db mock to return server data
+    const setupDbForFetchSession = () => {
+      const mockServer = {
+        id: 'server-123',
+        name: 'Test Server',
+        type: 'plex',
+        url: 'http://localhost:32400',
+        token: 'test-token',
+      };
+      // Mock db.select().from(servers).where().limit() to return server
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([mockServer]),
+          }),
+        }),
+      });
+      return mockServer;
+    };
+
+    it('discards old pending session and creates new one when media changes', async () => {
+      const pendingSession = createMockPendingSession({
+        processed: {
+          ...createMockPendingSession().processed,
+          ratingKey: 'old-rating-key',
+          mediaTitle: 'Episode 1',
+        },
+      });
+      mockCacheService.getPendingSession.mockResolvedValueOnce(pendingSession);
+
+      // Setup db to return server
+      setupDbForFetchSession();
+
+      // Setup media server client mock to return new media
+      const mockGetSessions = vi
+        .fn()
+        .mockResolvedValue([{ sessionKey: 'test-session-key', ratingKey: 'new-rating-key' }]);
+      mockCreateMediaServerClient.mockReturnValueOnce({ getSessions: mockGetSessions });
+
+      // Map the new session data
+      mockMapMediaSession.mockReturnValueOnce({
+        sessionKey: 'test-session-key',
+        ratingKey: 'new-rating-key',
+        mediaTitle: 'Episode 2',
+        externalUserId: 'user-123',
+        state: 'playing',
+      });
+
+      // detectMediaChange returns true for different ratingKeys
+      mockDetectMediaChange.mockReturnValueOnce(true);
+
+      // Emit playing event
+      mockSseManager.emit('plex:session:playing', {
+        serverId: 'server-123',
+        notification: { sessionKey: 'test-session-key', viewOffset: 5000 },
+      });
+
+      // Wait for async handler to discard old session
+      await vi.waitFor(() => {
+        expect(mockCacheService.deletePendingSession).toHaveBeenCalledWith(
+          'server-123',
+          'test-session-key'
+        );
+      });
+
+      // Should have removed old session from active cache
+      expect(mockCacheService.removeActiveSession).toHaveBeenCalledWith(pendingSession.id);
+
+      // Should have called detectMediaChange
+      expect(mockDetectMediaChange).toHaveBeenCalledWith('old-rating-key', 'new-rating-key');
+    });
+
+    it('updates pending session normally when media has not changed', async () => {
+      const pendingSession = createMockPendingSession();
+      mockCacheService.getPendingSession.mockResolvedValueOnce(pendingSession);
+
+      // Setup db to return server
+      setupDbForFetchSession();
+
+      // Setup media server client mock to return same media
+      const mockGetSessions = vi
+        .fn()
+        .mockResolvedValue([{ sessionKey: 'test-session-key', ratingKey: '12345' }]);
+      mockCreateMediaServerClient.mockReturnValueOnce({ getSessions: mockGetSessions });
+      mockMapMediaSession.mockReturnValueOnce({
+        sessionKey: 'test-session-key',
+        ratingKey: '12345', // Same as pending session
+        mediaTitle: 'Test Movie',
+        state: 'playing',
+      });
+
+      // detectMediaChange returns false for same ratingKey
+      mockDetectMediaChange.mockReturnValueOnce(false);
+      mockIsPlaybackConfirmed.mockReturnValueOnce(false);
+
+      // Emit playing event
+      mockSseManager.emit('plex:session:playing', {
+        serverId: 'server-123',
+        notification: { sessionKey: 'test-session-key', viewOffset: 10000 },
+      });
+
+      // Wait for async handler
+      await vi.waitFor(() => {
+        expect(mockCacheService.setPendingSession).toHaveBeenCalled();
+      });
+
+      // Should NOT have discarded the session
+      expect(mockCacheService.removeActiveSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('cleanupOrphanedPendingSessions', () => {
+    it('cleans up all orphaned pending sessions on startup', async () => {
+      const orphanedSession1 = createMockPendingSession({ id: 'orphan-1' });
+      const orphanedSession2 = createMockPendingSession({ id: 'orphan-2' });
+
+      mockCacheService.getAllPendingSessionKeys.mockResolvedValueOnce([
+        { serverId: 'server-123', sessionKey: 'session-1' },
+        { serverId: 'server-123', sessionKey: 'session-2' },
+      ]);
+      mockCacheService.getPendingSession
+        .mockResolvedValueOnce(orphanedSession1)
+        .mockResolvedValueOnce(orphanedSession2);
+
+      await cleanupOrphanedPendingSessions();
+
+      // Should have cleaned up both sessions
+      expect(mockCacheService.deletePendingSession).toHaveBeenCalledTimes(2);
+      expect(mockCacheService.removeActiveSession).toHaveBeenCalledWith('orphan-1');
+      expect(mockCacheService.removeActiveSession).toHaveBeenCalledWith('orphan-2');
+    });
+
+    it('handles no orphaned sessions gracefully', async () => {
+      mockCacheService.getAllPendingSessionKeys.mockResolvedValueOnce([]);
+
+      await cleanupOrphanedPendingSessions();
+
+      // Should not have tried to delete anything
+      expect(mockCacheService.deletePendingSession).not.toHaveBeenCalled();
+    });
+  });
+});

@@ -40,6 +40,7 @@ import type {
   MediaChangeInput,
   MediaChangeResult,
   TranscodeReEvalInput,
+  PendingSessionData,
 } from './types.js';
 
 // ============================================================================
@@ -256,6 +257,110 @@ export function buildActiveSession(input: BuildActiveSessionInput): ActiveSessio
   };
 }
 
+/**
+ * Build an ActiveSession from PendingSessionData for display in Now Playing.
+ *
+ * Pending sessions are displayed immediately while awaiting confirmation threshold.
+ * The session ID is pre-generated when the pending session is created, ensuring
+ * the same UUID is used throughout the session lifecycle (pending → confirmed).
+ * This eliminates UI flicker and session detail page breaks during transition.
+ */
+export function buildPendingActiveSession(pendingData: PendingSessionData): ActiveSession {
+  const { processed, serverUser, geo, server } = pendingData;
+
+  return {
+    // Core identifiers - use pre-generated UUID (stable from creation to DB persistence)
+    id: pendingData.id,
+    serverId: server.id,
+    serverUserId: serverUser.id,
+    sessionKey: processed.sessionKey,
+
+    // State
+    state: pendingData.currentState as 'playing' | 'paused',
+
+    // Media metadata
+    mediaType: processed.mediaType,
+    mediaTitle: processed.mediaTitle,
+    grandparentTitle: processed.grandparentTitle || null,
+    seasonNumber: processed.seasonNumber || null,
+    episodeNumber: processed.episodeNumber || null,
+    year: processed.year || null,
+    thumbPath: processed.thumbPath || null,
+    ratingKey: processed.ratingKey || null,
+
+    // External session ID (for Plex API calls)
+    externalSessionId: processed.plexSessionId ?? null,
+
+    // Timing - use pending data timestamps
+    startedAt: new Date(pendingData.startedAt),
+    stoppedAt: null,
+    durationMs: null,
+
+    // Progress
+    totalDurationMs: processed.totalDurationMs || null,
+    progressMs: processed.progressMs || null,
+
+    // Pause tracking
+    lastPausedAt: pendingData.lastPausedAt ? new Date(pendingData.lastPausedAt) : null,
+    pausedDurationMs: pendingData.pausedDurationMs,
+
+    // Resume tracking - pending sessions don't have reference ID yet
+    referenceId: null,
+
+    // Watch status - not yet determined
+    watched: false,
+
+    // Network/device info
+    ipAddress: processed.ipAddress,
+    geoCity: geo.city,
+    geoRegion: geo.region,
+    geoCountry: geo.countryCode ?? geo.country,
+    geoContinent: geo.continent,
+    geoPostal: geo.postal,
+    geoLat: geo.lat,
+    geoLon: geo.lon,
+    geoAsnNumber: geo.asnNumber,
+    geoAsnOrganization: geo.asnOrganization,
+    playerName: processed.playerName,
+    deviceId: processed.deviceId || null,
+    product: processed.product || null,
+    device: processed.device || null,
+    platform: processed.platform,
+
+    // Quality/transcode info
+    quality: processed.quality,
+    isTranscode: processed.isTranscode,
+    videoDecision: processed.videoDecision,
+    audioDecision: processed.audioDecision,
+    bitrate: processed.bitrate,
+
+    // Stream details
+    ...pickStreamDetailFields(processed),
+
+    // Live TV specific fields
+    channelTitle: processed.channelTitle,
+    channelIdentifier: processed.channelIdentifier,
+    channelThumb: processed.channelThumb,
+    // Music track metadata
+    artistName: processed.artistName,
+    albumName: processed.albumName,
+    trackNumber: processed.trackNumber,
+    discNumber: processed.discNumber,
+
+    // Relationships
+    user: {
+      id: serverUser.id,
+      username: serverUser.username,
+      thumbUrl: serverUser.thumbUrl,
+      identityName: serverUser.identityName,
+    },
+    server: { id: server.id, name: server.name, type: server.type },
+
+    // Termination capability
+    canTerminate: server.type !== 'plex' || !!processed.plexSessionId,
+  };
+}
+
 // ============================================================================
 // Session Query Helpers
 // ============================================================================
@@ -321,8 +426,16 @@ export async function findActiveSessionsAll(
 export async function createSessionWithRulesAtomic(
   input: SessionCreationInput
 ): Promise<SessionCreationResult> {
-  const { processed, server, serverUser, geo, activeRulesV2, activeSessions, recentSessions } =
-    input;
+  const {
+    processed,
+    server,
+    serverUser,
+    geo,
+    activeRulesV2,
+    activeSessions,
+    recentSessions,
+    preGeneratedId,
+  } = input;
 
   let referenceId: string | null = null;
   let qualityChange: QualityChangeResult | null = null;
@@ -435,6 +548,8 @@ export async function createSessionWithRulesAtomic(
           const insertedRows = await tx
             .insert(sessions)
             .values({
+              // Use pre-generated ID if provided (pending sessions), otherwise let DB generate
+              ...(preGeneratedId ? { id: preGeneratedId } : {}),
               serverId: server.id,
               serverUserId: serverUser.id,
               sessionKey: processed.sessionKey,
@@ -759,6 +874,96 @@ export async function createSessionWithRulesAtomic(
 
   // Should never reach here, but TypeScript needs it
   throw lastError;
+}
+
+// ============================================================================
+// Pending Session Confirmation
+// ============================================================================
+
+/**
+ * Input for confirming a pending session (persisting from Redis to DB).
+ */
+export interface ConfirmPendingSessionInput {
+  /** Pending session data from Redis */
+  pendingData: PendingSessionData;
+  /** Active V2 rules to evaluate */
+  activeRulesV2: RuleV2[];
+  /** Active sessions for rule context */
+  activeSessions: Session[];
+  /** Recent sessions for rule evaluation */
+  recentSessions: Session[];
+}
+
+/**
+ * Confirm and persist a pending session to the database with rule evaluation.
+ *
+ * Called when a pending session meets the 30s confirmation threshold.
+ * This function delegates to createSessionWithRulesAtomic but ensures
+ * the startedAt reflects when the session actually started (not when confirmed).
+ *
+ * @param input - Pending session data and rule context
+ * @returns Session creation result with any violations
+ */
+export async function confirmAndPersistSession(
+  input: ConfirmPendingSessionInput
+): Promise<SessionCreationResult> {
+  const { pendingData, activeRulesV2, activeSessions, recentSessions } = input;
+  const { processed, server, serverUser, geo } = pendingData;
+
+  // Delegate to createSessionWithRulesAtomic for atomic rule evaluation
+  // The session will be created with current state from the pending data
+  // Use the pre-generated UUID from pending data for stable ID throughout lifecycle
+  const result = await createSessionWithRulesAtomic({
+    processed: {
+      ...processed,
+      // Use the current state from pending data (may have changed from initial)
+      state: pendingData.currentState as 'playing' | 'paused',
+      // Pass lastPausedDate for initial pause state detection
+      lastPausedDate: pendingData.lastPausedAt ? new Date(pendingData.lastPausedAt) : undefined,
+    },
+    server,
+    serverUser,
+    geo,
+    activeRulesV2,
+    activeSessions,
+    recentSessions,
+    // Use the pre-generated UUID - ensures same ID from pending to confirmed state
+    preGeneratedId: pendingData.id,
+  });
+
+  // Update the session with correct timing from pending data:
+  // - startedAt: When the session actually started (not when confirmed)
+  // - pausedDurationMs: Accumulated pause time while pending
+  // This ensures accurate watch duration calculations
+  const actualStartedAt = new Date(pendingData.startedAt);
+  const timeDriftMs = Date.now() - pendingData.startedAt;
+
+  // Only update if there's meaningful drift (> 1 second)
+  // This accounts for the time between session start and confirmation
+  if (timeDriftMs > 1000) {
+    await db
+      .update(sessions)
+      .set({
+        startedAt: actualStartedAt,
+        pausedDurationMs: pendingData.pausedDurationMs,
+        lastPausedAt: pendingData.lastPausedAt ? new Date(pendingData.lastPausedAt) : null,
+      })
+      .where(eq(sessions.id, result.insertedSession.id));
+
+    // Update the returned session object to reflect the correct values
+    result.insertedSession.startedAt = actualStartedAt;
+    result.insertedSession.pausedDurationMs = pendingData.pausedDurationMs;
+    result.insertedSession.lastPausedAt = pendingData.lastPausedAt
+      ? new Date(pendingData.lastPausedAt)
+      : null;
+
+    console.log(
+      `[SessionLifecycle] Confirmed pending session ${result.insertedSession.id} ` +
+        `(started ${Math.round(timeDriftMs / 1000)}s ago, paused ${Math.round(pendingData.pausedDurationMs / 1000)}s)`
+    );
+  }
+
+  return result;
 }
 
 // ============================================================================

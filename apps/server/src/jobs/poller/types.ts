@@ -185,6 +185,78 @@ export interface SessionPauseData {
 }
 
 // ============================================================================
+// Playback Confirmation Types
+// ============================================================================
+
+/**
+ * Playback confirmation threshold in milliseconds.
+ * Session must have 30s of progress OR be active for 30s before rules evaluate.
+ */
+export const PLAYBACK_CONFIRM_THRESHOLD_MS = 30_000;
+
+/**
+ * Tracking data for playback confirmation (stored in Redis session state)
+ */
+export interface PlaybackConfirmationState {
+  /** Have rules been evaluated for this session? */
+  rulesEvaluated: boolean;
+  /** Has playback been confirmed? */
+  confirmedPlayback: boolean;
+  /** Timestamp when session first appeared (for duration-based confirmation) */
+  firstSeenAt: number;
+  /** Highest viewOffset seen (tracks max progress) */
+  maxViewOffset: number;
+}
+
+/**
+ * Data stored in Redis for a pending session (not yet written to DB).
+ * Contains all fields needed to create a session when confirmed.
+ *
+ * Pending sessions are:
+ * - Stored in Redis only (not DB) until confirmation threshold met
+ * - Shown in "Now Playing" dashboard from Redis cache
+ * - Discarded if stopped before 30s (phantom sessions)
+ * - Persisted to DB and rules evaluated when confirmed
+ *
+ * The `id` field is pre-generated when the pending session is created,
+ * ensuring the same UUID is used throughout the session lifecycle.
+ * This prevents UI flicker and broken session detail pages during transition.
+ */
+export interface PendingSessionData {
+  /** Pre-generated UUID for this session (stable from creation to database persistence) */
+  id: string;
+  /** Confirmation state tracking */
+  confirmation: PlaybackConfirmationState;
+  /** Processed session data from media server */
+  processed: ProcessedSession;
+  /** Server info */
+  server: { id: string; name: string; type: 'plex' | 'jellyfin' | 'emby' };
+  /** Server user info (matches SessionCreationInput.serverUser) */
+  serverUser: {
+    id: string;
+    username: string;
+    thumbUrl: string | null;
+    identityName: string | null;
+    trustScore: number;
+    sessionCount: number;
+    lastActivityAt: Date | null;
+    createdAt: Date;
+  };
+  /** GeoIP location data */
+  geo: GeoLocation;
+  /** Timestamp when session started (ms since epoch) */
+  startedAt: number;
+  /** Last update timestamp (ms since epoch) */
+  lastSeenAt: number;
+  /** Current playback state */
+  currentState: SessionState;
+  /** Accumulated pause duration in ms */
+  pausedDurationMs: number;
+  /** When pause started (ms since epoch), null if not paused */
+  lastPausedAt: number | null;
+}
+
+// ============================================================================
 // Processing Results
 // ============================================================================
 
@@ -233,6 +305,12 @@ export interface SessionCreationInput {
   activeSessions: Session[];
   /** Recent sessions for rule evaluation context */
   recentSessions: Session[];
+  /**
+   * Pre-generated UUID for the session. If provided, this ID will be used
+   * instead of letting PostgreSQL generate one. Used for pending sessions
+   * to ensure stable IDs throughout the session lifecycle.
+   */
+  preGeneratedId?: string;
 }
 
 /**

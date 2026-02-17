@@ -96,6 +96,15 @@ vi.mock('../poller/stateTracker.js', () => ({
   calculatePauseAccumulation: vi.fn(),
   checkWatchCompletion: vi.fn(),
   detectMediaChange: mockDetectMediaChange,
+  // Playback confirmation functions for delayed rule evaluation
+  isPlaybackConfirmed: vi.fn().mockReturnValue(false),
+  createInitialConfirmationState: vi.fn().mockReturnValue({
+    rulesEvaluated: false,
+    confirmedPlayback: false,
+    firstSeenAt: Date.now(),
+    maxViewOffset: 0,
+  }),
+  updateConfirmationState: vi.fn().mockImplementation((state) => state),
 }));
 
 vi.mock('../poller/database.js', () => ({
@@ -108,13 +117,13 @@ vi.mock('../poller/violations.js', () => ({
 }));
 
 vi.mock('../poller/sessionLifecycle.js', () => ({
-  createSessionWithRulesAtomic: vi.fn(),
   stopSessionAtomic: vi.fn(),
   findActiveSession: mockFindActiveSession,
   findActiveSessionsAll: vi.fn().mockResolvedValue([]),
   buildActiveSession: mockBuildActiveSession,
   handleMediaChangeAtomic: mockHandleMediaChangeAtomic,
   reEvaluateRulesOnTranscodeChange: vi.fn(),
+  confirmAndPersistSession: vi.fn(),
 }));
 
 // ============================================================================
@@ -234,6 +243,11 @@ const mockCacheService = {
   removeUserSession: vi.fn(),
   withSessionCreateLock: vi.fn(),
   hasTerminationCooldown: vi.fn().mockResolvedValue(false),
+  // Pending session methods for delayed rule evaluation
+  getPendingSession: vi.fn().mockResolvedValue(null),
+  setPendingSession: vi.fn(),
+  deletePendingSession: vi.fn(),
+  getAllPendingSessionKeys: vi.fn().mockResolvedValue([]),
 };
 
 const mockPubSubService = {

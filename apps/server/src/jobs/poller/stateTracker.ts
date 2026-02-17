@@ -6,7 +6,13 @@
  */
 
 import { SESSION_LIMITS, type SessionState } from '@tracearr/shared';
-import type { PauseAccumulationResult, StopDurationResult, SessionPauseData } from './types.js';
+import type {
+  PauseAccumulationResult,
+  StopDurationResult,
+  SessionPauseData,
+  PlaybackConfirmationState,
+} from './types.js';
+import { PLAYBACK_CONFIRM_THRESHOLD_MS } from './types.js';
 
 // ============================================================================
 // Pause Tracking
@@ -334,4 +340,56 @@ export function shouldGroupWithPreviousSession(
   }
 
   return null;
+}
+
+// ============================================================================
+// Playback Confirmation (Rule Evaluation Delay)
+// ============================================================================
+
+/**
+ * Check if playback has been confirmed for rule evaluation.
+ *
+ * A session is confirmed when ANY of these conditions are met:
+ * 1. Already marked as confirmed (idempotent)
+ * 2. Progress (viewOffset) exceeds 30 seconds
+ * 3. Session has been active for 30+ seconds while playing
+ */
+export function isPlaybackConfirmed(
+  state: PlaybackConfirmationState,
+  currentViewOffset: number,
+  currentState: string,
+  now: number
+): boolean {
+  if (state.confirmedPlayback) return true;
+  if (currentViewOffset > PLAYBACK_CONFIRM_THRESHOLD_MS) return true;
+  const activeDuration = now - state.firstSeenAt;
+  if (activeDuration > PLAYBACK_CONFIRM_THRESHOLD_MS && currentState === 'playing') {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Create initial confirmation state for a new session.
+ */
+export function createInitialConfirmationState(now: number): PlaybackConfirmationState {
+  return {
+    rulesEvaluated: false,
+    confirmedPlayback: false,
+    firstSeenAt: now,
+    maxViewOffset: 0,
+  };
+}
+
+/**
+ * Update confirmation state with new progress data.
+ */
+export function updateConfirmationState(
+  state: PlaybackConfirmationState,
+  viewOffset: number
+): PlaybackConfirmationState {
+  return {
+    ...state,
+    maxViewOffset: Math.max(state.maxViewOffset, viewOffset),
+  };
 }

@@ -74,7 +74,12 @@ export { getTrustScorePenalty, doesRuleApplyToUser } from './violations.js';
 // Session Lifecycle Functions (shared between Poller and SSE)
 // ============================================================================
 
-export { createSessionWithRulesAtomic, stopSessionAtomic } from './sessionLifecycle.js';
+export {
+  createSessionWithRulesAtomic,
+  stopSessionAtomic,
+  confirmAndPersistSession,
+  buildPendingActiveSession,
+} from './sessionLifecycle.js';
 
 export type {
   SessionCreationInput,
@@ -82,4 +87,5 @@ export type {
   QualityChangeResult,
   SessionStopInput,
   SessionStopResult,
+  PendingSessionData,
 } from './types.js';

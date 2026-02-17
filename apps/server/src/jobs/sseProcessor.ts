@@ -11,6 +11,7 @@
  * 4. Broadcast updates via WebSocket
  */
 
+import { randomUUID } from 'node:crypto';
 import { eq, and } from 'drizzle-orm';
 import type { PlexPlaySessionNotification } from '@tracearr/shared';
 import { db } from '../db/client.js';
@@ -26,18 +27,23 @@ import {
   calculatePauseAccumulation,
   checkWatchCompletion,
   detectMediaChange,
+  isPlaybackConfirmed,
+  createInitialConfirmationState,
+  updateConfirmationState,
 } from './poller/stateTracker.js';
 import { getActiveRulesV2, batchGetRecentUserSessions } from './poller/database.js';
 import { broadcastViolations } from './poller/violations.js';
 import {
-  createSessionWithRulesAtomic,
   stopSessionAtomic,
   findActiveSession,
   findActiveSessionsAll,
   buildActiveSession,
+  buildPendingActiveSession,
   handleMediaChangeAtomic,
   reEvaluateRulesOnTranscodeChange,
+  confirmAndPersistSession,
 } from './poller/sessionLifecycle.js';
+import type { PendingSessionData } from './poller/types.js';
 import { enqueueNotification } from './notificationQueue.js';
 import { triggerReconciliationPoll } from './poller/index.js';
 
@@ -87,6 +93,53 @@ const wrappedHandlers = {
 export function initializeSSEProcessor(cache: CacheService, pubSub: PubSubService): void {
   cacheService = cache;
   pubSubService = pubSub;
+}
+
+/**
+ * Clean up orphaned pending sessions from a previous server instance.
+ * Should be called on startup before starting the SSE processor.
+ *
+ * Orphaned pending sessions can occur if the server crashes or restarts
+ * while sessions are in the pending state (< 30s confirmation).
+ * These would have stale data if they were later "confirmed".
+ *
+ * The reconciliation poll will pick up any still-active playback
+ * and create fresh pending sessions with current data.
+ */
+export async function cleanupOrphanedPendingSessions(): Promise<void> {
+  if (!cacheService) {
+    console.warn('[SSEProcessor] Cache service not initialized, skipping orphan cleanup');
+    return;
+  }
+
+  try {
+    const pendingKeys = await cacheService.getAllPendingSessionKeys();
+
+    if (pendingKeys.length === 0) {
+      console.log('[SSEProcessor] No orphaned pending sessions found');
+      return;
+    }
+
+    console.log(`[SSEProcessor] Cleaning up ${pendingKeys.length} orphaned pending session(s)`);
+
+    for (const { serverId, sessionKey } of pendingKeys) {
+      const pendingData = await cacheService.getPendingSession(serverId, sessionKey);
+      if (pendingData) {
+        // Remove from all caches
+        await cacheService.deletePendingSession(serverId, sessionKey);
+        await cacheService.removeActiveSession(pendingData.id);
+        await cacheService.removeUserSession(pendingData.serverUser.id, pendingData.id);
+
+        console.log(
+          `[SSEProcessor] Cleaned up orphaned session ${sessionKey} (${pendingData.processed.mediaTitle})`
+        );
+      }
+    }
+
+    console.log('[SSEProcessor] Orphaned pending session cleanup complete');
+  } catch (error) {
+    console.error('[SSEProcessor] Error cleaning up orphaned pending sessions:', error);
+  }
 }
 
 /**
@@ -159,6 +212,7 @@ export function stopSSEProcessor(): void {
 
 /**
  * Handle playing event (new session or resume)
+ * Also updates pending sessions (Redis-only) with playing state
  */
 async function handlePlaying(event: {
   serverId: string;
@@ -167,6 +221,39 @@ async function handlePlaying(event: {
   const { serverId, notification } = event;
 
   try {
+    // First check for a pending session (Redis-only, not yet confirmed)
+    // This handles resume from pause for pending sessions
+    if (cacheService) {
+      const pendingData = await cacheService.getPendingSession(serverId, notification.sessionKey);
+      if (pendingData) {
+        // Fetch fresh session data to check for media change
+        const result = await fetchFullSession(serverId, notification.sessionKey);
+        if (result) {
+          // Check if media changed (e.g., autoplay next episode before 30s confirmation)
+          if (detectMediaChange(pendingData.processed.ratingKey, result.session.ratingKey)) {
+            console.log(
+              `[SSEProcessor] Media change detected on pending session ${notification.sessionKey}: ` +
+                `${pendingData.processed.mediaTitle} -> ${result.session.mediaTitle}`
+            );
+            // Discard old pending session (phantom - never confirmed)
+            await discardPendingSession(serverId, notification.sessionKey, pendingData);
+            // Create fresh pending session for new media
+            await createNewSession(serverId, result.session, result.server);
+            return;
+          }
+        }
+        // No media change - just update the pending session state
+        await updatePendingSession(
+          serverId,
+          notification.sessionKey,
+          pendingData,
+          'playing',
+          notification.viewOffset
+        );
+        return;
+      }
+    }
+
     const result = await fetchFullSession(serverId, notification.sessionKey);
     if (!result) {
       return;
@@ -209,6 +296,7 @@ async function handlePlaying(event: {
 
 /**
  * Handle paused event
+ * Also updates pending sessions (Redis-only) with pause state
  */
 async function handlePaused(event: {
   serverId: string;
@@ -217,6 +305,16 @@ async function handlePaused(event: {
   const { serverId, notification } = event;
 
   try {
+    // First check for a pending session (Redis-only, not yet confirmed)
+    if (cacheService) {
+      const pendingData = await cacheService.getPendingSession(serverId, notification.sessionKey);
+      if (pendingData) {
+        await updatePendingSession(serverId, notification.sessionKey, pendingData, 'paused');
+        return;
+      }
+    }
+
+    // Check for confirmed session in DB
     const existingSession = await findActiveSession(serverId, notification.sessionKey);
 
     if (!existingSession) {
@@ -234,6 +332,8 @@ async function handlePaused(event: {
 
 /**
  * Handle stopped event
+ * If session is still pending (< 30s), discard it silently (phantom session).
+ * If session is confirmed, stop it normally.
  */
 async function handleStopped(event: {
   serverId: string;
@@ -242,6 +342,20 @@ async function handleStopped(event: {
   const { serverId, notification } = event;
 
   try {
+    // First check for a pending session (Redis-only, not yet confirmed)
+    // If found and not confirmed, this is a phantom session - discard it
+    if (cacheService) {
+      const pendingData = await cacheService.getPendingSession(serverId, notification.sessionKey);
+      if (pendingData) {
+        await discardPendingSession(serverId, notification.sessionKey, pendingData);
+        console.log(
+          `[SSEProcessor] Discarded phantom session ${notification.sessionKey} (id: ${pendingData.id}) ` +
+            `(stopped before 30s confirmation)`
+        );
+        return;
+      }
+    }
+
     // Query without limit to handle any duplicate sessions that may exist
     const existingSessions = await findActiveSessionsAll(serverId, notification.sessionKey);
 
@@ -260,6 +374,8 @@ async function handleStopped(event: {
 
 /**
  * Handle progress event (periodic position updates)
+ * Also handles pending session confirmation - if viewOffset exceeds 30s threshold,
+ * the session is persisted to DB and rules are evaluated.
  */
 async function handleProgress(event: {
   serverId: string;
@@ -268,6 +384,22 @@ async function handleProgress(event: {
   const { serverId, notification } = event;
 
   try {
+    // First check for a pending session (Redis-only, not yet confirmed)
+    if (cacheService) {
+      const pendingData = await cacheService.getPendingSession(serverId, notification.sessionKey);
+      if (pendingData) {
+        // Update progress and check confirmation threshold
+        await updatePendingSession(
+          serverId,
+          notification.sessionKey,
+          pendingData,
+          pendingData.currentState as 'playing' | 'paused',
+          notification.viewOffset
+        );
+        return;
+      }
+    }
+
     const existingSession = await findActiveSession(serverId, notification.sessionKey);
 
     if (!existingSession) {
@@ -457,7 +589,14 @@ async function fetchFullSession(
 
 /**
  * Create a new session from SSE event
- * Uses shared createSessionWithRulesAtomic for consistent handling with poller
+ *
+ * Redis-First Architecture:
+ * 1. New sessions are stored in Redis as "pending" (not yet in DB)
+ * 2. Sessions remain pending until 30s confirmation threshold met
+ * 3. Once confirmed, session is persisted to DB and rules are evaluated
+ * 4. If stopped before confirmation, session is discarded (phantom session)
+ *
+ * This prevents Plex prefetch events from triggering rule violations.
  *
  * @param serverId Server ID
  * @param processed Processed session data
@@ -522,84 +661,66 @@ async function createNewSession(
     return;
   }
 
-  const activeRulesV2 = await getActiveRulesV2();
-  const recentSessions = await batchGetRecentUserSessions([userDetail.id]);
-  const activeSessions = await cacheService.getAllActiveSessions();
-
-  const result = await cacheService.withSessionCreateLock(
-    serverId,
-    processed.sessionKey,
-    async () => {
-      const existingActiveSession = await findActiveSession(serverId, processed.sessionKey);
-
-      if (existingActiveSession) {
-        console.log(
-          `[SSEProcessor] Active session already exists for ${processed.sessionKey}, skipping create`
-        );
-        return null;
-      }
-
-      return createSessionWithRulesAtomic({
-        processed,
-        server: { id: server.id, name: server.name, type: server.type },
-        serverUser: userDetail,
-        geo,
-        activeRulesV2,
-        activeSessions,
-        recentSessions: recentSessions.get(userDetail.id) ?? [],
-      });
-    }
-  );
-
-  if (!result) {
-    return;
-  }
-
-  const { insertedSession, violationResults, qualityChange, wasTerminatedByRule } = result;
-
-  if (qualityChange && cacheService) {
-    await cacheService.removeActiveSession(qualityChange.stoppedSession.id);
-    await cacheService.removeUserSession(
-      qualityChange.stoppedSession.serverUserId,
-      qualityChange.stoppedSession.id
-    );
-    if (pubSubService) {
-      await pubSubService.publish('session:stopped', qualityChange.stoppedSession.id);
-    }
-  }
-
-  if (pubSubService) {
-    try {
-      await broadcastViolations(violationResults, insertedSession.id, pubSubService);
-    } catch (error) {
-      console.error('[SSEProcessor] Error broadcasting violations:', error);
-    }
-  }
-
-  if (wasTerminatedByRule) {
+  // Check if there's already a pending session for this key
+  const existingPending = await cacheService.getPendingSession(serverId, processed.sessionKey);
+  if (existingPending) {
     console.log(
-      `[SSEProcessor] Session ${insertedSession.id} was terminated by rule, skipping cache add`
+      `[SSEProcessor] Pending session already exists for ${processed.sessionKey}, skipping create`
     );
     return;
   }
 
-  const activeSession = buildActiveSession({
-    session: insertedSession,
+  // Check if there's already a confirmed session in DB
+  const existingActive = await findActiveSession(serverId, processed.sessionKey);
+  if (existingActive) {
+    console.log(
+      `[SSEProcessor] Active session already exists for ${processed.sessionKey}, skipping create`
+    );
+    return;
+  }
+
+  const now = Date.now();
+
+  // Pre-generate UUID for session - this same ID will be used when persisting to DB
+  // This ensures UI stability: no ID change means no component re-mount, no flicker
+  const sessionId = randomUUID();
+
+  // Create pending session data
+  const pendingData: PendingSessionData = {
+    id: sessionId,
+    confirmation: createInitialConfirmationState(now),
     processed,
-    user: userDetail,
-    geo,
     server: { id: server.id, name: server.name, type: server.type },
-  });
+    serverUser: userDetail,
+    geo,
+    startedAt: now,
+    lastSeenAt: now,
+    currentState: processed.state,
+    pausedDurationMs: 0,
+    lastPausedAt: processed.state === 'paused' ? now : null,
+  };
 
+  // Store in Redis only (not DB yet)
+  await cacheService.setPendingSession(serverId, processed.sessionKey, pendingData);
+
+  // Build ActiveSession for immediate display in Now Playing dashboard
+  // This ensures sessions appear immediately, not after 30s confirmation
+  const activeSession = buildPendingActiveSession(pendingData);
+
+  // Add to active sessions cache so Now Playing shows it immediately
   await cacheService.addActiveSession(activeSession);
-  await cacheService.addUserSession(userDetail.id, insertedSession.id);
+  await cacheService.addUserSession(userDetail.id, activeSession.id);
 
+  // Broadcast session:started immediately for real-time UI updates
+  // Note: Rules are NOT evaluated yet - that happens after confirmation
   if (pubSubService) {
     await pubSubService.publish('session:started', activeSession);
     await enqueueNotification({ type: 'session_started', payload: activeSession });
   }
 
-  console.log(`[SSEProcessor] Created session ${insertedSession.id} for ${processed.mediaTitle}`);
+  console.log(
+    `[SSEProcessor] Created pending session for ${processed.mediaTitle} (awaiting 30s confirmation)`
+  );
 }
 
 /**
@@ -858,6 +979,220 @@ async function updateExistingSession(
       }
     }
   }
+}
+
+/**
+ * Discard a pending session (phantom session cleanup).
+ * Called when media changes before 30s confirmation or when session stops before confirmation.
+ * Removes from all caches and broadcasts session:stopped.
+ *
+ * @param serverId Server ID
+ * @param sessionKey Session key
+ * @param pendingData Pending session data to discard
+ */
+async function discardPendingSession(
+  serverId: string,
+  sessionKey: string,
+  pendingData: PendingSessionData
+): Promise<void> {
+  if (!cacheService) return;
+
+  const sessionId = pendingData.id;
+
+  // Clean up from all caches
+  await cacheService.deletePendingSession(serverId, sessionKey);
+  await cacheService.removeActiveSession(sessionId);
+  await cacheService.removeUserSession(pendingData.serverUser.id, sessionId);
+
+  // Broadcast session:stopped so UI removes it
+  if (pubSubService) {
+    await pubSubService.publish('session:stopped', sessionId);
+  }
+}
+
+/**
+ * Update a pending session (Redis-only, not yet in DB).
+ * If the session meets the 30s confirmation threshold, persist to DB and evaluate rules.
+ *
+ * @param serverId Server ID
+ * @param sessionKey Session key
+ * @param pendingData Current pending session data
+ * @param newState New playback state
+ * @param viewOffset Optional view offset from progress event
+ */
+async function updatePendingSession(
+  serverId: string,
+  sessionKey: string,
+  pendingData: PendingSessionData,
+  newState: 'playing' | 'paused',
+  viewOffset?: number
+): Promise<void> {
+  if (!cacheService) return;
+
+  const now = Date.now();
+  const previousState = pendingData.currentState;
+
+  // Calculate pause accumulation
+  // Note: Using inline logic instead of calculatePauseAccumulation() because:
+  // - Pending sessions use epoch numbers (for JSON serialization)
+  // - calculatePauseAccumulation() uses Date objects
+  // - Avoiding Date object churn on frequent progress events
+  let pausedDurationMs = pendingData.pausedDurationMs;
+  let lastPausedAt = pendingData.lastPausedAt;
+
+  if (previousState === 'paused' && newState === 'playing') {
+    if (lastPausedAt) {
+      pausedDurationMs += now - lastPausedAt;
+    }
+    lastPausedAt = null;
+  } else if (previousState === 'playing' && newState === 'paused') {
+    lastPausedAt = now;
+  }
+
+  // Update confirmation state with progress if provided
+  const currentViewOffset = viewOffset ?? pendingData.confirmation.maxViewOffset;
+  const updatedConfirmation = updateConfirmationState(pendingData.confirmation, currentViewOffset);
+
+  // Check if playback is now confirmed
+  const isConfirmed = isPlaybackConfirmed(updatedConfirmation, currentViewOffset, newState, now);
+
+  if (isConfirmed) {
+    // Session is confirmed - persist to DB and evaluate rules
+    await confirmPendingSessionAndPersist(serverId, sessionKey, {
+      ...pendingData,
+      confirmation: { ...updatedConfirmation, confirmedPlayback: true },
+      currentState: newState,
+      pausedDurationMs,
+      lastPausedAt,
+      lastSeenAt: now,
+    });
+  } else {
+    // Still pending - update Redis data
+    const updatedData: PendingSessionData = {
+      ...pendingData,
+      confirmation: updatedConfirmation,
+      currentState: newState,
+      pausedDurationMs,
+      lastPausedAt,
+      lastSeenAt: now,
+    };
+    await cacheService.setPendingSession(serverId, sessionKey, updatedData);
+  }
+}
+
+/**
+ * Confirm a pending session by persisting to DB with rule evaluation.
+ * Called when a session meets the 30s confirmation threshold.
+ *
+ * Since pending sessions now use pre-generated UUIDs, the session ID is stable
+ * throughout the lifecycle - no ID change occurs during confirmation.
+ * This eliminates UI flicker and broken session detail pages.
+ *
+ * @param serverId Server ID
+ * @param sessionKey Session key
+ * @param pendingData Final pending session data (includes pre-generated UUID)
+ */
+async function confirmPendingSessionAndPersist(
+  serverId: string,
+  sessionKey: string,
+  pendingData: PendingSessionData
+): Promise<void> {
+  if (!cacheService) return;
+
+  // Capture for closure - avoids non-null assertion in callback
+  const cache = cacheService;
+
+  // The session ID is stable - pre-generated when pending session was created
+  const sessionId = pendingData.id;
+
+  // Delete from pending session tracking
+  await cache.deletePendingSession(serverId, sessionKey);
+
+  // Use lock to prevent race conditions
+  const result = await cache.withSessionCreateLock(serverId, sessionKey, async () => {
+    // Double-check no active session was created while we were confirming
+    const existingActive = await findActiveSession(serverId, sessionKey);
+    if (existingActive) {
+      console.log(`[SSEProcessor] Active session created while confirming ${sessionKey}, skipping`);
+      return null;
+    }
+
+    const activeRulesV2 = await getActiveRulesV2();
+    const recentSessions = await batchGetRecentUserSessions([pendingData.serverUser.id]);
+    const activeSessions = await cache.getAllActiveSessions();
+
+    return confirmAndPersistSession({
+      pendingData,
+      activeRulesV2,
+      activeSessions,
+      recentSessions: recentSessions.get(pendingData.serverUser.id) ?? [],
+    });
+  });
+
+  if (!result) {
+    return;
+  }
+
+  const { insertedSession, violationResults, qualityChange, wasTerminatedByRule } = result;
+
+  // Handle quality change (rare but possible)
+  if (qualityChange) {
+    await cache.removeActiveSession(qualityChange.stoppedSession.id);
+    await cache.removeUserSession(
+      qualityChange.stoppedSession.serverUserId,
+      qualityChange.stoppedSession.id
+    );
+    if (pubSubService) {
+      await pubSubService.publish('session:stopped', qualityChange.stoppedSession.id);
+    }
+  }
+
+  // Broadcast any violations
+  if (pubSubService) {
+    try {
+      await broadcastViolations(violationResults, insertedSession.id, pubSubService);
+    } catch (error) {
+      console.error('[SSEProcessor] Error broadcasting violations:', error);
+    }
+  }
+
+  // If terminated by rule, clean up the session from cache and broadcast stop
+  if (wasTerminatedByRule) {
+    await cache.removeActiveSession(sessionId);
+    await cache.removeUserSession(pendingData.serverUser.id, sessionId);
+
+    if (pubSubService) {
+      await pubSubService.publish('session:stopped', sessionId);
+    }
+    console.log(
+      `[SSEProcessor] Confirmed session ${sessionId} was terminated by rule, removed from cache`
+    );
+    return;
+  }
+
+  // Build the confirmed active session with full DB data
+  // The ID is the same pre-generated UUID used throughout
+  const activeSession = buildActiveSession({
+    session: insertedSession,
+    processed: pendingData.processed,
+    user: pendingData.serverUser,
+    geo: pendingData.geo,
+    server: pendingData.server,
+  });
+
+  // Update cache in place - no ID change means simple update, no atomic swap needed
+  // The session ID is stable, so we just replace the session data
+  await cacheService.updateActiveSession(activeSession);
+
+  // Broadcast session:updated to inform clients the session is now confirmed
+  // No stop+start dance needed since the ID is stable
+  if (pubSubService) {
+    await pubSubService.publish('session:updated', activeSession);
+  }
+
+  console.log(
+    `[SSEProcessor] Confirmed and persisted session ${sessionId} for ${pendingData.processed.mediaTitle}`
+  );
 }
 
 /**

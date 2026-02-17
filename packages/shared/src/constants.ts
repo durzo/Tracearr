@@ -111,6 +111,15 @@ export const REDIS_KEYS = {
   },
   // Individual session data
   SESSION_BY_ID: (id: string) => `${_redisPrefix}tracearr:sessions:${id}`,
+  /**
+   * Pending session data (before DB write) - keyed by serverId + sessionKey.
+   */
+  PENDING_SESSION: (serverId: string, sessionKey: string) =>
+    `${_redisPrefix}tracearr:sessions:pending:${serverId}:${sessionKey}`,
+  /** Set of all pending session keys (serverId:sessionKey format) for enumeration */
+  get PENDING_SESSION_IDS() {
+    return `${_redisPrefix}tracearr:sessions:pending:ids`;
+  },
   USER_SESSIONS: (userId: string) => `${_redisPrefix}tracearr:users:${userId}:sessions`,
   get DASHBOARD_STATS() {
     return `${_redisPrefix}tracearr:stats:dashboard`;
