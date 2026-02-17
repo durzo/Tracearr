@@ -168,6 +168,7 @@ export function mapMediaSession(
     channelTitle: session.live?.channelTitle ?? null,
     channelIdentifier: session.live?.channelIdentifier ?? null,
     channelThumb: session.live?.channelThumb ?? null,
+    liveUuid: null, // Set from SSE notification key, not API response
     // Music track metadata
     artistName: session.music?.artistName ?? null,
     albumName: session.music?.albumName ?? null,
