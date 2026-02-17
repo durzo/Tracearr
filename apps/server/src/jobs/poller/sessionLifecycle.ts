@@ -8,6 +8,7 @@
 import { eq, and, desc, isNull, gte } from 'drizzle-orm';
 import {
   TIME_MS,
+  SESSION_WRITE_RETRY,
   type ActiveSession,
   type StreamDetailFields,
   type RuleV2,
@@ -41,6 +42,7 @@ import type {
   MediaChangeResult,
   TranscodeReEvalInput,
   PendingSessionData,
+  SessionIdentity,
 } from './types.js';
 
 // ============================================================================
@@ -366,53 +368,67 @@ export function buildPendingActiveSession(pendingData: PendingSessionData): Acti
 // ============================================================================
 
 /**
- * Find an active (not stopped) session by server ID and session key.
+ * Find an active (not stopped) session by SessionIdentity.
+ * When ratingKey is provided and non-null, validates the session has matching ratingKey.
  */
 export async function findActiveSession(
-  serverId: string,
-  sessionKey: string
+  identity: SessionIdentity
 ): Promise<typeof sessions.$inferSelect | null> {
+  const { serverId, sessionKey, ratingKey } = identity;
   // Time bound reduces TimescaleDB chunk scanning (only recent chunks can have active sessions)
   const chunkBound = new Date(Date.now() - ACTIVE_SESSION_CHUNK_BOUND_MS);
+
+  // Build conditions array
+  const conditions = [
+    eq(sessions.serverId, serverId),
+    eq(sessions.sessionKey, sessionKey),
+    isNull(sessions.stoppedAt),
+    gte(sessions.startedAt, chunkBound),
+  ];
+
+  // Add ratingKey validation if provided and non-null
+  if (ratingKey != null) {
+    conditions.push(eq(sessions.ratingKey, ratingKey));
+  }
 
   const rows = await db
     .select()
     .from(sessions)
-    .where(
-      and(
-        eq(sessions.serverId, serverId),
-        eq(sessions.sessionKey, sessionKey),
-        isNull(sessions.stoppedAt),
-        gte(sessions.startedAt, chunkBound)
-      )
-    )
+    .where(and(...conditions))
     .limit(1);
 
   return rows[0] || null;
 }
 
 /**
- * Find all active (not stopped) sessions matching criteria.
+ * Find all active (not stopped) sessions matching SessionIdentity.
+ * When ratingKey is provided and non-null, validates sessions have matching ratingKey.
  * Use when handling potential duplicates.
  */
 export async function findActiveSessionsAll(
-  serverId: string,
-  sessionKey: string
+  identity: SessionIdentity
 ): Promise<(typeof sessions.$inferSelect)[]> {
+  const { serverId, sessionKey, ratingKey } = identity;
   // Time bound reduces TimescaleDB chunk scanning (only recent chunks can have active sessions)
   const chunkBound = new Date(Date.now() - ACTIVE_SESSION_CHUNK_BOUND_MS);
+
+  // Build conditions array
+  const conditions = [
+    eq(sessions.serverId, serverId),
+    eq(sessions.sessionKey, sessionKey),
+    isNull(sessions.stoppedAt),
+    gte(sessions.startedAt, chunkBound),
+  ];
+
+  // Add ratingKey validation if provided and non-null
+  if (ratingKey != null) {
+    conditions.push(eq(sessions.ratingKey, ratingKey));
+  }
 
   return db
     .select()
     .from(sessions)
-    .where(
-      and(
-        eq(sessions.serverId, serverId),
-        eq(sessions.sessionKey, sessionKey),
-        isNull(sessions.stoppedAt),
-        gte(sessions.startedAt, chunkBound)
-      )
-    );
+    .where(and(...conditions));
 }
 
 // ============================================================================
@@ -972,6 +988,7 @@ export async function confirmAndPersistSession(
 
 /**
  * Stop a session atomically. Returns wasUpdated=false if already stopped.
+ * Implements bounded retry logic for transient DB failures.
  */
 export async function stopSessionAtomic(input: SessionStopInput): Promise<SessionStopResult> {
   const { session, stoppedAt, forceStopped = false, preserveWatched = false } = input;
@@ -996,27 +1013,57 @@ export async function stopSessionAtomic(input: SessionStopInput): Promise<Sessio
 
   const shortSession = !shouldRecordSession(durationMs);
 
-  // Use conditional update for idempotency - only stop if not already stopped
-  // This prevents race conditions when multiple stop events arrive concurrently
-  const result = await db
-    .update(sessions)
-    .set({
-      state: 'stopped',
-      stoppedAt,
-      durationMs,
-      pausedDurationMs: finalPausedDurationMs,
-      lastPausedAt: null,
-      watched,
-      shortSession,
-      ...(forceStopped && { forceStopped: true }),
-    })
-    .where(and(eq(sessions.id, session.id), isNull(sessions.stoppedAt)))
-    .returning({ id: sessions.id });
+  // Retry loop for transient DB failures (connection errors, timeouts, etc.)
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= SESSION_WRITE_RETRY.IMMEDIATE_RETRIES; attempt++) {
+    try {
+      // Use conditional update for idempotency - only stop if not already stopped
+      // This prevents race conditions when multiple stop events arrive concurrently
+      const result = await db
+        .update(sessions)
+        .set({
+          state: 'stopped',
+          stoppedAt,
+          durationMs,
+          pausedDurationMs: finalPausedDurationMs,
+          lastPausedAt: null,
+          watched,
+          shortSession,
+          ...(forceStopped && { forceStopped: true }),
+        })
+        .where(and(eq(sessions.id, session.id), isNull(sessions.stoppedAt)))
+        .returning({ id: sessions.id });
 
-  // Return whether the update was applied (for caller to skip cache/broadcast if already stopped)
-  const wasUpdated = result.length > 0;
+      // Return whether the update was applied (for caller to skip cache/broadcast if already stopped)
+      const wasUpdated = result.length > 0;
 
-  return { durationMs, watched, shortSession, wasUpdated };
+      return { durationMs, watched, shortSession, wasUpdated };
+    } catch (error) {
+      lastError = error;
+      if (attempt < SESSION_WRITE_RETRY.IMMEDIATE_RETRIES) {
+        const delayMs = SESSION_WRITE_RETRY.IMMEDIATE_BACKOFF_MS * Math.pow(2, attempt - 1);
+        console.log(
+          `[SessionLifecycle] DB write failed on attempt ${attempt}/${SESSION_WRITE_RETRY.IMMEDIATE_RETRIES}, retrying in ${delayMs}ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+
+  // All retries failed - return needsRetry for caller to queue for later processing
+  console.error(
+    `[SessionLifecycle] All ${SESSION_WRITE_RETRY.IMMEDIATE_RETRIES} attempts failed for session ${session.id}:`,
+    lastError
+  );
+
+  return {
+    durationMs,
+    watched,
+    shortSession,
+    wasUpdated: false,
+    needsRetry: true,
+    retryData: { stoppedAt: stoppedAt.getTime(), forceStopped },
+  };
 }
 
 // ============================================================================
