@@ -67,6 +67,21 @@ export interface CacheService {
   deletePendingSession(serverId: string, sessionKey: string): Promise<void>;
   getAllPendingSessionKeys(): Promise<Array<{ serverId: string; sessionKey: string }>>;
 
+  // Session write retry queue (for failed DB writes during session stop)
+  addSessionWriteRetry(
+    sessionId: string,
+    stopData: { stoppedAt: number; forceStopped: boolean }
+  ): Promise<void>;
+  getSessionWriteRetries(): Promise<
+    Array<{
+      sessionId: string;
+      attempts: number;
+      stopData: { stoppedAt: number; forceStopped: boolean };
+    }>
+  >;
+  incrementSessionWriteRetry(sessionId: string): Promise<number>;
+  removeSessionWriteRetry(sessionId: string): Promise<void>;
+
   // Health check
   ping(): Promise<boolean>;
 }
@@ -474,6 +489,60 @@ export function createCacheService(redis: Redis): CacheService {
         const [serverId, ...rest] = m.split(':');
         return { serverId: serverId!, sessionKey: rest.join(':') };
       });
+    },
+
+    // Session write retry queue methods
+    async addSessionWriteRetry(
+      sessionId: string,
+      stopData: { stoppedAt: number; forceStopped: boolean }
+    ): Promise<void> {
+      const key = REDIS_KEYS.SESSION_WRITE_RETRY(sessionId);
+      await redis.hset(key, {
+        attempts: '1',
+        stopData: JSON.stringify(stopData),
+      });
+      await redis.sadd(REDIS_KEYS.SESSION_WRITE_RETRY_SET, sessionId);
+      // Auto-expire after 1 hour (safety net)
+      await redis.expire(key, 3600);
+    },
+
+    async getSessionWriteRetries(): Promise<
+      Array<{
+        sessionId: string;
+        attempts: number;
+        stopData: { stoppedAt: number; forceStopped: boolean };
+      }>
+    > {
+      const sessionIds = await redis.smembers(REDIS_KEYS.SESSION_WRITE_RETRY_SET);
+      const results: Array<{
+        sessionId: string;
+        attempts: number;
+        stopData: { stoppedAt: number; forceStopped: boolean };
+      }> = [];
+
+      for (const sessionId of sessionIds) {
+        const key = REDIS_KEYS.SESSION_WRITE_RETRY(sessionId);
+        const data = await redis.hgetall(key);
+        if (data.attempts && data.stopData) {
+          results.push({
+            sessionId,
+            attempts: parseInt(data.attempts, 10),
+            stopData: JSON.parse(data.stopData) as { stoppedAt: number; forceStopped: boolean },
+          });
+        }
+      }
+      return results;
+    },
+
+    async incrementSessionWriteRetry(sessionId: string): Promise<number> {
+      const key = REDIS_KEYS.SESSION_WRITE_RETRY(sessionId);
+      return redis.hincrby(key, 'attempts', 1);
+    },
+
+    async removeSessionWriteRetry(sessionId: string): Promise<void> {
+      const key = REDIS_KEYS.SESSION_WRITE_RETRY(sessionId);
+      await redis.del(key);
+      await redis.srem(REDIS_KEYS.SESSION_WRITE_RETRY_SET, sessionId);
     },
 
     // Health check
