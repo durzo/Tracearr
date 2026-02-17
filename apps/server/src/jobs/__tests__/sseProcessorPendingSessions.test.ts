@@ -350,7 +350,10 @@ describe('SSE Processor - Pending Session Flow', () => {
 
       // Wait for async handler
       await vi.waitFor(() => {
-        expect(mockFindActiveSessionsAll).toHaveBeenCalledWith('server-123', 'test-session-key');
+        expect(mockFindActiveSessionsAll).toHaveBeenCalledWith({
+          serverId: 'server-123',
+          sessionKey: 'test-session-key',
+        });
       });
 
       // Should have tried to stop the DB session
