@@ -222,6 +222,7 @@ function createMockPendingSession(overrides: Partial<PendingSessionData> = {}): 
       channelTitle: null,
       channelIdentifier: null,
       channelThumb: null,
+      liveUuid: null,
       artistName: null,
       albumName: null,
       trackNumber: null,
@@ -565,8 +566,14 @@ describe('SSE Processor - Pending Session Flow', () => {
       // Should have removed old session from active cache
       expect(mockCacheService.removeActiveSession).toHaveBeenCalledWith(pendingSession.id);
 
-      // Should have called detectMediaChange
-      expect(mockDetectMediaChange).toHaveBeenCalledWith('old-rating-key', 'new-rating-key');
+      // Should have called detectMediaChange with ratingKeys and liveUuids
+      // Note: liveUuid is null for both since test fixtures don't have Live TV sessions
+      expect(mockDetectMediaChange).toHaveBeenCalledWith(
+        'old-rating-key',
+        'new-rating-key',
+        null,
+        undefined
+      );
     });
 
     it('updates pending session normally when media has not changed', async () => {

@@ -397,7 +397,7 @@ describe('SSE Processor - Media Change Detection', () => {
     });
 
     await vi.waitFor(() => {
-      expect(mockDetectMediaChange).toHaveBeenCalledWith(null, null);
+      expect(mockDetectMediaChange).toHaveBeenCalledWith(null, null, undefined, undefined);
     });
 
     expect(mockHandleMediaChangeAtomic).not.toHaveBeenCalled();

@@ -12,8 +12,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { eq, and } from 'drizzle-orm';
-import type { PlexPlaySessionNotification } from '@tracearr/shared';
+import { eq, and, isNull } from 'drizzle-orm';
+import { SESSION_WRITE_RETRY, type PlexPlaySessionNotification } from '@tracearr/shared';
 import { db } from '../db/client.js';
 import { servers, sessions, serverUsers, users } from '../db/schema.js';
 import { createMediaServerClient } from '../services/mediaServer/index.js';
@@ -23,6 +23,7 @@ import { registerService, unregisterService } from '../services/serviceTracker.j
 import { lookupGeoIP } from '../services/plexGeoip.js';
 import { getGeoIPSettings } from '../routes/settings.js';
 import { mapMediaSession } from './poller/sessionMapper.js';
+import { extractLiveUuid } from '../services/mediaServer/plex/plexUtils.js';
 import {
   calculatePauseAccumulation,
   checkWatchCompletion,
@@ -55,6 +56,10 @@ let isRunning = false;
 // Delay prevents false alarms from brief connection blips
 
 const SERVER_DOWN_THRESHOLD_MS = 60 * 1000;
+
+// Orphan sweep threshold in milliseconds
+// Pending sessions older than this are considered orphaned and will be swept
+const ORPHAN_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
 
 // Track pending server down notifications (can be cancelled if server comes back up)
 const pendingServerDownNotifications = new Map<string, NodeJS.Timeout>();
@@ -220,6 +225,10 @@ async function handlePlaying(event: {
 }): Promise<void> {
   const { serverId, notification } = event;
 
+  // Extract liveUuid from SSE key for Live TV sessions
+  // Live TV uses stable UUIDs across channel changes, unlike ratingKey
+  const liveUuid = extractLiveUuid(notification.key);
+
   try {
     // First check for a pending session (Redis-only, not yet confirmed)
     // This handles resume from pause for pending sessions
@@ -230,7 +239,15 @@ async function handlePlaying(event: {
         const result = await fetchFullSession(serverId, notification.sessionKey);
         if (result) {
           // Check if media changed (e.g., autoplay next episode before 30s confirmation)
-          if (detectMediaChange(pendingData.processed.ratingKey, result.session.ratingKey)) {
+          // For Live TV, compare liveUuid instead of ratingKey (channel changes are not media changes)
+          if (
+            detectMediaChange(
+              pendingData.processed.ratingKey,
+              result.session.ratingKey,
+              pendingData.processed.liveUuid,
+              liveUuid
+            )
+          ) {
             console.log(
               `[SSEProcessor] Media change detected on pending session ${notification.sessionKey}: ` +
                 `${pendingData.processed.mediaTitle} -> ${result.session.mediaTitle}`
@@ -238,7 +255,7 @@ async function handlePlaying(event: {
             // Discard old pending session (phantom - never confirmed)
             await discardPendingSession(serverId, notification.sessionKey, pendingData);
             // Create fresh pending session for new media
-            await createNewSession(serverId, result.session, result.server);
+            await createNewSession(serverId, result.session, result.server, liveUuid);
             return;
           }
         }
@@ -261,11 +278,19 @@ async function handlePlaying(event: {
 
     const { session, server } = result;
 
-    const existingSession = await findActiveSession(serverId, notification.sessionKey);
+    const existingSession = await findActiveSession({
+      serverId,
+      sessionKey: notification.sessionKey,
+      ratingKey: session.ratingKey,
+    });
 
     if (existingSession) {
-      if (detectMediaChange(existingSession.ratingKey, session.ratingKey)) {
-        await handleMediaChange(existingSession, session, serverId, server);
+      // DB doesn't store liveUuid; reuse incoming if mediaType is 'live'
+      const existingLiveUuid = existingSession.mediaType === 'live' ? liveUuid : undefined;
+      if (
+        detectMediaChange(existingSession.ratingKey, session.ratingKey, existingLiveUuid, liveUuid)
+      ) {
+        await handleMediaChange(existingSession, session, server);
         return;
       }
 
@@ -286,8 +311,8 @@ async function handlePlaying(event: {
         }
       }
 
-      // Pass server to avoid redundant DB lookup
-      await createNewSession(serverId, session, server);
+      // Pass server and liveUuid to avoid redundant lookups
+      await createNewSession(serverId, session, server, liveUuid);
     }
   } catch (error) {
     console.error('[SSEProcessor] Error handling playing event:', error);
@@ -315,7 +340,10 @@ async function handlePaused(event: {
     }
 
     // Check for confirmed session in DB
-    const existingSession = await findActiveSession(serverId, notification.sessionKey);
+    const existingSession = await findActiveSession({
+      serverId,
+      sessionKey: notification.sessionKey,
+    });
 
     if (!existingSession) {
       return;
@@ -357,7 +385,10 @@ async function handleStopped(event: {
     }
 
     // Query without limit to handle any duplicate sessions that may exist
-    const existingSessions = await findActiveSessionsAll(serverId, notification.sessionKey);
+    const existingSessions = await findActiveSessionsAll({
+      serverId,
+      sessionKey: notification.sessionKey,
+    });
 
     if (existingSessions.length === 0) {
       return;
@@ -400,7 +431,10 @@ async function handleProgress(event: {
       }
     }
 
-    const existingSession = await findActiveSession(serverId, notification.sessionKey);
+    const existingSession = await findActiveSession({
+      serverId,
+      sessionKey: notification.sessionKey,
+    });
 
     if (!existingSession) {
       return;
@@ -454,6 +488,92 @@ async function handleProgress(event: {
 async function handleReconciliation(): Promise<void> {
   console.log('[SSEProcessor] Triggering reconciliation poll');
   await triggerReconciliationPoll();
+
+  // Run maintenance tasks during reconciliation
+  await sweepOrphanedPendingSessions();
+  await processSessionWriteRetries();
+}
+
+/**
+ * Sweep orphaned pending sessions that have not been seen in ORPHAN_THRESHOLD_MS.
+ * These are sessions that may have been left behind due to missed stop events.
+ *
+ * @param cache Optional cache service (for testing), defaults to module cacheService
+ */
+export async function sweepOrphanedPendingSessions(cache?: CacheService | null): Promise<void> {
+  const svc = cache ?? cacheService;
+  if (!svc) return;
+
+  const pendingKeys = await svc.getAllPendingSessionKeys();
+  const now = Date.now();
+  let sweptCount = 0;
+
+  for (const { serverId, sessionKey } of pendingKeys) {
+    const pendingData = await svc.getPendingSession(serverId, sessionKey);
+    if (pendingData && now - pendingData.lastSeenAt > ORPHAN_THRESHOLD_MS) {
+      await svc.deletePendingSession(serverId, sessionKey);
+      await svc.removeActiveSession(pendingData.id);
+      await svc.removeUserSession(pendingData.serverUser.id, pendingData.id);
+
+      if (pubSubService) {
+        await pubSubService.publish('session:stopped', pendingData.id);
+      }
+
+      sweptCount++;
+    }
+  }
+
+  if (sweptCount > 0) {
+    console.log(`[SSEProcessor] Swept ${sweptCount} orphaned pending session(s)`);
+  }
+}
+
+/**
+ * Process any failed session DB writes from the retry queue.
+ * Called during reconciliation to recover from transient DB errors.
+ */
+async function processSessionWriteRetries(): Promise<void> {
+  if (!cacheService) return;
+
+  const retries = await cacheService.getSessionWriteRetries();
+
+  for (const retry of retries) {
+    if (retry.attempts >= SESSION_WRITE_RETRY.MAX_TOTAL_ATTEMPTS) {
+      await cacheService.removeSessionWriteRetry(retry.sessionId);
+      console.error(
+        `[SSEProcessor] Max retry attempts (${SESSION_WRITE_RETRY.MAX_TOTAL_ATTEMPTS}) ` +
+          `reached for session ${retry.sessionId}, abandoning`
+      );
+      continue;
+    }
+
+    // Attempt to find the session
+    const session = await db
+      .select()
+      .from(sessions)
+      .where(and(eq(sessions.id, retry.sessionId), isNull(sessions.stoppedAt)))
+      .limit(1)
+      .then((rows) => rows[0]);
+
+    if (!session) {
+      // Session no longer exists or already stopped
+      await cacheService.removeSessionWriteRetry(retry.sessionId);
+      continue;
+    }
+
+    const result = await stopSessionAtomic({
+      session,
+      stoppedAt: new Date(retry.stopData.stoppedAt),
+      forceStopped: retry.stopData.forceStopped,
+    });
+
+    if (result.wasUpdated || !result.needsRetry) {
+      await cacheService.removeSessionWriteRetry(retry.sessionId);
+      console.log(`[SSEProcessor] Retry succeeded for session ${retry.sessionId}`);
+    } else {
+      await cacheService.incrementSessionWriteRetry(retry.sessionId);
+    }
+  }
 }
 
 /**
@@ -601,11 +721,13 @@ async function fetchFullSession(
  * @param serverId Server ID
  * @param processed Processed session data
  * @param existingServer Optional server object to avoid redundant DB lookup (from fetchFullSession)
+ * @param liveUuid Optional Live TV UUID extracted from SSE key (for Live TV sessions)
  */
 async function createNewSession(
   serverId: string,
   processed: ReturnType<typeof mapMediaSession>,
-  existingServer?: typeof servers.$inferSelect
+  existingServer?: typeof servers.$inferSelect,
+  liveUuid?: string
 ): Promise<void> {
   let server = existingServer;
   if (!server) {
@@ -671,7 +793,11 @@ async function createNewSession(
   }
 
   // Check if there's already a confirmed session in DB
-  const existingActive = await findActiveSession(serverId, processed.sessionKey);
+  const existingActive = await findActiveSession({
+    serverId,
+    sessionKey: processed.sessionKey,
+    ratingKey: processed.ratingKey,
+  });
   if (existingActive) {
     console.log(
       `[SSEProcessor] Active session already exists for ${processed.sessionKey}, skipping create`
@@ -685,19 +811,26 @@ async function createNewSession(
   // This ensures UI stability: no ID change means no component re-mount, no flicker
   const sessionId = randomUUID();
 
+  // Add liveUuid to processed session data if this is a Live TV session
+  // liveUuid comes from SSE notification key (/livetv/sessions/{uuid})
+  const processedWithLiveUuid = {
+    ...processed,
+    liveUuid: liveUuid ?? null,
+  };
+
   // Create pending session data
   const pendingData: PendingSessionData = {
     id: sessionId,
     confirmation: createInitialConfirmationState(now),
-    processed,
+    processed: processedWithLiveUuid,
     server: { id: server.id, name: server.name, type: server.type },
     serverUser: userDetail,
     geo,
     startedAt: now,
     lastSeenAt: now,
-    currentState: processed.state,
+    currentState: processedWithLiveUuid.state,
     pausedDurationMs: 0,
-    lastPausedAt: processed.state === 'paused' ? now : null,
+    lastPausedAt: processedWithLiveUuid.state === 'paused' ? now : null,
   };
 
   // Store in Redis only (not DB yet)
@@ -730,7 +863,6 @@ async function createNewSession(
 async function handleMediaChange(
   existingSession: typeof sessions.$inferSelect,
   processed: ReturnType<typeof mapMediaSession>,
-  serverId: string,
   server: typeof servers.$inferSelect
 ): Promise<void> {
   const serverUserRows = await db
@@ -1111,7 +1243,11 @@ async function confirmPendingSessionAndPersist(
   // Use lock to prevent race conditions
   const result = await cache.withSessionCreateLock(serverId, sessionKey, async () => {
     // Double-check no active session was created while we were confirming
-    const existingActive = await findActiveSession(serverId, sessionKey);
+    const existingActive = await findActiveSession({
+      serverId,
+      sessionKey,
+      ratingKey: pendingData.processed.ratingKey,
+    });
     if (existingActive) {
       console.log(`[SSEProcessor] Active session created while confirming ${sessionKey}, skipping`);
       return null;
@@ -1201,10 +1337,14 @@ async function confirmPendingSessionAndPersist(
 async function stopSession(existingSession: typeof sessions.$inferSelect): Promise<void> {
   const cachedSession = await cacheService?.getSessionById(existingSession.id);
 
-  const { wasUpdated } = await stopSessionAtomic({
+  const { wasUpdated, needsRetry, retryData } = await stopSessionAtomic({
     session: existingSession,
     stoppedAt: new Date(),
   });
+
+  if (needsRetry && retryData && cacheService) {
+    await cacheService.addSessionWriteRetry(existingSession.id, retryData);
+  }
 
   if (!wasUpdated) {
     console.log(`[SSEProcessor] Session ${existingSession.id} already stopped, skipping`);
