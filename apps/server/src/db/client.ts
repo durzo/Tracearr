@@ -17,7 +17,7 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: Number(process.env.DATABASE_POOL_MAX) || 50,
   idleTimeoutMillis: 20000, // Close idle connections after 20s
-  connectionTimeoutMillis: 10000, // Connection timeout (increased for complex queries)
+  connectionTimeoutMillis: 5000, // Max wait to acquire a connection from the pool (not running query timeout)
   maxUses: 7500, // Max queries per connection before refresh (prevents memory leaks)
   allowExitOnIdle: false, // Keep pool alive during idle periods
 });

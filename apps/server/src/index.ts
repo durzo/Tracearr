@@ -142,7 +142,31 @@ let recoveryInterval: ReturnType<typeof setInterval> | null = null;
 let dbHealthInterval: ReturnType<typeof setInterval> | null = null;
 let redisCloseHandler: (() => void) | null = null;
 let redisReadyHandler: (() => void) | null = null;
-const DB_HEALTH_CHECK_MS = 15_000;
+const DB_HEALTH_CHECK_MS = 10_000;
+
+/** Cached timescale status — refreshed by the DB health interval. */
+let cachedTimescale: {
+  installed: boolean;
+  hypertable: boolean;
+  compression: boolean;
+  aggregates: number;
+  chunks: number;
+} | null = null;
+
+async function refreshTimescaleCache(): Promise<void> {
+  try {
+    const tsStatus = await getTimescaleStatus();
+    cachedTimescale = {
+      installed: tsStatus.extensionInstalled,
+      hypertable: tsStatus.sessionsIsHypertable,
+      compression: tsStatus.compressionEnabled,
+      aggregates: tsStatus.continuousAggregates.length,
+      chunks: tsStatus.chunkCount,
+    };
+  } catch {
+    cachedTimescale = null;
+  }
+}
 
 // ============================================================================
 // Phase 1: Build the Fastify app (always succeeds, even without DB/Redis)
@@ -208,48 +232,22 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
   // Auth plugin (depends on cookie, uses JWT — no Redis dependency)
   await app.register(authPlugin);
 
-  // Health check endpoint — always reachable, even in maintenance mode
-  app.get('/health', async () => {
-    // Use cached health from the background interval (every 15s) so that
-    // /health never blocks on a slow or unreachable database.
+  // Health check endpoint — always reachable, even in maintenance mode.
+  // Every value returned here is read from in-memory caches; nothing awaits
+  // a network call, so the handler is effectively synchronous.
+  app.get('/health', () => {
     const dbHealthy = isDbHealthy();
-
-    // Check Redis — trust ioredis connection state instead of probing.
-    // The client's status is updated internally via TCP events, so 'ready'
-    // means the connection is live. No ping round-trip needed.
     const redisHealthy = app.redis.status === 'ready';
-
     const mode = getServerMode();
 
-    // Only include extended info when fully ready
     if (mode === 'ready') {
-      let timescale = null;
-      try {
-        const tsStatus = await getTimescaleStatus();
-        timescale = {
-          installed: tsStatus.extensionInstalled,
-          hypertable: tsStatus.sessionsIsHypertable,
-          compression: tsStatus.compressionEnabled,
-          aggregates: tsStatus.continuousAggregates.length,
-          chunks: tsStatus.chunkCount,
-        };
-      } catch {
-        timescale = {
-          installed: false,
-          hypertable: false,
-          compression: false,
-          aggregates: 0,
-          chunks: 0,
-        };
-      }
-
       return {
         status: dbHealthy && redisHealthy ? 'ok' : 'degraded',
         mode,
         db: dbHealthy,
         redis: redisHealthy,
         geoip: geoipService.hasDatabase(),
-        timescale,
+        timescale: cachedTimescale,
       };
     }
 
@@ -654,6 +652,12 @@ async function initializeServices(app: FastifyInstance) {
       const dbOk = await checkDatabaseConnection();
       setDbHealthy(dbOk);
 
+      if (dbOk) {
+        await refreshTimescaleCache();
+      } else {
+        cachedTimescale = null;
+      }
+
       if (!dbOk && !isMaintenance()) {
         app.log.warn('Database connection lost — entering MAINTENANCE mode');
         setServerMode('maintenance');
@@ -670,6 +674,7 @@ async function initializeServices(app: FastifyInstance) {
   });
 
   setDbHealthy(true);
+  await refreshTimescaleCache();
   setServicesInitialized(true);
   setServerMode('ready');
 }
