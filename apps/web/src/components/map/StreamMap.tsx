@@ -50,6 +50,7 @@ const mapStyles = `
   /* Ensure map container doesn't overlap sidebars/modals */
   .leaflet-container {
     z-index: 0 !important;
+    background: hsl(var(--background)) !important;
   }
   .leaflet-pane {
     z-index: 1 !important;
