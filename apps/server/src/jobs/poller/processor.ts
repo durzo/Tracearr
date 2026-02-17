@@ -119,13 +119,17 @@ async function processServerSessions(
 
           // Mark session as stopped in database
           const sessionKey = cachedKey.replace(`${server.id}:`, '');
-          const stoppedSession = await findActiveSession(server.id, sessionKey);
+          const stoppedSession = await findActiveSession({ serverId: server.id, sessionKey });
 
           if (stoppedSession) {
-            const { wasUpdated } = await stopSessionAtomic({
+            const { wasUpdated, needsRetry, retryData } = await stopSessionAtomic({
               session: stoppedSession,
               stoppedAt: new Date(),
             });
+
+            if (needsRetry && retryData && cacheService) {
+              await cacheService.addSessionWriteRetry(stoppedSession.id, retryData);
+            }
 
             if (!wasUpdated) {
               const keyIndex = stoppedSessionKeys.indexOf(cachedKey);
@@ -349,7 +353,11 @@ async function processServerSessions(
           server.id,
           processed.sessionKey,
           async () => {
-            const existingWithSameKey = await findActiveSession(server.id, processed.sessionKey);
+            const existingWithSameKey = await findActiveSession({
+              serverId: server.id,
+              sessionKey: processed.sessionKey,
+              ratingKey: processed.ratingKey,
+            });
 
             if (existingWithSameKey) {
               cachedSessionKeys.add(sessionKey);
@@ -480,7 +488,11 @@ async function processServerSessions(
         }
       } else {
         // Get existing ACTIVE session to check for state changes
-        const existingSession = await findActiveSession(server.id, processed.sessionKey);
+        const existingSession = await findActiveSession({
+          serverId: server.id,
+          sessionKey: processed.sessionKey,
+          ratingKey: processed.ratingKey,
+        });
         if (!existingSession) {
           // Issue #120: Stale cache entry - session key is in Redis but no active session exists in DB
           // Remove stale cache entry and create session with proper locking to prevent duplicates.
@@ -508,7 +520,11 @@ async function processServerSessions(
             processed.sessionKey,
             async () => {
               // Double-check inside lock - SSE might have created it
-              const existingWithSameKey = await findActiveSession(server.id, processed.sessionKey);
+              const existingWithSameKey = await findActiveSession({
+                serverId: server.id,
+                sessionKey: processed.sessionKey,
+                ratingKey: processed.ratingKey,
+              });
               if (existingWithSameKey) {
                 cachedSessionKeys.add(sessionKey);
                 console.log(
@@ -786,13 +802,17 @@ async function processServerSessions(
       if (cachedKey.startsWith(`${server.id}:`) && !currentSessionKeys.has(cachedKey)) {
         // Mark session as stopped in database
         const sessionKey = cachedKey.replace(`${server.id}:`, '');
-        const stoppedSession = await findActiveSession(server.id, sessionKey);
+        const stoppedSession = await findActiveSession({ serverId: server.id, sessionKey });
 
         if (stoppedSession) {
-          const { wasUpdated } = await stopSessionAtomic({
+          const { wasUpdated, needsRetry, retryData } = await stopSessionAtomic({
             session: stoppedSession,
             stoppedAt: new Date(),
           });
+
+          if (needsRetry && retryData && cacheService) {
+            await cacheService.addSessionWriteRetry(stoppedSession.id, retryData);
+          }
 
           if (wasUpdated) {
             stoppedSessionKeys.push(cachedKey);
@@ -983,11 +1003,15 @@ export async function sweepStaleSessions(): Promise<number> {
         continue;
       }
 
-      const { wasUpdated } = await stopSessionAtomic({
+      const { wasUpdated, needsRetry, retryData } = await stopSessionAtomic({
         session: staleSession,
         stoppedAt: now,
         forceStopped: true,
       });
+
+      if (needsRetry && retryData && cacheService) {
+        await cacheService.addSessionWriteRetry(staleSession.id, retryData);
+      }
 
       if (!wasUpdated) {
         continue;

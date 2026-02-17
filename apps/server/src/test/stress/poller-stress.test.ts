@@ -192,7 +192,7 @@ describe('Poller Stress Test', () => {
 
       for (const sessionKey of activeSessionKeys) {
         const { timeMs } = await measureQueryTime(() =>
-          findActiveSession(testServerId, sessionKey)
+          findActiveSession({ serverId: testServerId, sessionKey })
         );
         queryTimes.push(timeMs);
       }
@@ -249,7 +249,7 @@ describe('Poller Stress Test', () => {
         // The poller calls findActiveSession up to 4 times per session
         for (let call = 0; call < 4; call++) {
           const { timeMs } = await measureQueryTime(() =>
-            findActiveSession(testServerId, sessionKey)
+            findActiveSession({ serverId: testServerId, sessionKey })
           );
           allTimes.push(timeMs);
         }
@@ -305,7 +305,7 @@ describe('Poller Stress Test', () => {
         for (const sessionKey of activeSessionKeys) {
           promises.push(
             (async () => {
-              await findActiveSession(testServerId, sessionKey);
+              await findActiveSession({ serverId: testServerId, sessionKey });
             })()
           );
         }
@@ -364,7 +364,7 @@ describe('Poller Stress Test', () => {
 
       // Simulate many poll cycles
       for (let i = 0; i < 100; i++) {
-        await findActiveSession(testServerId, sessionKey);
+        await findActiveSession({ serverId: testServerId, sessionKey });
 
         // Force GC if available (run with --expose-gc)
         if (global.gc) {
