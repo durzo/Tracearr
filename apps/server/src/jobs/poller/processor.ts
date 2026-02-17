@@ -17,6 +17,7 @@ import {
   type Session,
 } from '@tracearr/shared';
 import { registerService, unregisterService } from '../../services/serviceTracker.js';
+import { isMaintenance } from '../../serverState.js';
 import { db } from '../../db/client.js';
 import { servers, serverUsers, sessions, users } from '../../db/schema.js';
 import { createMediaServerClient } from '../../services/mediaServer/index.js';
@@ -854,6 +855,10 @@ async function processServerSessions(
  * - Jellyfin/Emby servers are always polled (no SSE support)
  */
 async function pollServers(): Promise<void> {
+  // Bail out if maintenance mode was activated while we were queued.
+  // stopPoller() clears the interval but can't abort an in-flight call.
+  if (isMaintenance()) return;
+
   try {
     // Get all connected servers
     const allServers = await db.select().from(servers);
@@ -953,7 +958,11 @@ async function pollServers(): Promise<void> {
     // This catches sessions where server went down or SSE missed the stop event
     await sweepStaleSessions();
   } catch (error) {
-    console.error('Polling error:', error);
+    // Suppress DB errors during maintenance — the in-flight poll was already
+    // running when the DB went down and stopPoller() can't abort an active await.
+    if (!isMaintenance()) {
+      console.error('Polling error:', error);
+    }
   }
 }
 

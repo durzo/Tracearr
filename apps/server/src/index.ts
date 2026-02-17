@@ -110,7 +110,7 @@ import { processPushReceipts } from './services/pushNotification.js';
 import { cleanupMobileTokens } from './jobs/cleanupMobileTokens.js';
 import { db, checkDatabaseConnection, runMigrations } from './db/client.js';
 import { initTimescaleDB, getTimescaleStatus } from './db/timescale.js';
-import { sql, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { servers } from './db/schema.js';
 import { initializeClaimCode } from './utils/claimCode.js';
 import { registerService, unregisterService } from './services/serviceTracker.js';
@@ -122,6 +122,8 @@ import {
   setServicesInitialized,
   onModeChange,
   wasEverReady,
+  isDbHealthy,
+  setDbHealthy,
 } from './serverState.js';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
@@ -141,7 +143,31 @@ let recoveryInterval: ReturnType<typeof setInterval> | null = null;
 let dbHealthInterval: ReturnType<typeof setInterval> | null = null;
 let redisCloseHandler: (() => void) | null = null;
 let redisReadyHandler: (() => void) | null = null;
-const DB_HEALTH_CHECK_MS = 15_000;
+const DB_HEALTH_CHECK_MS = 10_000;
+
+/** Cached timescale status — refreshed by the DB health interval. */
+let cachedTimescale: {
+  installed: boolean;
+  hypertable: boolean;
+  compression: boolean;
+  aggregates: number;
+  chunks: number;
+} | null = null;
+
+async function refreshTimescaleCache(): Promise<void> {
+  try {
+    const tsStatus = await getTimescaleStatus();
+    cachedTimescale = {
+      installed: tsStatus.extensionInstalled,
+      hypertable: tsStatus.sessionsIsHypertable,
+      compression: tsStatus.compressionEnabled,
+      aggregates: tsStatus.continuousAggregates.length,
+      chunks: tsStatus.chunkCount,
+    };
+  } catch {
+    cachedTimescale = null;
+  }
+}
 
 // basePath from env var — always known at startup, never changes at runtime.
 const BASE_PATH = process.env.BASE_PATH?.replace(/\/+$/, '').replace(/^\/?/, '/') || '';
@@ -222,55 +248,22 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
   // Auth plugin (depends on cookie, uses JWT — no Redis dependency)
   await app.register(authPlugin);
 
-  // Health check endpoint — always reachable, even in maintenance mode
-  app.get('/health', async () => {
-    let dbHealthy = false;
-    let redisHealthy = false;
-
-    // Check database
-    try {
-      await db.execute(sql`SELECT 1`);
-      dbHealthy = true;
-    } catch {
-      dbHealthy = false;
-    }
-
-    // Check Redis — trust ioredis connection state instead of probing.
-    // The client's status is updated internally via TCP events, so 'ready'
-    // means the connection is live. No ping round-trip needed.
-    redisHealthy = app.redis.status === 'ready';
-
+  // Health check endpoint — always reachable, even in maintenance mode.
+  // Every value returned here is read from in-memory caches; nothing awaits
+  // a network call, so the handler is effectively synchronous.
+  app.get('/health', () => {
+    const dbHealthy = isDbHealthy();
+    const redisHealthy = app.redis.status === 'ready';
     const mode = getServerMode();
 
-    // Only include extended info when fully ready
     if (mode === 'ready') {
-      let timescale = null;
-      try {
-        const tsStatus = await getTimescaleStatus();
-        timescale = {
-          installed: tsStatus.extensionInstalled,
-          hypertable: tsStatus.sessionsIsHypertable,
-          compression: tsStatus.compressionEnabled,
-          aggregates: tsStatus.continuousAggregates.length,
-          chunks: tsStatus.chunkCount,
-        };
-      } catch {
-        timescale = {
-          installed: false,
-          hypertable: false,
-          compression: false,
-          aggregates: 0,
-          chunks: 0,
-        };
-      }
-
       return {
         status: dbHealthy && redisHealthy ? 'ok' : 'degraded',
         mode,
         db: dbHealthy,
         redis: redisHealthy,
         geoip: geoipService.hasDatabase(),
-        timescale,
+        timescale: cachedTimescale,
       };
     }
 
@@ -705,6 +698,13 @@ async function initializeServices(app: FastifyInstance) {
       if (!isServicesInitialized()) return;
 
       const dbOk = await checkDatabaseConnection();
+      setDbHealthy(dbOk);
+
+      if (dbOk) {
+        await refreshTimescaleCache();
+      } else {
+        cachedTimescale = null;
+      }
 
       if (!dbOk && !isMaintenance()) {
         app.log.warn('Database connection lost — entering MAINTENANCE mode');
@@ -721,6 +721,8 @@ async function initializeServices(app: FastifyInstance) {
     intervalMs: DB_HEALTH_CHECK_MS,
   });
 
+  setDbHealthy(true);
+  await refreshTimescaleCache();
   setServicesInitialized(true);
   setServerMode('ready');
 }
@@ -849,6 +851,7 @@ function startRecoveryLoop(app: FastifyInstance) {
       app.log.info('Recovery check: probing database and Redis...');
 
       const dbOk = await checkDatabaseConnection();
+      setDbHealthy(dbOk);
       let redisOk = false;
       try {
         const testRedis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
@@ -956,6 +959,7 @@ async function start() {
           dbHealthInterval = null;
           unregisterService('db-health-check');
         }
+        setDbHealthy(false);
 
         // Clear timers that won't fire correctly without Redis/DB
         if (pushReceiptInterval) {

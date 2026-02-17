@@ -12,6 +12,7 @@ type ModeChangeListener = (newMode: ServerMode, prevMode: ServerMode) => void;
 let _mode: ServerMode = 'starting';
 let _wasReady = false;
 let _servicesInitialized = false;
+let _dbHealthy = false;
 const _listeners: ModeChangeListener[] = [];
 
 export function getServerMode(): ServerMode {
@@ -49,4 +50,13 @@ export function isServicesInitialized(): boolean {
 
 export function setServicesInitialized(v: boolean): void {
   _servicesInitialized = v;
+}
+
+/** Cached DB health from the background health check interval. */
+export function isDbHealthy(): boolean {
+  return _dbHealthy;
+}
+
+export function setDbHealthy(v: boolean): void {
+  _dbHealthy = v;
 }
