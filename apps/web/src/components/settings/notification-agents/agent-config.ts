@@ -75,7 +75,7 @@ export const AGENT_CONFIGS: Record<NotificationAgentType, AgentConfig> = {
     type: 'gotify',
     name: 'Gotify',
     icon: Bell,
-    imagePath: '/images/notification-agents/gotify.png',
+    imagePath: `${BASE_URL}images/notification-agents/gotify.png`,
     description: 'Push notifications via Gotify',
     isRemovable: true,
     webhookFormat: 'gotify',
