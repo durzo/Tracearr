@@ -55,6 +55,47 @@ describe('isPlaybackConfirmed', () => {
     const state = { ...baseState };
     expect(isPlaybackConfirmed(state, 0, 'playing', Date.now())).toBe(false);
   });
+
+  // Explicit 30s threshold tests (not 60s CONTINUED_SESSION_THRESHOLD_MS)
+  it('should confirm playback at 31s wall-clock time (30s threshold)', () => {
+    const state = createInitialConfirmationState(0);
+    const thirtyOneSeconds = 31_000;
+
+    expect(isPlaybackConfirmed(state, 0, 'playing', thirtyOneSeconds)).toBe(true);
+  });
+
+  it('should not confirm at 29s wall-clock time (30s threshold)', () => {
+    const state = createInitialConfirmationState(0);
+    const twentyNineSeconds = 29_000;
+
+    expect(isPlaybackConfirmed(state, 0, 'playing', twentyNineSeconds)).toBe(false);
+  });
+
+  it('should confirm playback at 31s viewOffset (30s threshold)', () => {
+    const state = createInitialConfirmationState(Date.now());
+    const thirtyOneSecondsOffset = 31_000;
+
+    expect(isPlaybackConfirmed(state, thirtyOneSecondsOffset, 'playing', Date.now())).toBe(true);
+  });
+
+  it('should not confirm at 29s viewOffset (30s threshold)', () => {
+    const state = createInitialConfirmationState(Date.now());
+    const twentyNineSecondsOffset = 29_000;
+
+    expect(isPlaybackConfirmed(state, twentyNineSecondsOffset, 'playing', Date.now())).toBe(false);
+  });
+
+  it('uses PLAYBACK_CONFIRM_THRESHOLD_MS (30s), not CONTINUED_SESSION_THRESHOLD_MS (60s)', () => {
+    // This test verifies the function uses 30s, not 60s
+    // If it used 60s, 31s would NOT confirm but 61s would
+    const state = createInitialConfirmationState(0);
+
+    // 31s should confirm with 30s threshold
+    expect(isPlaybackConfirmed(state, 0, 'playing', 31_000)).toBe(true);
+
+    // 59s would also confirm with 30s threshold (but NOT with 60s threshold)
+    expect(isPlaybackConfirmed(state, 0, 'playing', 59_000)).toBe(true);
+  });
 });
 
 describe('createInitialConfirmationState', () => {

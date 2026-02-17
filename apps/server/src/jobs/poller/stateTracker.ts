@@ -199,27 +199,48 @@ export function checkWatchCompletion(
  * different content (different ratingKey). We need to detect this and create
  * separate session records for accurate play count tracking.
  *
+ * For Live TV sessions, channel changes produce different ratingKeys but the
+ * liveUuid remains constant. If both sessions have matching liveUuids, this is
+ * a channel change within the same viewing session - NOT a media change.
+ *
  * @param existingRatingKey - ratingKey from the current active session
  * @param newRatingKey - ratingKey from the incoming poll data
- * @returns true if media has changed (different non-null ratingKeys)
+ * @param existingLiveUuid - liveUuid from the current session (Live TV only)
+ * @param newLiveUuid - liveUuid from the incoming data (Live TV only)
+ * @returns true if media has changed (different non-null ratingKeys, accounting for Live TV)
  *
  * @example
  * detectMediaChange('episode-1', 'episode-2'); // true - different episodes
  * detectMediaChange('episode-1', 'episode-1'); // false - same episode
  * detectMediaChange(null, 'episode-1');        // false - can't detect without existing
  * detectMediaChange('episode-1', null);        // false - can't detect without new
+ * detectMediaChange('channel-1', 'channel-2', 'live-abc', 'live-abc'); // false - same Live TV session
+ * detectMediaChange('channel-1', 'channel-2', 'live-abc', 'live-xyz'); // true - different Live TV sessions
  */
 export function detectMediaChange(
   existingRatingKey: string | null,
-  newRatingKey: string | null
+  newRatingKey: string | null,
+  existingLiveUuid?: string | null,
+  newLiveUuid?: string | null
 ): boolean {
   // Both must be non-null to detect a change
   if (existingRatingKey === null || newRatingKey === null) {
     return false;
   }
 
-  // Different ratingKeys = different media
-  return existingRatingKey !== newRatingKey;
+  // Same ratingKey = same media
+  if (existingRatingKey === newRatingKey) {
+    return false;
+  }
+
+  // Different ratingKeys - but check Live TV UUID
+  // If both have matching liveUuids, this is a channel change within the same viewing session
+  if (existingLiveUuid && newLiveUuid && existingLiveUuid === newLiveUuid) {
+    return false;
+  }
+
+  // Different ratingKeys and no matching liveUuid = different media
+  return true;
 }
 
 // ============================================================================
