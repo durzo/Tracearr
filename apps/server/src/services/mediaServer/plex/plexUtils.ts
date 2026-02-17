@@ -27,7 +27,7 @@ const LIVE_TV_SESSION_PREFIX = '/livetv/sessions/';
  * @returns The live UUID if this is a Live TV session, otherwise undefined
  */
 export function extractLiveUuid(key: string | undefined | null): string | undefined {
-  if (!key || !key.startsWith(LIVE_TV_SESSION_PREFIX)) {
+  if (!key?.startsWith(LIVE_TV_SESSION_PREFIX)) {
     return undefined;
   }
   const uuid = key.slice(LIVE_TV_SESSION_PREFIX.length);

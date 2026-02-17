@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type * as DrizzleOrm from 'drizzle-orm';
 import type { SessionIdentity } from '../types.js';
 
 describe('findActiveSession with SessionIdentity', () => {
@@ -25,7 +26,7 @@ describe('findActiveSession with SessionIdentity', () => {
 
     // Create mocked versions before importing the module under test
     vi.doMock('drizzle-orm', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('drizzle-orm')>();
+      const actual = await importOriginal<typeof DrizzleOrm>();
       return {
         ...actual,
         eq: (column: unknown, value: unknown) => {
