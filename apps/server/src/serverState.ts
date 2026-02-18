@@ -13,6 +13,7 @@ let _mode: ServerMode = 'starting';
 let _wasReady = false;
 let _servicesInitialized = false;
 let _dbHealthy = false;
+let _redisHealthy = false;
 const _listeners: ModeChangeListener[] = [];
 
 export function getServerMode(): ServerMode {
@@ -59,4 +60,13 @@ export function isDbHealthy(): boolean {
 
 export function setDbHealthy(v: boolean): void {
   _dbHealthy = v;
+}
+
+/** Cached Redis health — updated by startup probe, recovery loop, and ioredis events. */
+export function isRedisHealthy(): boolean {
+  return _redisHealthy;
+}
+
+export function setRedisHealthy(v: boolean): void {
+  _redisHealthy = v;
 }
