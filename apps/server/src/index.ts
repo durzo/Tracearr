@@ -124,6 +124,8 @@ import {
   wasEverReady,
   isDbHealthy,
   setDbHealthy,
+  isRedisHealthy,
+  setRedisHealthy,
 } from './serverState.js';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
@@ -253,7 +255,7 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
   // a network call, so the handler is effectively synchronous.
   app.get('/health', () => {
     const dbHealthy = isDbHealthy();
-    const redisHealthy = app.redis.status === 'ready';
+    const redisHealthy = isRedisHealthy();
     const mode = getServerMode();
 
     if (mode === 'ready') {
@@ -399,6 +401,9 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
   } catch {
     redisOk = false;
   }
+
+  setDbHealthy(dbOk);
+  setRedisHealthy(redisOk);
 
   if (dbOk && redisOk) {
     await initializeServices(app);
@@ -666,12 +671,14 @@ async function initializeServices(app: FastifyInstance) {
   if (redisReadyHandler) app.redis.removeListener('ready', redisReadyHandler);
 
   redisCloseHandler = () => {
+    setRedisHealthy(false);
     if (isServicesInitialized() && !isMaintenance()) {
       app.log.warn('Redis connection lost — entering MAINTENANCE mode');
       setServerMode('maintenance');
     }
   };
   redisReadyHandler = () => {
+    setRedisHealthy(true);
     void (async () => {
       if (isServicesInitialized() && isMaintenance()) {
         // Redis is back — verify DB is also reachable before going ready
@@ -709,7 +716,7 @@ async function initializeServices(app: FastifyInstance) {
       if (!dbOk && !isMaintenance()) {
         app.log.warn('Database connection lost — entering MAINTENANCE mode');
         setServerMode('maintenance');
-      } else if (dbOk && isMaintenance() && app.redis.status === 'ready') {
+      } else if (dbOk && isMaintenance() && isRedisHealthy()) {
         app.log.info('Database reconnected and Redis is ready — returning to READY mode');
         setServerMode('ready');
       }
@@ -871,6 +878,7 @@ function startRecoveryLoop(app: FastifyInstance) {
       } catch {
         redisOk = false;
       }
+      setRedisHealthy(redisOk);
 
       if (dbOk && redisOk) {
         if (recoveryInterval) {
