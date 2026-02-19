@@ -421,14 +421,16 @@ export function shouldFilterItem(nowPlaying: Record<string, unknown>): boolean {
 
 /**
  * Find a stream by type from MediaStreams array.
- * Prefers the default stream if multiple of same type exist.
+ * Priority: activeIndex match > IsDefault match > first match.
  */
 function findStreamByType(
   mediaStreams: Array<Record<string, unknown>> | undefined,
-  type: string
+  type: string,
+  activeIndex?: number
 ): Record<string, unknown> | undefined {
   if (!Array.isArray(mediaStreams)) return undefined;
 
+  let activeMatch: Record<string, unknown> | undefined;
   let defaultMatch: Record<string, unknown> | undefined;
   let firstMatch: Record<string, unknown> | undefined;
 
@@ -437,14 +439,20 @@ function findStreamByType(
 
     if (streamType?.toLowerCase() === type.toLowerCase()) {
       if (!firstMatch) firstMatch = stream;
-      if (stream.IsDefault === true) {
+
+      if (activeIndex !== undefined) {
+        if (parseOptionalNumber(stream.Index) === activeIndex) {
+          activeMatch = stream;
+          break;
+        }
+      } else if (stream.IsDefault === true) {
         defaultMatch = stream;
         break;
       }
     }
   }
 
-  return defaultMatch ?? firstMatch;
+  return activeMatch ?? defaultMatch ?? firstMatch;
 }
 
 /**
@@ -638,30 +646,29 @@ function extractTranscodeInfo(
  */
 function extractStreamVideoDetails(
   transcodingInfo: Record<string, unknown> | undefined,
-  sourceVideoDetails: SourceVideoDetails
+  sourceVideoDetails: SourceVideoDetails,
+  videoDecision?: string
 ): { codec?: string; details: StreamVideoDetails } {
   if (!transcodingInfo) {
-    // Direct play - stream details match source
     return { details: {} };
   }
 
   const details: StreamVideoDetails = {};
 
-  // Transcode output dimensions
   const width = parseOptionalNumber(transcodingInfo.Width);
   if (width) details.width = width;
 
   const height = parseOptionalNumber(transcodingInfo.Height);
   if (height) details.height = height;
 
-  // Framerate preserved through transcode
   if (sourceVideoDetails.framerate) {
     details.framerate = sourceVideoDetails.framerate;
   }
 
-  // Dynamic range may be tone-mapped (HDR → SDR)
-  // Jellyfin doesn't expose this, so assume preserved
-  if (sourceVideoDetails.dynamicRange) {
+  // Video transcoding tone-maps HDR/DV to SDR; copy/passthrough preserves it
+  if (videoDecision === 'transcode') {
+    details.dynamicRange = 'SDR';
+  } else if (sourceVideoDetails.dynamicRange) {
     details.dynamicRange = sourceVideoDetails.dynamicRange;
   }
 
@@ -723,32 +730,43 @@ export function extractStreamDetails(session: Record<string, unknown>): StreamDe
     (mediaSource?.MediaStreams as Array<Record<string, unknown>> | undefined) ??
     (nowPlaying?.MediaStreams as Array<Record<string, unknown>> | undefined);
 
-  // Find streams by type
-  const videoStream = findStreamByType(mediaStreams, STREAM_TYPE.VIDEO);
-  const audioStream = findStreamByType(mediaStreams, STREAM_TYPE.AUDIO);
-  const subtitleStream = findStreamByType(mediaStreams, STREAM_TYPE.SUBTITLE);
+  const playState = getNestedObject(session, 'PlayState');
+  const audioStreamIndex = playState ? parseOptionalNumber(playState.AudioStreamIndex) : undefined;
+  const subtitleStreamIndex = playState
+    ? parseOptionalNumber(playState.SubtitleStreamIndex)
+    : undefined;
 
-  // Extract source details
+  const videoStream = findStreamByType(mediaStreams, STREAM_TYPE.VIDEO);
+  const audioStream = findStreamByType(mediaStreams, STREAM_TYPE.AUDIO, audioStreamIndex);
+  const subtitleStream = findStreamByType(mediaStreams, STREAM_TYPE.SUBTITLE, subtitleStreamIndex);
+
   const sourceVideo = extractSourceVideoDetails(videoStream);
   const sourceAudio = extractSourceAudioDetails(audioStream);
 
-  // Extract stream (output) details
-  const streamVideo = extractStreamVideoDetails(transcodingInfo, sourceVideo.details);
+  const isVideoDirect = transcodingInfo?.IsVideoDirect;
+  const videoDecision = transcodingInfo
+    ? isVideoDirect === true
+      ? 'copy'
+      : 'transcode'
+    : undefined;
+
+  const streamVideo = extractStreamVideoDetails(
+    transcodingInfo,
+    sourceVideo.details,
+    videoDecision
+  );
   const streamAudio = extractStreamAudioDetails(transcodingInfo);
 
-  // Extract transcode and subtitle info
   const transcodeInfo = extractTranscodeInfo(transcodingInfo, mediaSource);
   const subtitleInfo = extractSubtitleInfo(subtitleStream);
 
   return {
-    // Scalar fields for indexing
     sourceVideoCodec: sourceVideo.codec,
     sourceAudioCodec: sourceAudio.codec,
     sourceAudioChannels: sourceAudio.channels,
     streamVideoCodec: streamVideo.codec ?? sourceVideo.codec,
     streamAudioCodec: streamAudio.codec ?? sourceAudio.codec,
 
-    // JSONB details (only include if non-empty)
     sourceVideoDetails:
       Object.keys(sourceVideo.details).length > 0 ? sourceVideo.details : undefined,
     sourceAudioDetails:

@@ -759,6 +759,200 @@ describe('extractStreamDetails', () => {
       expect(result.sourceAudioChannels).toBe(6);
     });
   });
+
+  describe('PlayState active track index selection', () => {
+    /** Session with multiple audio and subtitle tracks, each with an Index field */
+    const multiTrackSession = {
+      NowPlayingItem: {
+        MediaSources: [
+          {
+            MediaStreams: [
+              { Type: 'Video', Codec: 'hevc', Index: 0, IsDefault: true },
+              {
+                Type: 'Audio',
+                Codec: 'truehd',
+                Language: 'eng',
+                Index: 1,
+                IsDefault: true,
+                Channels: 8,
+              },
+              {
+                Type: 'Audio',
+                Codec: 'aac',
+                Language: 'jpn',
+                Index: 2,
+                IsDefault: false,
+                Channels: 2,
+              },
+              { Type: 'Subtitle', Codec: 'srt', Language: 'eng', Index: 3, IsDefault: true },
+              { Type: 'Subtitle', Codec: 'srt', Language: 'jpn', Index: 4, IsDefault: false },
+            ],
+          },
+        ],
+      },
+      PlayState: {
+        AudioStreamIndex: 2,
+        SubtitleStreamIndex: 4,
+      },
+    };
+
+    it('selects audio track by PlayState.AudioStreamIndex over IsDefault', () => {
+      const result = extractStreamDetails(multiTrackSession);
+      // Index 2 is the Japanese AAC track, not the default English TrueHD
+      expect(result.sourceAudioCodec).toBe('AAC');
+      expect(result.sourceAudioChannels).toBe(2);
+      expect(result.sourceAudioDetails?.language).toBe('jpn');
+    });
+
+    it('selects subtitle track by PlayState.SubtitleStreamIndex over IsDefault', () => {
+      const result = extractStreamDetails(multiTrackSession);
+      // Index 4 is the Japanese subtitle, not the default English one
+      expect(result.subtitleInfo?.language).toBe('jpn');
+    });
+
+    it('falls back to IsDefault when PlayState has no AudioStreamIndex', () => {
+      const session = {
+        NowPlayingItem: {
+          MediaSources: [
+            {
+              MediaStreams: [
+                {
+                  Type: 'Audio',
+                  Codec: 'truehd',
+                  Language: 'eng',
+                  Index: 1,
+                  IsDefault: true,
+                  Channels: 8,
+                },
+                {
+                  Type: 'Audio',
+                  Codec: 'aac',
+                  Language: 'jpn',
+                  Index: 2,
+                  IsDefault: false,
+                  Channels: 2,
+                },
+              ],
+            },
+          ],
+        },
+        PlayState: {
+          SubtitleStreamIndex: 0,
+        },
+      };
+      const result = extractStreamDetails(session);
+      expect(result.sourceAudioCodec).toBe('TRUEHD');
+    });
+
+    it('falls back to IsDefault when PlayState is absent entirely', () => {
+      const session = {
+        NowPlayingItem: {
+          MediaSources: [
+            {
+              MediaStreams: [
+                {
+                  Type: 'Audio',
+                  Codec: 'truehd',
+                  Language: 'eng',
+                  Index: 1,
+                  IsDefault: true,
+                  Channels: 8,
+                },
+                {
+                  Type: 'Audio',
+                  Codec: 'aac',
+                  Language: 'jpn',
+                  Index: 2,
+                  IsDefault: false,
+                  Channels: 2,
+                },
+              ],
+            },
+          ],
+        },
+      };
+      const result = extractStreamDetails(session);
+      expect(result.sourceAudioCodec).toBe('TRUEHD');
+    });
+  });
+
+  describe('transcoded HDR handling', () => {
+    it('sets stream dynamic range to SDR when video is transcoded', () => {
+      // Build a session where source has DV but video is being transcoded
+      const session = {
+        NowPlayingItem: {
+          MediaSources: [
+            {
+              MediaStreams: [
+                { Type: 'Video', Codec: 'hevc', Index: 0, IsDefault: true, VideoRangeType: 'DOVi' },
+                { Type: 'Audio', Codec: 'aac', Index: 1, IsDefault: true, Channels: 2 },
+              ],
+            },
+          ],
+        },
+        TranscodingInfo: {
+          VideoCodec: 'h264',
+          AudioCodec: 'aac',
+          Width: 1920,
+          Height: 1080,
+          IsVideoDirect: false,
+        },
+      };
+      const result = extractStreamDetails(session);
+      expect(result.streamVideoDetails?.dynamicRange).toBe('SDR');
+    });
+
+    it('preserves source HDR when video is direct (audio-only transcode)', () => {
+      const session = {
+        NowPlayingItem: {
+          MediaSources: [
+            {
+              MediaStreams: [
+                {
+                  Type: 'Video',
+                  Codec: 'hevc',
+                  Index: 0,
+                  IsDefault: true,
+                  VideoRangeType: 'HDR10',
+                },
+                { Type: 'Audio', Codec: 'aac', Index: 1, IsDefault: true, Channels: 2 },
+              ],
+            },
+          ],
+        },
+        TranscodingInfo: {
+          AudioCodec: 'aac',
+          IsVideoDirect: true,
+        },
+      };
+      const result = extractStreamDetails(session);
+      expect(result.streamVideoDetails?.dynamicRange).toBe('HDR10');
+    });
+
+    it('does not set stream dynamic range during direct play', () => {
+      // No TranscodingInfo = direct play
+      const session = {
+        NowPlayingItem: {
+          MediaSources: [
+            {
+              MediaStreams: [
+                {
+                  Type: 'Video',
+                  Codec: 'hevc',
+                  Index: 0,
+                  IsDefault: true,
+                  VideoRangeType: 'HDR10',
+                },
+                { Type: 'Audio', Codec: 'aac', Index: 1, IsDefault: true, Channels: 2 },
+              ],
+            },
+          ],
+        },
+      };
+      const result = extractStreamDetails(session);
+      expect(result.streamVideoDetails).toBeUndefined(); // No stream details for direct play
+    });
+  });
 });
 
 // ============================================================================
