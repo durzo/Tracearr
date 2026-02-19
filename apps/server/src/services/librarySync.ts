@@ -80,7 +80,7 @@ export class LibrarySyncService {
     });
 
     // Fetch all libraries and filter out unsupported types (e.g., photo libraries)
-    const UNSUPPORTED_LIBRARY_TYPES = new Set(['photo']);
+    const UNSUPPORTED_LIBRARY_TYPES = new Set(['photo', 'boxsets', 'playlists']);
     const allLibraries = await client.getLibraries();
     const libraries = allLibraries.filter((lib) => {
       if (UNSUPPORTED_LIBRARY_TYPES.has(lib.type.toLowerCase())) {

@@ -9,7 +9,7 @@
     "platforms": "Platforms",
     "playsOverTime": "Plays Over Time",
     "playsVsSessions": "Plays vs Sessions",
-    "playsVsSessionsDesc": "Validated plays vs raw session count",
+    "playsVsSessionsDesc": "Full completions only — counts a play when total watch time covers a content's entire runtime",
     "streamQuality": "Stream Quality",
     "title": "Activity"
   },

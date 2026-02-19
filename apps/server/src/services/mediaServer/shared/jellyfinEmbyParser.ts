@@ -747,9 +747,10 @@ export function parseLibraryItemsResponse(data: unknown[]): MediaLibraryItem[] {
     .filter((item) => {
       const record = item as Record<string, unknown>;
       const type = (typeof record.Type === 'string' ? record.Type : '').toLowerCase();
-      // Skip Season items - they're containers, not watchable content
-      // Episode metadata already contains season info (parentIndex, parentTitle)
-      return type !== 'season';
+      // Exclude containers and virtual items that aren't playable media
+      return (
+        type !== 'season' && type !== 'boxset' && type !== 'playlist' && type !== 'collectionfolder'
+      );
     })
     .map((item) => parseLibraryItem(item as Record<string, unknown>));
 }
