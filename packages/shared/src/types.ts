@@ -836,6 +836,28 @@ export interface ServerResourceStats {
   fetchedAt: Date;
 }
 
+// Server bandwidth statistics (Local/Remote)
+// From Plex's undocumented /statistics/bandwidth endpoint
+export interface ServerBandwidthDataPoint {
+  /** Unix timestamp */
+  at: number;
+  /** Timespan interval in seconds */
+  timespan: number;
+  /** Total local (LAN) bandwidth in bytes for this interval */
+  lanBytes: number;
+  /** Total remote (WAN) bandwidth in bytes for this interval */
+  wanBytes: number;
+}
+
+export interface ServerBandwidthStats {
+  /** Server ID these stats belong to */
+  serverId: string;
+  /** Data points (newest first based on 'at' timestamp) */
+  data: ServerBandwidthDataPoint[];
+  /** When this data was fetched */
+  fetchedAt: Date;
+}
+
 // Webhook format types
 export type WebhookFormat = z.infer<typeof webhookFormatSchema>;
 

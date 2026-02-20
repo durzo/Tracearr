@@ -1,6 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { SERVER_STATS_CONFIG, type Server, type ServerResourceDataPoint } from '@tracearr/shared';
+import {
+  SERVER_STATS_CONFIG,
+  BANDWIDTH_STATS_CONFIG,
+  type Server,
+  type ServerResourceDataPoint,
+  type ServerBandwidthDataPoint,
+} from '@tracearr/shared';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { useRef, useCallback, useEffect } from 'react';
@@ -317,6 +323,77 @@ export function useServerStatistics(serverId: string | undefined, enabled: boole
           ),
           processMemory: Math.round(
             dataPoints.reduce((sum: number, p) => sum + p.processMemoryUtilization, 0) / dataLength
+          ),
+        }
+      : null;
+
+  return {
+    ...query,
+    averages,
+  };
+}
+
+/**
+ * Hook for fetching server bandwidth statistics with fixed 2-minute window
+ * X-axis is static (2m → NOW), data slides through as new points arrive
+ *
+ * @param serverId - Server ID to fetch bandwidth for
+ * @param enabled - Whether polling is enabled (typically tied to component mount)
+ * @param pollIntervalSeconds - Override poll interval (defaults to BANDWIDTH_STATS_CONFIG)
+ */
+export function useServerBandwidth(
+  serverId: string | undefined,
+  enabled: boolean = true,
+  pollIntervalSeconds: number = BANDWIDTH_STATS_CONFIG.POLL_INTERVAL_SECONDS
+) {
+  const dataMapRef = useRef<Map<number, ServerBandwidthDataPoint>>(new Map());
+
+  const mergeData = useCallback((newData: ServerBandwidthDataPoint[]) => {
+    const map = dataMapRef.current;
+
+    for (const point of newData) {
+      map.set(point.at, point);
+    }
+
+    const sorted = Array.from(map.values())
+      .sort((a, b) => b.at - a.at)
+      .slice(0, BANDWIDTH_STATS_CONFIG.DATA_POINTS);
+
+    dataMapRef.current = new Map(sorted.map((p) => [p.at, p]));
+
+    return sorted.reverse();
+  }, []);
+
+  const query = useQuery({
+    queryKey: ['servers', 'bandwidth', serverId],
+    queryFn: async () => {
+      if (!serverId) throw new Error('Server ID required');
+      const response = await api.servers.bandwidth(serverId);
+      const mergedData = mergeData(response.data);
+      return {
+        ...response,
+        data: mergedData,
+      };
+    },
+    enabled: enabled && !!serverId,
+    refetchInterval: pollIntervalSeconds * 1000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    placeholderData: (prev) => prev,
+    staleTime: pollIntervalSeconds * 1000 - 500,
+  });
+
+  // Calculate averages as bytes/second
+  const dataPoints = query.data?.data;
+  const dataLength = dataPoints?.length ?? 0;
+  const averages =
+    dataPoints && dataLength > 0
+      ? {
+          local: Math.round(
+            dataPoints.reduce((sum: number, p) => sum + p.lanBytes / p.timespan, 0) / dataLength
+          ),
+          remote: Math.round(
+            dataPoints.reduce((sum: number, p) => sum + p.wanBytes / p.timespan, 0) / dataLength
           ),
         }
       : null;

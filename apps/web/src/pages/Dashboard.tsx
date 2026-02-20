@@ -7,8 +7,9 @@ import { NowPlayingCard } from '@/components/sessions';
 import { StreamCard } from '@/components/map';
 import { SessionDetailSheet } from '@/components/history/SessionDetailSheet';
 import { ServerResourceCharts } from '@/components/charts/ServerResourceCharts';
+import { ServerBandwidthChart } from '@/components/charts/BandwidthChart';
 import { useDashboardStats, useActiveSessions } from '@/hooks/queries';
-import { useServerStatistics } from '@/hooks/queries/useServers';
+import { useServerStatistics, useServerBandwidth } from '@/hooks/queries/useServers';
 import { useServer } from '@/hooks/useServer';
 import type { ActiveSession } from '@tracearr/shared';
 
@@ -46,6 +47,13 @@ export function Dashboard() {
     isLoading: statsChartLoading,
     averages,
   } = useServerStatistics(selectedServerId ?? undefined, showServerResources);
+
+  const [bandwidthPollInterval, setBandwidthPollInterval] = useState(6);
+  const {
+    data: bandwidthStats,
+    isLoading: bandwidthChartLoading,
+    averages: bandwidthAverages,
+  } = useServerBandwidth(selectedServerId ?? undefined, isPlexServer, bandwidthPollInterval);
 
   const activeCount = sessions?.length ?? 0;
   const hasActiveStreams = activeCount > 0;
@@ -167,6 +175,15 @@ export function Dashboard() {
             isLoading={statsChartLoading}
             averages={averages}
           />
+          <div className="mt-4">
+            <ServerBandwidthChart
+              data={bandwidthStats?.data}
+              isLoading={bandwidthChartLoading}
+              averages={bandwidthAverages}
+              pollInterval={bandwidthPollInterval}
+              onPollIntervalChange={setBandwidthPollInterval}
+            />
+          </div>
         </section>
       )}
 

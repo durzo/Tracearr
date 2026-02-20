@@ -10,6 +10,7 @@ import {
   reorderServersSchema,
   updateServerSchema,
   SERVER_STATS_CONFIG,
+  BANDWIDTH_STATS_CONFIG,
 } from '@tracearr/shared';
 import { db } from '../db/client.js';
 import { servers, plexAccounts } from '../db/schema.js';
@@ -516,6 +517,49 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
     } catch (error) {
       app.log.error({ error, serverId: id }, 'Failed to fetch server statistics');
       return reply.internalServerError('Failed to fetch server statistics');
+    }
+  });
+
+  /**
+   * GET /servers/:id/bandwidth - Get server bandwidth statistics (Local/Remote)
+   * On-demand endpoint for dashboard - data is not stored
+   * Currently only supported for Plex servers (undocumented /statistics/bandwidth endpoint)
+   */
+  app.get('/:id/bandwidth', { preHandler: [app.authenticate] }, async (request, reply) => {
+    const params = serverIdParamSchema.safeParse(request.params);
+    if (!params.success) {
+      return reply.badRequest('Invalid server ID');
+    }
+
+    const { id } = params.data;
+
+    const serverRows = await db.select().from(servers).where(eq(servers.id, id)).limit(1);
+
+    const server = serverRows[0];
+    if (!server) {
+      return reply.notFound('Server not found');
+    }
+
+    if (server.type !== 'plex') {
+      return reply.badRequest('Bandwidth statistics are only available for Plex servers');
+    }
+
+    try {
+      const client = new PlexClient({
+        url: server.url,
+        token: server.token,
+      });
+
+      const data = await client.getServerBandwidth(BANDWIDTH_STATS_CONFIG.TIMESPAN_SECONDS);
+
+      return {
+        serverId: id,
+        data,
+        fetchedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      app.log.error({ error, serverId: id }, 'Failed to fetch bandwidth statistics');
+      return reply.internalServerError('Failed to fetch bandwidth statistics');
     }
   });
 

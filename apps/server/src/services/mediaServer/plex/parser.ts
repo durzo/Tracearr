@@ -1304,6 +1304,84 @@ export function parseStatisticsResourcesResponse(data: unknown): PlexStatisticsD
 }
 
 // ============================================================================
+// Bandwidth Statistics Parsing
+// ============================================================================
+
+/** Raw bandwidth entry from Plex /statistics/bandwidth API */
+interface PlexRawStatisticsBandwidth {
+  at?: unknown;
+  timespan?: unknown;
+  lan?: unknown;
+  bytes?: unknown;
+}
+
+export interface PlexBandwidthDataPoint {
+  at: number;
+  timespan: number;
+  lanBytes: number;
+  wanBytes: number;
+}
+
+/**
+ * Parse statistics bandwidth response from /statistics/bandwidth endpoint.
+ *
+ * The endpoint returns per-second entries per device/account. This function
+ * aggregates all device/account entries per timestamp, splitting by the `lan`
+ * flag into local/remote totals. Returns 1-second granularity data points
+ * sorted newest first.
+ */
+export function parseStatisticsBandwidthResponse(data: unknown): PlexBandwidthDataPoint[] {
+  if (!data || typeof data !== 'object') {
+    return [];
+  }
+
+  const container = (data as Record<string, unknown>).MediaContainer;
+  if (!container || typeof container !== 'object') {
+    return [];
+  }
+
+  const rawStats = (container as Record<string, unknown>).StatisticsBandwidth;
+  if (!Array.isArray(rawStats)) {
+    return [];
+  }
+
+  // Aggregate by timestamp: sum bytes across devices/accounts, split by local/remote
+  // Note: Plex returns timespan=6 (echoing the query param) but data is per-second,
+  // so we use timespan=1 since each entry represents 1 second of bandwidth.
+  const byTimestamp = new Map<number, { lanBytes: number; wanBytes: number }>();
+
+  for (const raw of rawStats) {
+    const entry = raw as PlexRawStatisticsBandwidth;
+    const at = parseNumber(entry.at);
+    if (at === 0) continue;
+
+    const bytes = parseNumber(entry.bytes, 0);
+    const isLan = parseBoolean(entry.lan);
+
+    let bucket = byTimestamp.get(at);
+    if (!bucket) {
+      bucket = { lanBytes: 0, wanBytes: 0 };
+      byTimestamp.set(at, bucket);
+    }
+
+    if (isLan) {
+      bucket.lanBytes += bytes;
+    } else {
+      bucket.wanBytes += bytes;
+    }
+  }
+
+  return Array.from(byTimestamp.entries())
+    .map(([at, bucket]) => ({
+      at,
+      timespan: 1,
+      lanBytes: bucket.lanBytes,
+      wanBytes: bucket.wanBytes,
+    }))
+    .sort((a, b) => b.at - a.at);
+}
+
+// ============================================================================
 // Library Item Parsing (for library sync)
 // ============================================================================
 
