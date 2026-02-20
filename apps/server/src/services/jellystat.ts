@@ -37,6 +37,7 @@ import { EmbyClient } from './mediaServer/emby/client.js';
 import { normalizeClient } from '../utils/platformNormalizer.js';
 import { parseJellystatPlayMethod } from '../utils/transcodeNormalizer.js';
 import { extractIpFromEndpoint } from '../utils/parsing.js';
+import { shouldFilterItem } from './mediaServer/shared/jellyfinEmbyUtils.js';
 import {
   createUserMapping,
   createSkippedUserTracker,
@@ -68,6 +69,8 @@ interface MediaEnrichment {
   albumName?: string;
   trackNumber?: number;
   discNumber?: number;
+  /** Item should be filtered (theme song, theme video, trailer, etc.) */
+  filtered?: boolean;
 }
 
 /**
@@ -270,6 +273,8 @@ interface MediaServerClientWithItems {
   getItems(ids: string[]): Promise<
     {
       Id: string;
+      Type?: string;
+      ExtraType?: string;
       ParentIndexNumber?: number;
       IndexNumber?: number;
       ProductionYear?: number;
@@ -480,6 +485,19 @@ async function fetchMediaEnrichment(
 
       const enrichment: MediaEnrichment = {};
 
+      // Check if this item should be filtered (theme songs, theme videos, trailers, etc.)
+      if (
+        shouldFilterItem({
+          Type: item.Type ?? '',
+          ExtraType: item.ExtraType,
+          ProviderIds: {},
+        })
+      ) {
+        enrichment.filtered = true;
+        enrichmentMap.set(item.Id, enrichment);
+        continue;
+      }
+
       if (item.ParentIndexNumber != null) {
         enrichment.seasonNumber = item.ParentIndexNumber;
       }
@@ -552,6 +570,7 @@ export async function importJellystatBackup(
     processedRecords: 0,
     importedRecords: 0,
     skippedRecords: 0,
+    filteredRecords: 0,
     errorRecords: 0,
     enrichedRecords: 0,
     message: 'Starting import...',
@@ -584,6 +603,7 @@ export async function importJellystatBackup(
         imported: 0,
         updated: 0,
         skipped: 0,
+        filtered: 0,
         errors: 0,
         enriched: 0,
         message: 'No playback activity records found in backup',
@@ -675,6 +695,7 @@ export async function importJellystatBackup(
     let imported = 0;
     let updated = 0;
     let skipped = 0;
+    let filtered = 0;
     let errors = 0;
 
     const skippedUserTracker = createSkippedUserTracker();
@@ -783,6 +804,16 @@ export async function importJellystatBackup(
           }
 
           const enrichment = enrichmentMap.get(activity.NowPlayingItemId);
+
+          // Skip theme songs, theme videos, trailers, etc.
+          if (enrichment?.filtered) {
+            filtered++;
+            progress.filteredRecords++;
+            progress.skippedRecords++;
+            skipped++;
+            continue;
+          }
+
           const sessionData = transformActivityToSession(
             activity,
             serverId,
@@ -874,6 +905,9 @@ export async function importJellystatBackup(
     }
 
     let message = `Import complete: ${imported} imported, ${updated} updated, ${skipped} skipped, ${errors} errors`;
+    if (filtered > 0) {
+      message += `, ${filtered} filtered (theme music/trailers)`;
+    }
     if (enrichMedia && enrichmentMap.size > 0) {
       message += `, ${enrichmentMap.size} media items enriched`;
     }
@@ -898,6 +932,7 @@ export async function importJellystatBackup(
       imported,
       updated,
       skipped,
+      filtered,
       errors,
       enriched: enrichmentMap.size,
       message,
@@ -923,6 +958,7 @@ export async function importJellystatBackup(
       imported: progress.importedRecords,
       updated: 0,
       skipped: progress.skippedRecords,
+      filtered: progress.filteredRecords,
       errors: progress.errorRecords,
       enriched: progress.enrichedRecords,
       message: `Import failed: ${errorMessage}`,

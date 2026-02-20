@@ -82,6 +82,8 @@ export interface JellyfinEmbyAuthResult {
  */
 export interface JellyfinEmbyItemResult {
   Id: string;
+  Type?: string;
+  ExtraType?: string;
   ParentIndexNumber?: number;
   IndexNumber?: number;
   ProductionYear?: number;
@@ -411,6 +413,8 @@ export function parseItem(item: Record<string, unknown>): JellyfinEmbyItemResult
 
   return {
     Id: parseString(item.Id),
+    Type: parseOptionalString(item.Type),
+    ExtraType: parseOptionalString(item.ExtraType),
     ParentIndexNumber: parseOptionalNumber(item.ParentIndexNumber),
     IndexNumber: parseOptionalNumber(item.IndexNumber),
     ProductionYear: parseOptionalNumber(item.ProductionYear),

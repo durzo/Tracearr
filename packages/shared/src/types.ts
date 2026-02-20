@@ -932,6 +932,8 @@ export interface JellystatImportProgress {
   processedRecords: number;
   importedRecords: number;
   skippedRecords: number;
+  /** Number of records filtered out (theme songs, theme videos, trailers, etc.) */
+  filteredRecords: number;
   errorRecords: number;
   /** Number of media items enriched with metadata from Jellyfin */
   enrichedRecords: number;
@@ -946,6 +948,8 @@ export interface JellystatImportResult {
   imported: number;
   updated: number;
   skipped: number;
+  /** Number of records filtered out (theme songs, theme videos, trailers, etc.) */
+  filtered: number;
   errors: number;
   enriched: number;
   message: string;

@@ -18,6 +18,7 @@ export interface ImportProgressData {
   totalPages?: number;
   // Jellystat-specific
   enrichedRecords?: number;
+  filteredRecords?: number;
   // Heavy ops coordination
   waitingFor?: HeavyOpsWaitingFor;
 }
@@ -111,6 +112,15 @@ export function ImportProgressCard({
                 <span className="text-muted-foreground">Enriched:</span>{' '}
                 <span className="font-medium text-blue-600">
                   {progress.enrichedRecords.toLocaleString()}
+                </span>
+              </div>
+            )}
+
+            {progress.filteredRecords !== undefined && progress.filteredRecords > 0 && (
+              <div>
+                <span className="text-muted-foreground">Filtered:</span>{' '}
+                <span className="font-medium text-yellow-600">
+                  {progress.filteredRecords.toLocaleString()}
                 </span>
               </div>
             )}

@@ -13,6 +13,7 @@ import {
   extractQuality,
   parseLibraryDate,
   parseLibraryItemsResponse,
+  parseItem,
 } from '../jellyfinEmbyParser.js';
 
 // ============================================================================
@@ -616,5 +617,56 @@ describe('parseLibraryItemsResponse', () => {
     const item = result[0]!;
     expect(item.addedAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
     expect(item.addedAt.getTime()).toBeLessThanOrEqual(after.getTime());
+  });
+});
+
+describe('parseItem', () => {
+  it('extracts Type and ExtraType from item', () => {
+    const result = parseItem({
+      Id: 'abc123',
+      Type: 'Audio',
+      ExtraType: 'ThemeSong',
+    });
+
+    expect(result.Id).toBe('abc123');
+    expect(result.Type).toBe('Audio');
+    expect(result.ExtraType).toBe('ThemeSong');
+  });
+
+  it('returns undefined for missing Type and ExtraType', () => {
+    const result = parseItem({
+      Id: 'abc123',
+    });
+
+    expect(result.Id).toBe('abc123');
+    expect(result.Type).toBeUndefined();
+    expect(result.ExtraType).toBeUndefined();
+  });
+
+  it('extracts all standard fields alongside Type/ExtraType', () => {
+    const result = parseItem({
+      Id: 'movie-1',
+      Type: 'Movie',
+      ParentIndexNumber: 1,
+      IndexNumber: 5,
+      ProductionYear: 2024,
+      ImageTags: { Primary: 'tag123' },
+      SeriesId: 'series-1',
+      SeriesPrimaryImageTag: 'seriestag',
+      Album: 'My Album',
+      AlbumArtist: 'Artist Name',
+      Artists: ['Artist Name'],
+      AlbumId: 'album-1',
+      AlbumPrimaryImageTag: 'albumtag',
+    });
+
+    expect(result.Type).toBe('Movie');
+    expect(result.ExtraType).toBeUndefined();
+    expect(result.ParentIndexNumber).toBe(1);
+    expect(result.IndexNumber).toBe(5);
+    expect(result.ProductionYear).toBe(2024);
+    expect(result.SeriesId).toBe('series-1');
+    expect(result.Album).toBe('My Album');
+    expect(result.AlbumArtist).toBe('Artist Name');
   });
 });

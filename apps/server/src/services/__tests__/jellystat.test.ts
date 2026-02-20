@@ -1382,6 +1382,33 @@ const REAL_BACKUP_ACTIVITY_UNKNOWN_USER = {
   ServerId: '1',
 };
 
+// Theme song activity (short audio, no SeriesName - typical of extras)
+const THEME_SONG_ACTIVITY = {
+  Id: '1600',
+  IsPaused: null,
+  UserId: 'a91468af8ed947e0add77f191736dab5',
+  UserName: 'TestUser',
+  Client: 'Jellyfin Web',
+  DeviceName: 'Chrome',
+  DeviceId: 'chrome-device-456',
+  ApplicationVersion: null,
+  NowPlayingItemId: 'theme-song-item-id',
+  NowPlayingItemName: 'Theme Song',
+  SeasonId: null,
+  SeriesName: null,
+  EpisodeId: null,
+  PlaybackDuration: '30',
+  ActivityDateInserted: '2025-04-08T12:00:00.000Z',
+  PlayMethod: 'DirectPlay' as const,
+  MediaStreams: null,
+  TranscodingInfo: null,
+  PlayState: null,
+  OriginalContainer: null,
+  RemoteEndPoint: '73.160.197.140',
+  ServerId: '1',
+  imported: false,
+};
+
 // Mock modules
 vi.mock('../geoip.js', () => ({
   geoipService: {
@@ -2303,5 +2330,174 @@ describe('Media Enrichment', () => {
     expect(result.success).toBe(true);
     expect(result.imported).toBe(1);
     expect(result.enriched).toBe(0); // No enrichment due to API error
+  });
+});
+
+// ============================================================================
+// Theme Music / Extra Filtering
+// ============================================================================
+
+describe('Theme Music Filtering', () => {
+  it('should filter out theme song items during import', async () => {
+    const { db } = await import('../../db/client.js');
+
+    const mockServer = {
+      id: 'server-1',
+      name: 'Test Server',
+      type: 'jellyfin' as const,
+      url: 'http://jellyfin.local:8096',
+      token: 'test-token',
+    };
+
+    const mockServerUser = {
+      id: 'user-1',
+      serverId: 'server-1',
+      externalId: 'a91468af8ed947e0add77f191736dab5',
+    };
+
+    // Configure mock to return theme song metadata for the theme song item
+    // and normal metadata for the regular item
+    configureMockJellyfinClient([
+      {
+        Id: 'e5a547eef1d6ed70045cc4bc83e0dad5',
+        Type: 'Episode',
+        ParentIndexNumber: 1,
+        IndexNumber: 1,
+        ProductionYear: 2015,
+        ImageTags: { Primary: 'abc123' },
+      },
+      {
+        Id: 'theme-song-item-id',
+        Type: 'Audio',
+        ExtraType: 'ThemeSong',
+      },
+    ]);
+
+    let callCount = 0;
+    (db.select as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      callCount++;
+      const mockLimit = vi.fn();
+      const mockWhere = vi.fn().mockReturnValue({ limit: mockLimit });
+      const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
+
+      if (callCount === 1) {
+        mockLimit.mockResolvedValue([mockServer]);
+      } else if (callCount === 2) {
+        mockWhere.mockResolvedValue([mockServerUser]);
+      } else {
+        mockWhere.mockResolvedValue([]);
+      }
+
+      return { from: mockFrom };
+    });
+
+    const insertedSessions: unknown[] = [];
+    const mockValues = vi.fn().mockImplementation((data) => {
+      insertedSessions.push(...(Array.isArray(data) ? data : [data]));
+      return Promise.resolve(undefined);
+    });
+    (db.insert as ReturnType<typeof vi.fn>).mockReturnValue({ values: mockValues });
+
+    const backup = JSON.stringify([
+      {
+        jf_playback_activity: [REAL_BACKUP_ACTIVITY_1, THEME_SONG_ACTIVITY],
+      },
+    ]);
+
+    const result = await importJellystatBackup('server-1', backup, true);
+
+    expect(result.success).toBe(true);
+    expect(result.imported).toBe(1); // Only the episode, not the theme song
+    expect(result.filtered).toBe(1); // Theme song was filtered
+    expect(insertedSessions).toHaveLength(1);
+
+    // Verify the inserted session is the episode, not the theme song
+    const session = insertedSessions[0] as Record<string, unknown>;
+    expect(session.mediaTitle).toBe('Pilot');
+  });
+
+  it('should filter out theme video items during import', async () => {
+    const { db } = await import('../../db/client.js');
+
+    const mockServer = {
+      id: 'server-1',
+      name: 'Test Server',
+      type: 'jellyfin' as const,
+      url: 'http://jellyfin.local:8096',
+      token: 'test-token',
+    };
+
+    const mockServerUser = {
+      id: 'user-1',
+      serverId: 'server-1',
+      externalId: 'a91468af8ed947e0add77f191736dab5',
+    };
+
+    configureMockJellyfinClient([
+      {
+        Id: 'theme-song-item-id',
+        Type: 'Video',
+        ExtraType: 'ThemeVideo',
+      },
+    ]);
+
+    let callCount = 0;
+    (db.select as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      callCount++;
+      const mockLimit = vi.fn();
+      const mockWhere = vi.fn().mockReturnValue({ limit: mockLimit });
+      const mockFrom = vi.fn().mockReturnValue({ where: mockWhere });
+
+      if (callCount === 1) {
+        mockLimit.mockResolvedValue([mockServer]);
+      } else if (callCount === 2) {
+        mockWhere.mockResolvedValue([mockServerUser]);
+      } else {
+        mockWhere.mockResolvedValue([]);
+      }
+
+      return { from: mockFrom };
+    });
+
+    const mockValues = vi.fn().mockResolvedValue(undefined);
+    (db.insert as ReturnType<typeof vi.fn>).mockReturnValue({ values: mockValues });
+
+    const backup = JSON.stringify([
+      {
+        jf_playback_activity: [THEME_SONG_ACTIVITY],
+      },
+    ]);
+
+    const result = await importJellystatBackup('server-1', backup, true);
+
+    expect(result.success).toBe(true);
+    expect(result.imported).toBe(0);
+    expect(result.filtered).toBe(1);
+  });
+
+  it('should still transform theme song activities correctly', () => {
+    // transformActivityToSession should work regardless - the filtering
+    // happens at the import level, not the transformation level
+    const session = transformActivityToSession(
+      THEME_SONG_ACTIVITY as JellystatPlaybackActivity,
+      'server-1',
+      'user-1',
+      {
+        city: null,
+        region: null,
+        country: null,
+        countryCode: null,
+        continent: null,
+        postal: null,
+        lat: null,
+        lon: null,
+        asnNumber: null,
+        asnOrganization: null,
+      }
+    );
+
+    expect(session.mediaTitle).toBe('Theme Song');
+    expect(session.serverId).toBe('server-1');
+    expect(session.serverUserId).toBe('user-1');
   });
 });
