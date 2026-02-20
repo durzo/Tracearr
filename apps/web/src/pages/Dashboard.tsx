@@ -29,15 +29,15 @@ export function Dashboard() {
     [selectedServers]
   );
 
-  // Only show server resource stats for Plex servers
-  const isPlexServer = selectedServer?.type === 'plex';
+  // Only show server resource stats for a single Plex server
+  const showServerResources = !isMultiServer && selectedServers[0]?.type === 'plex';
 
-  // Poll server statistics only when viewing a Plex server
+  // Poll server statistics only when viewing a single Plex server
   const {
     data: serverStats,
     isLoading: statsChartLoading,
     averages,
-  } = useServerStatistics(selectedServerId ?? undefined, isPlexServer);
+  } = useServerStatistics(selectedServerId ?? undefined, showServerResources);
 
   const activeCount = sessions?.length ?? 0;
   const hasActiveStreams = activeCount > 0;
@@ -147,8 +147,8 @@ export function Dashboard() {
         </section>
       )}
 
-      {/* Server Resource Stats (Plex only) */}
-      {isPlexServer && (
+      {/* Server Resource Stats (single Plex server only) */}
+      {showServerResources && (
         <section>
           <div className="mb-4 flex items-center gap-2">
             <Activity className="text-primary h-5 w-5" />
