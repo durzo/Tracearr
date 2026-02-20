@@ -1,123 +1,123 @@
 {
-  "account": {
-    "createAccount": "Criar conta",
-    "createYourAccount": "Crie a sua conta para começar",
-    "displayName": "Nome para exibição",
-    "email": "E-mail",
-    "password": "Palavra-passe",
-    "signIn": "Iniciar sessão",
-    "signInToAccount": "Inicie sessão na sua conta",
-    "useJellyfinAccount": "Utilize a conta Jellyfin em vez disso",
-    "useLocalAccount": "Utilize a conta local em vez disso",
-    "waitingForPlex": "A aguardar autorização do Plex..."
-  },
-  "advanced": {
-    "connectionScenarios": "Cenários de ligação",
-    "externalUrl": "URL externo",
-    "reverseProxy": "Proxy reverso",
-    "title": "Definições avançadas",
-    "trustProxy": "Confiar nos headers do proxy"
+  "tabs": {
+    "general": "Geral",
+    "servers": "Servidores",
+    "notifications": "Notificações",
+    "mobile": "Aplicação móvel",
+    "import": "Importar",
+    "advanced": "Avançadas",
+    "jobs": "Jobs",
+    "accessControl": "Access Control"
   },
   "general": {
-    "helpTranslate": "Ajude a traduzir o Tracearr",
+    "title": "Definições gerais",
+    "unitSystem": "Sistema de unidades",
+    "metric": "Métrico (km, km/h)",
     "imperial": "Imperial (mi, mph)",
+    "timezone": "Fuso horário",
+    "primaryAuth": "Método de autenticação principal",
+    "localAccount": "Conta local",
+    "plexAccount": "Conta Plex",
     "jellyfinAccount": "Conta Jellyfin",
     "language": "Idioma",
     "languageDescription": "Escolha o seu idioma de apresentação preferido.",
-    "localAccount": "Conta local",
-    "metric": "Métrico (km, km/h)",
-    "plexAccount": "Conta Plex",
-    "primaryAuth": "Método de autenticação principal",
+    "helpTranslate": "Ajude a traduzir o Tracearr",
     "timeFormat": "Time Format",
-    "timeFormat12h": "12-hour (1:30 PM)",
-    "timeFormat24h": "24-hour (13:30)",
     "timeFormatDescription": "Choose how times are displayed.",
-    "timezone": "Fuso horário",
-    "title": "Definições gerais",
-    "unitSystem": "Sistema de unidades"
-  },
-  "import": {
-    "enriched": "Enriched",
-    "errors": "Errors",
-    "importComplete": "Importação concluída",
-    "importFailed": "Falha na importação",
-    "importProgress": "Progresso da importação",
-    "imported": "Imported",
-    "jellystat": "Importar do Jellystat",
-    "page": "Page",
-    "processed": "Processed",
-    "skipped": "Skipped",
-    "tautulli": "Importar do Tautulli",
-    "title": "Importar dados"
-  },
-  "ipWarning": {
-    "acknowledge": "Got it",
-    "message": "All users appear to be using the same IP address or local network IPs. This may affect rule-based logic for location or IP addresses."
-  },
-  "jellyfin": {
-    "password": "Palavra-passe Jellyfin",
-    "signInWithJellyfin": "Iniciar sessão com o Jellyfin",
-    "username": "Nome de utilizador Jellyfin"
-  },
-  "mobile": {
-    "connectedDevices": "Dispositivos ligados",
-    "generateToken": "Gerar token de emparelhamento",
-    "noDevices": "Sem dispositivos ligados",
-    "pairDevice": "Emparelhar dispositivo",
-    "revokeAll": "Revogar todas as sessões",
-    "scanQrCode": "Digitalizar código QR",
-    "title": "Aplicação móvel",
-    "tokenExpires": "O token expira em {{time}}"
-  },
-  "plex": {
-    "chooseServer": "Escolha o servidor Plex que pretende monitorizar",
-    "linkedAccounts": "Contas Plex ligadas",
-    "selectServer": "Selecionar servidor",
-    "signInWithPlex": "Iniciar sessão com o Plex",
-    "signUpWithPlex": "Registar-se com o Plex",
-    "unlinkAccount": "Desvincular conta Plex"
-  },
-  "serverHealth": {
-    "multipleUnreachable": "{{count}} servers unreachable: {{serverNames}}",
-    "unreachable": "{{serverName}} is unreachable"
+    "timeFormat12h": "12-hour (1:30 PM)",
+    "timeFormat24h": "24-hour (13:30)"
   },
   "servers": {
+    "title": "Servidores ligados",
     "addServer": "Adicionar servidor",
-    "apiKey": "Chave API",
-    "connectionFailed": "Falha na ligação",
-    "connectionSuccess": "Ligação bem-sucedida",
     "serverName": "Nome do servidor",
     "serverUrl": "URL do servidor",
+    "apiKey": "Chave API",
     "syncInterval": "Intervalo de sincronização",
     "testConnection": "Testar ligação",
-    "title": "Servidores ligados"
+    "connectionSuccess": "Ligação bem-sucedida",
+    "connectionFailed": "Falha na ligação"
   },
-  "tabs": {
-    "accessControl": "Access Control",
-    "advanced": "Avançadas",
-    "general": "Geral",
-    "import": "Importar",
-    "jobs": "Jobs",
-    "mobile": "Aplicação móvel",
-    "notifications": "Notificações",
-    "servers": "Servidores"
-  },
-  "update": {
-    "betaUpdate": "Beta Update",
-    "newVersion": "New Version",
-    "pullInstructions": "After pulling, restart your container to apply the update.",
-    "releaseNotes": "Release Notes",
-    "stableRelease": "Stable Release",
-    "title": "Update Available",
-    "updateCommand": "Update Command",
-    "versionAvailable": "{{version}} available"
+  "mobile": {
+    "title": "Aplicação móvel",
+    "pairDevice": "Emparelhar dispositivo",
+    "connectedDevices": "Dispositivos ligados",
+    "generateToken": "Gerar token de emparelhamento",
+    "scanQrCode": "Digitalizar código QR",
+    "tokenExpires": "O token expira em {{time}}",
+    "noDevices": "Sem dispositivos ligados",
+    "revokeAll": "Revogar todas as sessões"
   },
   "webhooks": {
-    "customWebhook": "URL do webhook personalizado",
+    "title": "Configuração do webhook",
     "discordWebhook": "URL do webhook do Discord",
     "ntfyTopic": "Tópico Ntfy",
-    "testWebhook": "Testar webhook",
-    "title": "Configuração do webhook",
-    "webhookFormat": "Formato do webhook"
+    "customWebhook": "URL do webhook personalizado",
+    "webhookFormat": "Formato do webhook",
+    "testWebhook": "Testar webhook"
+  },
+  "advanced": {
+    "title": "Definições avançadas",
+    "externalUrl": "URL externo",
+    "trustProxy": "Confiar nos headers do proxy",
+    "reverseProxy": "Proxy reverso",
+    "connectionScenarios": "Cenários de ligação"
+  },
+  "import": {
+    "title": "Importar dados",
+    "jellystat": "Importar do Jellystat",
+    "tautulli": "Importar do Tautulli",
+    "importProgress": "Progresso da importação",
+    "importComplete": "Importação concluída",
+    "importFailed": "Falha na importação",
+    "processed": "Processed",
+    "page": "Page",
+    "imported": "Imported",
+    "skipped": "Skipped",
+    "enriched": "Enriched",
+    "errors": "Errors"
+  },
+  "plex": {
+    "linkedAccounts": "Contas Plex ligadas",
+    "unlinkAccount": "Desvincular conta Plex",
+    "signInWithPlex": "Iniciar sessão com o Plex",
+    "signUpWithPlex": "Registar-se com o Plex",
+    "selectServer": "Selecionar servidor",
+    "chooseServer": "Escolha o servidor Plex que pretende monitorizar"
+  },
+  "jellyfin": {
+    "signInWithJellyfin": "Iniciar sessão com o Jellyfin",
+    "username": "Nome de utilizador Jellyfin",
+    "password": "Palavra-passe Jellyfin"
+  },
+  "account": {
+    "createAccount": "Criar conta",
+    "signIn": "Iniciar sessão",
+    "email": "E-mail",
+    "password": "Palavra-passe",
+    "displayName": "Nome para exibição",
+    "createYourAccount": "Crie a sua conta para começar",
+    "signInToAccount": "Inicie sessão na sua conta",
+    "useLocalAccount": "Utilize a conta local em vez disso",
+    "useJellyfinAccount": "Utilize a conta Jellyfin em vez disso",
+    "waitingForPlex": "A aguardar autorização do Plex..."
+  },
+  "update": {
+    "title": "Update Available",
+    "releaseNotes": "Release Notes",
+    "updateCommand": "Update Command",
+    "pullInstructions": "After pulling, restart your container to apply the update.",
+    "stableRelease": "Stable Release",
+    "betaUpdate": "Beta Update",
+    "newVersion": "New Version",
+    "versionAvailable": "{{version}} available"
+  },
+  "serverHealth": {
+    "unreachable": "{{serverName}} is unreachable",
+    "multipleUnreachable": "{{count}} servers unreachable: {{serverNames}}"
+  },
+  "ipWarning": {
+    "message": "All users appear to be using the same IP address or local network IPs. This may affect rule-based logic for location or IP addresses.",
+    "acknowledge": "Got it"
   }
 }
