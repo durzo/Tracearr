@@ -138,6 +138,37 @@ describe('frontend: BASE_URL paths must not start with /', () => {
 });
 
 // ==========================================================================
+// Frontend: no hardcoded src="/..." attributes in JSX
+// ==========================================================================
+describe('frontend: no hardcoded src attributes for local assets', () => {
+  // Matches src="/anything" or src='/anything' — hardcoded absolute paths in
+  // JSX <img>, <source>, <video>, etc. that don't go through BASE_URL.
+  // Does NOT match src={...} (dynamic), src="https://..." or src="http://..."
+  const HARDCODED_SRC = /\bsrc=["']\/(?!\/)[^"']*/g;
+
+  const files = collectFiles(WEB_SRC);
+
+  it('no src attributes with hardcoded absolute paths', () => {
+    const violations: string[] = [];
+
+    for (const file of files) {
+      const content = readFileSync(file, 'utf-8');
+      const lines = content.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
+        if (HARDCODED_SRC.test(line)) {
+          const rel = relative(PROJECT_ROOT, file);
+          violations.push(`${rel}:${i + 1}: ${line.trim()}`);
+        }
+        HARDCODED_SRC.lastIndex = 0;
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+});
+
+// ==========================================================================
 // Server: no hardcoded redirect paths (outside of basePath-aware code)
 // ==========================================================================
 describe('server: redirects use BASE_PATH', () => {
