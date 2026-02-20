@@ -283,7 +283,7 @@ export function MobileSettings() {
   const maxDevices = config?.maxDevices ?? 5;
 
   const GOOGLE_PLAY_URL = 'https://play.google.com/store/apps/details?id=com.tracearr.mobile';
-  // const APP_STORE_URL = 'https://apps.apple.com/app/tracearr/id...'; // Coming soon
+  const APP_STORE_URL = 'https://apps.apple.com/us/app/tracearr/id6755941553';
 
   return (
     <div className="space-y-6">
@@ -311,17 +311,19 @@ export function MobileSettings() {
                 className="h-[40px] w-auto"
               />
             </a>
-            <div className="relative">
+            <a
+              href={APP_STORE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="transition-opacity hover:opacity-80"
+            >
               <img
                 src="/images/store-badges/app-store.svg"
                 alt="Download on the App Store"
                 height={40}
-                className="h-[40px] w-auto opacity-40 grayscale"
+                className="h-[40px] w-auto"
               />
-              <span className="bg-muted text-muted-foreground absolute -top-2 -right-2 rounded px-1.5 py-0.5 text-[10px] font-medium">
-                Soon
-              </span>
-            </div>
+            </a>
           </div>
         </CardContent>
       </Card>
