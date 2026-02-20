@@ -5,12 +5,13 @@ import { api, type StatsTimeRange, getBrowserTimezone } from '@/lib/api';
 // Re-export for backwards compatibility and convenience
 export type { StatsTimeRange };
 
-export function useDashboardStats(serverId?: string | null) {
+export function useDashboardStats(serverIds: string[]) {
   // Include timezone in cache key since "today" varies by timezone
   const timezone = getBrowserTimezone();
+  const serverIdsKey = serverIds.length ? [...serverIds].sort().join(',') : 'all';
   return useQuery({
-    queryKey: ['stats', 'dashboard', serverId, timezone],
-    queryFn: () => api.stats.dashboard(serverId ?? undefined),
+    queryKey: ['stats', 'dashboard', serverIdsKey, timezone],
+    queryFn: () => api.stats.dashboard(serverIds.length ? serverIds : undefined),
     staleTime: 1000 * 30, // 30 seconds
     refetchInterval: 1000 * 60, // 1 minute
   });

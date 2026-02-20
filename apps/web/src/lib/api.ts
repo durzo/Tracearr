@@ -713,9 +713,13 @@ class ApiClient {
     rulesFilterOptions: () => {
       return this.request<RulesFilterOptions>('/sessions/filter-options?includeAllCountries=true');
     },
-    getActive: async (serverId?: string) => {
+    getActive: async (serverIds?: string[]) => {
       const params = new URLSearchParams();
-      if (serverId) params.set('serverId', serverId);
+      if (serverIds?.length) {
+        for (const id of serverIds) {
+          params.append('serverIds', id);
+        }
+      }
       const query = params.toString();
       const response = await this.request<{ data: ActiveSession[] }>(
         `/sessions/active${query ? `?${query}` : ''}`
@@ -841,9 +845,13 @@ class ApiClient {
   }
 
   stats = {
-    dashboard: (serverId?: string) => {
+    dashboard: (serverIds?: string[]) => {
       const params = new URLSearchParams();
-      if (serverId) params.set('serverId', serverId);
+      if (serverIds?.length) {
+        for (const id of serverIds) {
+          params.append('serverIds', id);
+        }
+      }
       // Include timezone so "today" is calculated in user's local timezone
       params.set('timezone', getBrowserTimezone());
       return this.request<DashboardStats>(`/stats/dashboard?${params.toString()}`);

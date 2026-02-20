@@ -14,9 +14,10 @@ import type { ActiveSession } from '@tracearr/shared';
 
 export function Dashboard() {
   const { t } = useTranslation(['pages', 'common']);
-  const { selectedServerId, selectedServer } = useServer();
-  const { data: stats, isLoading: statsLoading } = useDashboardStats(selectedServerId);
-  const { data: sessions } = useActiveSessions(selectedServerId);
+  const { selectedServerIds, selectedServers, isMultiServer, selectedServerId, selectedServer } =
+    useServer();
+  const { data: stats, isLoading: statsLoading } = useDashboardStats(selectedServerIds);
+  const { data: sessions } = useActiveSessions(selectedServerIds);
 
   // Session detail sheet state
   const [selectedSession, setSelectedSession] = useState<ActiveSession | null>(null);
