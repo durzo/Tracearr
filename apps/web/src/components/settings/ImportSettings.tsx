@@ -609,6 +609,7 @@ export function ImportSettings() {
               importedRecords: 0,
               skippedRecords: 0,
               errorRecords: 0,
+              filteredRecords: 0,
               enrichedRecords: 0,
               message:
                 progressPercent > 0
@@ -759,6 +760,7 @@ export function ImportSettings() {
         importedRecords: 0,
         skippedRecords: 0,
         errorRecords: 0,
+        filteredRecords: 0,
         enrichedRecords: 0,
         message: 'Please select a JSON file',
       });
@@ -781,6 +783,7 @@ export function ImportSettings() {
       importedRecords: 0,
       skippedRecords: 0,
       errorRecords: 0,
+      filteredRecords: 0,
       enrichedRecords: 0,
       message: 'Uploading backup file...',
     });
@@ -805,6 +808,7 @@ export function ImportSettings() {
         importedRecords: 0,
         skippedRecords: 0,
         errorRecords: 0,
+        filteredRecords: 0,
         enrichedRecords: 0,
         message: err instanceof Error ? err.message : 'Import failed',
       });
@@ -837,6 +841,7 @@ export function ImportSettings() {
         processedRecords: jellystatProgress.processedRecords,
         importedRecords: jellystatProgress.importedRecords,
         skippedRecords: jellystatProgress.skippedRecords,
+        filteredRecords: jellystatProgress.filteredRecords,
         errorRecords: jellystatProgress.errorRecords,
         enrichedRecords: jellystatProgress.enrichedRecords,
       }
