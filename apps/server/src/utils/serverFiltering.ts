@@ -186,3 +186,58 @@ export function buildServerFilterFragment(
   }
   return sql``;
 }
+
+/**
+ * Resolve the effective server IDs from query params, intersected with user access.
+ *
+ * Returns:
+ * - undefined: owner with no filter (all servers, skip WHERE clause)
+ * - string[]: specific servers to filter by (may be empty if no access)
+ */
+export function resolveServerIds(
+  authUser: AuthUser,
+  serverId: string | undefined,
+  serverIds: string[] | undefined
+): string[] | undefined {
+  // serverIds takes precedence over serverId
+  const requested = serverIds ?? (serverId ? [serverId] : undefined);
+
+  if (authUser.role === 'owner') {
+    return requested ?? undefined;
+  }
+
+  // Non-owners: intersect with accessible servers
+  if (!requested) {
+    return authUser.serverIds;
+  }
+  return requested.filter((id) => authUser.serverIds.includes(id));
+}
+
+/**
+ * Build a SQL condition for multi-server filtering.
+ * Returns undefined when no filtering needed (owner, all servers).
+ */
+export function buildMultiServerCondition(
+  resolvedIds: string[] | undefined,
+  serverIdColumn: Column
+): SQL | undefined {
+  if (resolvedIds === undefined) return undefined;
+  if (resolvedIds.length === 0) return sql`false`;
+  if (resolvedIds.length === 1) return eq(serverIdColumn, resolvedIds[0]);
+  return inArray(serverIdColumn, resolvedIds);
+}
+
+/**
+ * Raw SQL fragment version of multi-server filtering for template literal queries.
+ */
+export function buildMultiServerFragment(
+  resolvedIds: string[] | undefined,
+  columnRef = 'server_id'
+): SQL {
+  const col = sql.raw(columnRef);
+  if (resolvedIds === undefined) return sql``;
+  if (resolvedIds.length === 0) return sql`AND false`;
+  if (resolvedIds.length === 1) return sql`AND ${col} = ${resolvedIds[0]}`;
+  const ids = resolvedIds.map((id) => sql`${id}`);
+  return sql`AND ${col} IN (${sql.join(ids, sql`, `)})`;
+}
