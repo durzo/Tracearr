@@ -137,9 +137,14 @@ export const updateServerSchema = z
     name: z.string().min(1).max(100).optional(),
     url: z.url().optional(),
     clientIdentifier: z.string().optional(),
+    color: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{6}$/, 'Color must be a valid hex color (e.g. #3b82f6)')
+      .optional()
+      .nullable(),
   })
-  .refine((data) => data.name !== undefined || data.url !== undefined, {
-    message: 'At least one of name or url is required',
+  .refine((data) => data.name !== undefined || data.url !== undefined || data.color !== undefined, {
+    message: 'At least one of name, url, or color is required',
   });
 
 // ============================================================================

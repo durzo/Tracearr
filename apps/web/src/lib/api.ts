@@ -516,7 +516,10 @@ class ApiClient {
     },
     create: (data: { name: string; type: string; url: string; token: string }) =>
       this.request<Server>('/servers', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id: string, data: { name?: string; url?: string; clientIdentifier?: string }) =>
+    update: (
+      id: string,
+      data: { name?: string; url?: string; clientIdentifier?: string; color?: string | null }
+    ) =>
       this.request<Server>(`/servers/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(
@@ -524,6 +527,7 @@ class ApiClient {
             name?: string;
             url?: string;
             clientIdentifier?: string;
+            color?: string | null;
           }
         ),
       }),

@@ -35,6 +35,7 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
         type: servers.type,
         url: servers.url,
         displayOrder: servers.displayOrder,
+        color: servers.color,
         createdAt: servers.createdAt,
         updatedAt: servers.updatedAt,
       })
@@ -196,7 +197,7 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const { id } = params.data;
-    const { name: newName, url: bodyUrl, clientIdentifier } = body.data;
+    const { name: newName, url: bodyUrl, clientIdentifier, color: newColor } = body.data;
     const newUrl = bodyUrl !== undefined ? bodyUrl.replace(/\/$/, '') : undefined;
     const authUser = request.user;
 
@@ -283,11 +284,12 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
     }
 
     // Build update object
-    const updatePayload: { name?: string; url?: string; updatedAt: Date } = {
+    const updatePayload: { name?: string; url?: string; color?: string | null; updatedAt: Date } = {
       updatedAt: new Date(),
     };
     if (newName !== undefined) updatePayload.name = newName;
     if (newUrl !== undefined) updatePayload.url = newUrl;
+    if (newColor !== undefined) updatePayload.color = newColor;
 
     const updated = await db
       .update(servers)
@@ -298,6 +300,7 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
         name: servers.name,
         type: servers.type,
         url: servers.url,
+        color: servers.color,
         createdAt: servers.createdAt,
         updatedAt: servers.updatedAt,
       });

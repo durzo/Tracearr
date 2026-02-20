@@ -709,10 +709,10 @@ export function ServerSettings() {
         onClose={() => {
           setEditServer(null);
         }}
-        onUpdate={(name, url, clientIdentifier) => {
+        onUpdate={(name, url, clientIdentifier, color) => {
           if (editServer) {
             updateServer.mutate(
-              { id: editServer.id, name, url, clientIdentifier },
+              { id: editServer.id, name, url, clientIdentifier, color },
               {
                 onSuccess: () => {
                   setEditServer(null);
@@ -739,11 +739,12 @@ function EditServerDialog({
 }: {
   server: Server | null;
   onClose: () => void;
-  onUpdate: (name?: string, url?: string, clientIdentifier?: string) => void;
+  onUpdate: (name?: string, url?: string, clientIdentifier?: string, color?: string | null) => void;
   isUpdating: boolean;
 }) {
   const [editName, setEditName] = useState('');
   const [manualUrl, setManualUrl] = useState('');
+  const [editColor, setEditColor] = useState('#3b82f6');
   const isPlexServer = server?.type === 'plex';
 
   // Fetch connections for Plex servers
@@ -756,21 +757,26 @@ function EditServerDialog({
     if (server) {
       setEditName(server.name);
       setManualUrl(server.url);
+      setEditColor(server.color ?? '#3b82f6');
     }
   }, [server]);
 
   const handlePlexSelect = (uri: string, _name: string, clientIdentifier: string) => {
-    onUpdate(editName !== server?.name ? editName : undefined, uri, clientIdentifier);
+    const colorChanged = editColor !== (server?.color ?? '#3b82f6') ? editColor : undefined;
+    onUpdate(editName !== server?.name ? editName : undefined, uri, clientIdentifier, colorChanged);
   };
 
   const hasNameChange = server ? editName.trim() !== server.name : false;
   const hasUrlChange = server ? manualUrl.trim() !== server.url : false;
-  const canSave = (hasNameChange || hasUrlChange) && editName.trim().length > 0;
+  const hasColorChange = server ? editColor !== (server.color ?? '#3b82f6') : false;
+  const canSave = (hasNameChange || hasUrlChange || hasColorChange) && editName.trim().length > 0;
 
   const handleSave = () => {
     onUpdate(
       hasNameChange ? editName.trim() : undefined,
-      hasUrlChange ? manualUrl.trim() : undefined
+      hasUrlChange ? manualUrl.trim() : undefined,
+      undefined,
+      hasColorChange ? editColor : undefined
     );
   };
 
@@ -847,6 +853,24 @@ function EditServerDialog({
               />
             </div>
           )}
+
+          {/* Color picker */}
+          <div className="space-y-2">
+            <Label htmlFor="edit-color">Server Color</Label>
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                id="edit-color"
+                value={editColor}
+                onChange={(e) => setEditColor(e.target.value)}
+                className="h-9 w-9 cursor-pointer rounded-md border p-0.5"
+              />
+              <span className="text-muted-foreground text-sm">{editColor}</span>
+            </div>
+            <p className="text-muted-foreground text-xs">
+              Used for visual attribution in multi-server view
+            </p>
+          </div>
         </div>
 
         <DialogFooter>
@@ -918,6 +942,12 @@ function SortableServerCard({
           </div>
           <div>
             <div className="flex items-center gap-2">
+              {server.color && (
+                <span
+                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: server.color }}
+                />
+              )}
               <h3 className="font-semibold">{server.name}</h3>
               <button onClick={onEdit} className="hover:text-primary" title="Edit server">
                 <Pencil className="h-3 w-3" />
