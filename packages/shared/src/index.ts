@@ -93,6 +93,9 @@ export type {
   // Server resource stats
   ServerResourceDataPoint,
   ServerResourceStats,
+  // Server bandwidth stats
+  ServerBandwidthDataPoint,
+  ServerBandwidthStats,
   // Settings
   Settings,
   WebhookFormat,
@@ -408,6 +411,7 @@ export {
   SESSION_LIMITS,
   SESSION_WRITE_RETRY,
   SERVER_STATS_CONFIG,
+  BANDWIDTH_STATS_CONFIG,
   // SSE
   SSE_CONFIG,
   PLEX_SSE_EVENTS,

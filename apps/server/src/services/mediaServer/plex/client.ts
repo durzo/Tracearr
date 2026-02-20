@@ -26,11 +26,13 @@ import {
   parseXmlUsersResponse,
   parseSharedServersXml,
   parseStatisticsResourcesResponse,
+  parseStatisticsBandwidthResponse,
   parseMediaMetadataResponse,
   parseLibraryItemsResponse,
   getTranscodingSessionRatingKeys,
   type PlexServerResource,
   type PlexStatisticsDataPoint,
+  type PlexBandwidthDataPoint,
   type PlexOriginalMedia,
 } from './parser.js';
 
@@ -337,6 +339,27 @@ export class PlexClient implements IMediaServerClient, IMediaServerClientWithHis
     });
 
     return parseStatisticsResourcesResponse(data);
+  }
+
+  /**
+   * Get server bandwidth statistics (Local/Remote traffic)
+   *
+   * Uses the undocumented /statistics/bandwidth endpoint.
+   * Returns per-second data points with local/remote byte totals.
+   *
+   * @param timespan - Plex API timespan parameter (default: 6)
+   * @returns Array of bandwidth data points, sorted newest first
+   */
+  async getServerBandwidth(timespan: number = 6): Promise<PlexBandwidthDataPoint[]> {
+    const url = `${this.baseUrl}/statistics/bandwidth?timespan=${timespan}`;
+
+    const data = await fetchJson<unknown>(url, {
+      headers: this.buildHeaders(),
+      service: 'plex',
+      timeout: 10000,
+    });
+
+    return parseStatisticsBandwidthResponse(data);
   }
 
   // ==========================================================================
