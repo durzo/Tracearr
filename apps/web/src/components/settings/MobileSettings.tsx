@@ -41,7 +41,7 @@ import {
   useRevokeMobileSessions,
 } from '@/hooks/queries';
 import type { MobileSession, MobileQRPayload } from '@tracearr/shared';
-import { BASE_PATH } from '@/lib/basePath';
+import { BASE_PATH, BASE_URL } from '@/lib/basePath';
 
 function MobileSessionCard({ session }: { session: MobileSession }) {
   const revokeSession = useRevokeSession();
@@ -305,7 +305,7 @@ export function MobileSettings() {
               className="transition-opacity hover:opacity-80"
             >
               <img
-                src="/images/store-badges/google-play.svg"
+                src={`${BASE_URL}images/store-badges/google-play.svg`}
                 alt="Get it on Google Play"
                 height={40}
                 className="h-[40px] w-auto"
@@ -318,7 +318,7 @@ export function MobileSettings() {
               className="transition-opacity hover:opacity-80"
             >
               <img
-                src="/images/store-badges/app-store.svg"
+                src={`${BASE_URL}images/store-badges/app-store.svg`}
                 alt="Download on the App Store"
                 height={40}
                 className="h-[40px] w-auto"
