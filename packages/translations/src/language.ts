@@ -16,12 +16,12 @@ const LANGUAGE_STORAGE_KEY = 'tracearr_language';
 export const languageNames = {
   en: 'English',
   de: 'Deutsch',
-  pt: 'Português (Portugal)',
+  es: 'Español',
   fr: 'Français',
-  // Add new languages here:
-  // es: 'Español',
-  // ja: '日本語',
-  // zh: '中文',
+  nl: 'Nederlands',
+  pl: 'Polski',
+  pt: 'Português',
+  uk: 'Українська',
 } as const;
 
 export type LanguageCode = keyof typeof languageNames;

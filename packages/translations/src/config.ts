@@ -42,21 +42,44 @@ import pagesFr from './locales/fr/pages.json' with { type: 'json' };
 import mobileFr from './locales/fr/mobile.json' with { type: 'json' };
 
 // ============================================================================
-// Add New Languages Here
+// Dutch Translations
 // ============================================================================
-// To add a new language (e.g., Spanish):
-// 1. Create folder: src/locales/es/
-// 2. Copy all JSON files from src/locales/en/ to src/locales/es/
-// 3. Translate the values in each JSON file
-// 4. Import the files below:
-//    import commonEs from './locales/es/common.json' with { type: 'json' };
-//    import notificationsEs from './locales/es/notifications.json' with { type: 'json' };
-//    ... (all namespaces)
-// 5. Add to resources object below:
-//    es: { common: commonEs, notifications: notificationsEs, ... }
-// 6. Add to supportedLanguages array
-// 7. Add display name in src/language.ts languageNames object
+import commonNl from './locales/nl/common.json' with { type: 'json' };
+import notificationsNl from './locales/nl/notifications.json' with { type: 'json' };
+import settingsNl from './locales/nl/settings.json' with { type: 'json' };
+import navNl from './locales/nl/nav.json' with { type: 'json' };
+import pagesNl from './locales/nl/pages.json' with { type: 'json' };
+import mobileNl from './locales/nl/mobile.json' with { type: 'json' };
+
 // ============================================================================
+// Polish Translations
+// ============================================================================
+import commonPl from './locales/pl/common.json' with { type: 'json' };
+import notificationsPl from './locales/pl/notifications.json' with { type: 'json' };
+import settingsPl from './locales/pl/settings.json' with { type: 'json' };
+import navPl from './locales/pl/nav.json' with { type: 'json' };
+import pagesPl from './locales/pl/pages.json' with { type: 'json' };
+import mobilePl from './locales/pl/mobile.json' with { type: 'json' };
+
+// ============================================================================
+// Spanish Translations
+// ============================================================================
+import commonEs from './locales/es/common.json' with { type: 'json' };
+import notificationsEs from './locales/es/notifications.json' with { type: 'json' };
+import settingsEs from './locales/es/settings.json' with { type: 'json' };
+import navEs from './locales/es/nav.json' with { type: 'json' };
+import pagesEs from './locales/es/pages.json' with { type: 'json' };
+import mobileEs from './locales/es/mobile.json' with { type: 'json' };
+
+// ============================================================================
+// Ukrainian Translations
+// ============================================================================
+import commonUk from './locales/uk/common.json' with { type: 'json' };
+import notificationsUk from './locales/uk/notifications.json' with { type: 'json' };
+import settingsUk from './locales/uk/settings.json' with { type: 'json' };
+import navUk from './locales/uk/nav.json' with { type: 'json' };
+import pagesUk from './locales/uk/pages.json' with { type: 'json' };
+import mobileUk from './locales/uk/mobile.json' with { type: 'json' };
 
 export const defaultNS = 'common';
 export const namespaces = [
@@ -102,15 +125,38 @@ export const resources = {
     pages: pagesFr,
     mobile: mobileFr,
   },
-  // Add new languages here:
-  // es: {
-  //   common: commonEs,
-  //   notifications: notificationsEs,
-  //   settings: settingsEs,
-  //   nav: navEs,
-  //   pages: pagesEs,
-  //   mobile: mobileEs,
-  // },
+  es: {
+    common: commonEs,
+    notifications: notificationsEs,
+    settings: settingsEs,
+    nav: navEs,
+    pages: pagesEs,
+    mobile: mobileEs,
+  },
+  nl: {
+    common: commonNl,
+    notifications: notificationsNl,
+    settings: settingsNl,
+    nav: navNl,
+    pages: pagesNl,
+    mobile: mobileNl,
+  },
+  pl: {
+    common: commonPl,
+    notifications: notificationsPl,
+    settings: settingsPl,
+    nav: navPl,
+    pages: pagesPl,
+    mobile: mobilePl,
+  },
+  uk: {
+    common: commonUk,
+    notifications: notificationsUk,
+    settings: settingsUk,
+    nav: navUk,
+    pages: pagesUk,
+    mobile: mobileUk,
+  },
 } as const;
 
 export const supportedLanguages = Object.keys(resources) as (keyof typeof resources)[];
