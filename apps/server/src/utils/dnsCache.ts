@@ -16,27 +16,19 @@
  */
 
 import type dns from 'node:dns';
-import { createLogger } from './logger.js';
-
-const logger = createLogger('DNS');
 
 if (process.env.DNS_CACHE_MAX_TTL) {
   const maxTtl = parseInt(process.env.DNS_CACHE_MAX_TTL, 10);
+  const { default: CacheableLookup } = await import('cacheable-lookup');
+  const { Agent, setGlobalDispatcher } = await import('undici');
 
-  if (!maxTtl || maxTtl < 0) {
-    logger.warn(`Invalid DNS_CACHE_MAX_TTL value: "${process.env.DNS_CACHE_MAX_TTL}", skipping`);
-  } else {
-    const { default: CacheableLookup } = await import('cacheable-lookup');
-    const { Agent, setGlobalDispatcher } = await import('undici');
+  const cacheable = new CacheableLookup({ maxTtl });
 
-    const cacheable = new CacheableLookup({ maxTtl });
+  setGlobalDispatcher(
+    new Agent({
+      connect: { lookup: cacheable.lookup.bind(cacheable) as typeof dns.lookup },
+    })
+  );
 
-    setGlobalDispatcher(
-      new Agent({
-        connect: { lookup: cacheable.lookup.bind(cacheable) as typeof dns.lookup },
-      })
-    );
-
-    logger.info(`Cache enabled (max TTL: ${maxTtl}s)`);
-  }
+  console.info(`[DNS] Cache enabled (max TTL: ${maxTtl}s)`);
 }
