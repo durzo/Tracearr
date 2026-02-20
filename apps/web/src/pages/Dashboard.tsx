@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Play, Clock, AlertTriangle, Tv, MapPin, Calendar, Users, Activity } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -22,6 +22,12 @@ export function Dashboard() {
   // Session detail sheet state
   const [selectedSession, setSelectedSession] = useState<ActiveSession | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+
+  // Build server color map for multi-server attribution
+  const serverColorMap = useMemo(
+    () => new Map(selectedServers.map((s) => [s.id, s.color ?? null])),
+    [selectedServers]
+  );
 
   // Only show server resource stats for Plex servers
   const isPlexServer = selectedServer?.type === 'plex';
@@ -111,6 +117,8 @@ export function Dashboard() {
               <NowPlayingCard
                 key={session.id}
                 session={session}
+                isMultiServer={isMultiServer}
+                serverColor={serverColorMap.get(session.server.id)}
                 onClick={() => {
                   setSelectedSession(session);
                   setSheetOpen(true);

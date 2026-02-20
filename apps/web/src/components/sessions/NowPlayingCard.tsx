@@ -16,6 +16,8 @@ import type { ActiveSession } from '@tracearr/shared';
 interface NowPlayingCardProps {
   session: ActiveSession;
   onClick?: () => void;
+  isMultiServer?: boolean;
+  serverColor?: string | null;
 }
 
 // Get device icon based on platform/device info
@@ -45,7 +47,12 @@ function DeviceIcon({ session, className }: { session: ActiveSession; className?
   return <Monitor className={className} />;
 }
 
-export function NowPlayingCard({ session, onClick }: NowPlayingCardProps) {
+export function NowPlayingCard({
+  session,
+  onClick,
+  isMultiServer,
+  serverColor,
+}: NowPlayingCardProps) {
   const { title, subtitle } = getMediaDisplay(session);
   const { user } = useAuth();
   const [showTerminateDialog, setShowTerminateDialog] = useState(false);
@@ -217,11 +224,23 @@ export function NowPlayingCard({ session, onClick }: NowPlayingCardProps) {
       </div>
 
       {/* Location/Quality footer */}
-      <div className="bg-muted/50 text-muted-foreground relative flex items-center justify-between border-t px-4 py-2 text-xs">
-        <span className="truncate">
-          {session.geoCity && session.geoCountry
-            ? `${session.geoCity}, ${getCountryName(session.geoCountry)}`
-            : (getCountryName(session.geoCountry) ?? 'Unknown location')}
+      <div className="bg-muted/50 text-muted-foreground relative flex items-center justify-between gap-2 border-t px-4 py-2 text-xs">
+        <span className="flex min-w-0 items-center gap-1.5">
+          {isMultiServer && session.server && (
+            <>
+              <span
+                className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+                style={{ backgroundColor: serverColor ?? '#6b7280' }}
+              />
+              <span className="shrink-0">{session.server.name}</span>
+              <span className="text-muted-foreground/50">·</span>
+            </>
+          )}
+          <span className="truncate">
+            {session.geoCity && session.geoCountry
+              ? `${session.geoCity}, ${getCountryName(session.geoCountry)}`
+              : (getCountryName(session.geoCountry) ?? 'Unknown location')}
+          </span>
         </span>
         <span className="flex-shrink-0">{session.quality ?? 'Unknown quality'}</span>
       </div>
