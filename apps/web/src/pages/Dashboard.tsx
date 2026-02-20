@@ -137,7 +137,12 @@ export function Dashboard() {
             <h2 className="text-lg font-semibold">{t('dashboard.streamLocations')}</h2>
           </div>
           <Card className="overflow-hidden">
-            <StreamCard sessions={sessions} height={320} />
+            <StreamCard
+              sessions={sessions}
+              height={320}
+              isMultiServer={isMultiServer}
+              serverColorMap={serverColorMap}
+            />
           </Card>
         </section>
       )}
