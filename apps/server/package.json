@@ -49,6 +49,7 @@
     "@tracearr/shared": "workspace:*",
     "bcrypt": "^6.0.0",
     "bullmq": "^5.67.3",
+    "cacheable-lookup": "^7.0.0",
     "dotenv": "^17.2.4",
     "drizzle-orm": "^0.45.1",
     "eventsource": "^4.1.0",
@@ -63,6 +64,7 @@
     "sharp": "^0.34.0",
     "socket.io": "^4.8.3",
     "stream-json": "^1.9.1",
+    "undici": "^7.22.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

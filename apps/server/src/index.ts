@@ -21,6 +21,9 @@ const PROJECT_ROOT = resolve(__dirname, '../../..');
 // Load .env from project root
 config({ path: resolve(PROJECT_ROOT, '.env'), quiet: true });
 
+// Set global DNS cache (must be after dotenv so DNS_CACHE_MAX_TTL is available)
+await import('./utils/dnsCache.js');
+
 // GeoIP database path (in project root/data)
 const GEOIP_DB_PATH = resolve(PROJECT_ROOT, 'data/GeoLite2-City.mmdb');
 const GEOASN_DB_PATH = resolve(PROJECT_ROOT, 'data/GeoLite2-ASN.mmdb');
