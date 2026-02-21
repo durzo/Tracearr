@@ -5,8 +5,10 @@
  * It runs on every server startup and is idempotent - safe to run multiple times.
  */
 
-import { db } from './client.js';
+import { db, recreatePool } from './client.js';
+import { initPreparedStatements } from './prepared.js';
 import { sql } from 'drizzle-orm';
+import pg from 'pg';
 import { PRIMARY_MEDIA_TYPES_SQL_LITERAL } from '../constants/mediaTypes.js';
 
 /**
@@ -1140,6 +1142,54 @@ export async function getTimescaleStatus(): Promise<TimescaleStatus> {
     continuousAggregates: await getContinuousAggregates(),
     chunkCount: await getChunkCount(),
   };
+}
+
+/**
+ * Update TimescaleDB extensions to the latest version available on the system.
+ *
+ * MUST run before migrations or any queries that touch timescaledb objects
+ * (e.g. timescaledb_information.*), because once the old extension version is
+ * loaded into a PostgreSQL backend session it cannot be updated in that session.
+ */
+export async function updateTimescaleExtensions(): Promise<void> {
+  // Check which extensions need updating (fine to use the pool for this read)
+  const result = await db.execute(sql`
+    SELECT name, installed_version, default_version
+    FROM pg_available_extensions
+    WHERE name IN ('timescaledb', 'timescaledb_toolkit')
+      AND installed_version IS NOT NULL
+      AND installed_version != default_version
+  `);
+
+  const extensions = result.rows as {
+    name: string;
+    installed_version: string;
+    default_version: string;
+  }[];
+  if (extensions.length === 0) return;
+
+  // ALTER EXTENSION must be the FIRST statement in a PostgreSQL session. TimescaleDB's
+  // hooks fire on any prior query (even SELECT 1), marking the old version as "loaded"
+  // in the backend, which blocks the update. A fresh connection avoids this.
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  try {
+    await client.connect();
+    for (const row of extensions) {
+      console.info(
+        `[TimescaleDB] Updating extension ${row.name} from ${row.installed_version} to ${row.default_version}`
+      );
+      await client.query(`ALTER EXTENSION "${row.name}" UPDATE`);
+    }
+  } finally {
+    await client.end().catch(() => {
+      /* ignore cleanup errors */
+    });
+  }
+
+  // Recreate the pool so new connections pick up the updated extension,
+  // then rebuild prepared statements against the new db instance
+  await recreatePool();
+  initPreparedStatements();
 }
 
 /**

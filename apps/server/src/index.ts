@@ -112,7 +112,7 @@ import { initializeV2Rules } from './services/rules/v2Integration.js';
 import { processPushReceipts } from './services/pushNotification.js';
 import { cleanupMobileTokens } from './jobs/cleanupMobileTokens.js';
 import { db, checkDatabaseConnection, runMigrations } from './db/client.js';
-import { initTimescaleDB, getTimescaleStatus } from './db/timescale.js';
+import { initTimescaleDB, getTimescaleStatus, updateTimescaleExtensions } from './db/timescale.js';
 import { eq } from 'drizzle-orm';
 import { servers } from './db/schema.js';
 import { initializeClaimCode } from './utils/claimCode.js';
@@ -430,6 +430,14 @@ async function initializeServices(app: FastifyInstance) {
 
   // Connect the lazy Redis client
   await connectRedis(app);
+
+  // Update TimescaleDB extensions before migrations — must happen before any
+  // query touches timescaledb objects, otherwise the old version gets locked in.
+  try {
+    await updateTimescaleExtensions();
+  } catch (err) {
+    app.log.warn({ err }, 'Failed to update TimescaleDB extensions (non-fatal)');
+  }
 
   // Run database migrations
   try {
