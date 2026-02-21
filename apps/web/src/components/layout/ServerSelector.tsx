@@ -1,21 +1,40 @@
+import { useEffect, useRef } from 'react';
+import { useLocation } from 'react-router';
 import { useServer } from '@/hooks/useServer';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { MediaServerIcon } from '@/components/icons/MediaServerIcon';
-import { ChevronsUpDown } from 'lucide-react';
+import { Check, ChevronsUpDown } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export function ServerSelector() {
+  const location = useLocation();
+  const isDashboard = location.pathname === '/';
   const {
     servers,
     selectedServerIds,
     isAllServersSelected,
     toggleServer,
     selectAllServers,
+    deselectAllExcept,
     isLoading,
     isFetching,
   } = useServer();
+
+  // When navigating away from Dashboard with multiple servers selected,
+  // collapse to the first selected server since other pages are single-server
+  const prevPathname = useRef(location.pathname);
+  useEffect(() => {
+    const wasDashboard = prevPathname.current === '/';
+    const isNowDashboard = location.pathname === '/';
+    prevPathname.current = location.pathname;
+
+    if (wasDashboard && !isNowDashboard && selectedServerIds.length > 1) {
+      deselectAllExcept(selectedServerIds[0]!);
+    }
+  }, [location.pathname, selectedServerIds, deselectAllExcept]);
 
   // Show skeleton while loading initially or refetching with no cached data
   if (isLoading || (servers.length === 0 && isFetching)) {
@@ -42,11 +61,15 @@ export function ServerSelector() {
     );
   }
 
+  // Resolve single selected server for trigger display
+  const singleSelected =
+    selectedServerIds.length === 1 ? servers.find((s) => s.id === selectedServerIds[0]) : undefined;
+
   // Build trigger label
   const triggerLabel = isAllServersSelected
     ? 'All servers'
-    : selectedServerIds.length === 1
-      ? (servers.find((s) => s.id === selectedServerIds[0])?.name ?? '1 server')
+    : singleSelected
+      ? singleSelected.name
       : `${selectedServerIds.length} of ${servers.length} servers`;
 
   return (
@@ -56,52 +79,72 @@ export function ServerSelector() {
           <Button
             variant="outline"
             role="combobox"
-            className="h-9 w-full justify-between text-sm font-normal"
+            className="h-9 w-full justify-between border-l-2 text-sm font-normal"
+            style={{ borderLeftColor: singleSelected?.color ?? 'transparent' }}
           >
-            <span className="truncate">{triggerLabel}</span>
+            <span className="flex items-center gap-2 truncate">
+              {singleSelected && (
+                <MediaServerIcon type={singleSelected.type} className="h-4 w-4 shrink-0" />
+              )}
+              {triggerLabel}
+            </span>
             <ChevronsUpDown className="text-muted-foreground ml-2 h-4 w-4 shrink-0" />
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-2" align="start">
-          {/* Select All toggle */}
-          <button
-            type="button"
-            className="text-muted-foreground hover:text-foreground w-full px-2 py-1.5 text-left text-xs"
-            onClick={() => {
-              if (isAllServersSelected) {
-                // Deselect all except first
-                toggleServer(servers[0]!.id);
-                for (const s of servers.slice(1)) {
-                  if (selectedServerIds.includes(s.id)) {
-                    toggleServer(s.id);
+          {/* Select All toggle — only on Dashboard */}
+          {isDashboard && (
+            <>
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground w-full px-2 py-1.5 text-left text-xs"
+                onClick={() => {
+                  if (isAllServersSelected) {
+                    // Deselect all except first
+                    toggleServer(servers[0]!.id);
+                    for (const s of servers.slice(1)) {
+                      if (selectedServerIds.includes(s.id)) {
+                        toggleServer(s.id);
+                      }
+                    }
+                  } else {
+                    selectAllServers();
                   }
-                }
-              } else {
-                selectAllServers();
-              }
-            }}
-          >
-            {isAllServersSelected ? 'Deselect all' : 'Select all'}
-          </button>
-          <div className="my-1 border-t" />
+                }}
+              >
+                {isAllServersSelected ? 'Deselect all' : 'Select all'}
+              </button>
+              <div className="my-1 border-t" />
+            </>
+          )}
           {/* Server list */}
           {servers.map((server) => {
             const isSelected = selectedServerIds.includes(server.id);
-            return (
+            return isDashboard ? (
               <label
                 key={server.id}
-                className="hover:bg-accent flex cursor-pointer items-center gap-2.5 rounded-sm px-2 py-1.5"
+                className="hover:bg-accent flex cursor-pointer items-center gap-2.5 rounded-sm border-l-2 px-2 py-1.5"
+                style={{ borderLeftColor: server.color ?? 'transparent' }}
               >
                 <Checkbox checked={isSelected} onCheckedChange={() => toggleServer(server.id)} />
-                {server.color && (
-                  <span
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: server.color }}
-                  />
-                )}
                 <MediaServerIcon type={server.type} className="h-4 w-4 shrink-0" />
                 <span className="truncate text-sm">{server.name}</span>
               </label>
+            ) : (
+              <button
+                key={server.id}
+                type="button"
+                className={cn(
+                  'hover:bg-accent flex w-full cursor-pointer items-center gap-2.5 rounded-sm border-l-2 px-2 py-1.5',
+                  isSelected && 'bg-accent'
+                )}
+                style={{ borderLeftColor: server.color ?? 'transparent' }}
+                onClick={() => deselectAllExcept(server.id)}
+              >
+                <MediaServerIcon type={server.type} className="h-4 w-4 shrink-0" />
+                <span className="truncate text-sm">{server.name}</span>
+                {isSelected && <Check className="text-muted-foreground ml-auto h-4 w-4 shrink-0" />}
+              </button>
             );
           })}
         </PopoverContent>
