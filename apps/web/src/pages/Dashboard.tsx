@@ -14,8 +14,7 @@ import type { ActiveSession } from '@tracearr/shared';
 
 export function Dashboard() {
   const { t } = useTranslation(['pages', 'common']);
-  const { selectedServerIds, selectedServers, isMultiServer, selectedServerId, selectedServer } =
-    useServer();
+  const { selectedServerIds, selectedServers, isMultiServer, selectedServerId } = useServer();
   const { data: stats, isLoading: statsLoading } = useDashboardStats(selectedServerIds);
   const { data: sessions } = useActiveSessions(selectedServerIds);
 
@@ -28,6 +27,15 @@ export function Dashboard() {
     () => new Map(selectedServers.map((s) => [s.id, s.color ?? null])),
     [selectedServers]
   );
+
+  // Sort sessions by server display order so cards group by server
+  const sortedSessions = useMemo(() => {
+    if (!sessions) return undefined;
+    const orderMap = new Map(selectedServers.map((s) => [s.id, s.displayOrder ?? 0]));
+    return [...sessions].sort(
+      (a, b) => (orderMap.get(a.serverId) ?? 0) - (orderMap.get(b.serverId) ?? 0)
+    );
+  }, [sessions, selectedServers]);
 
   // Only show server resource stats for a single Plex server
   const showServerResources = !isMultiServer && selectedServers[0]?.type === 'plex';
@@ -99,7 +107,7 @@ export function Dashboard() {
           )}
         </div>
 
-        {!sessions || sessions.length === 0 ? (
+        {!sortedSessions || sortedSessions.length === 0 ? (
           <Card className="border-dashed">
             <CardContent className="flex flex-col items-center justify-center py-12">
               <div className="bg-muted rounded-full p-4">
@@ -113,7 +121,7 @@ export function Dashboard() {
           </Card>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {sessions.map((session) => (
+            {sortedSessions.map((session) => (
               <NowPlayingCard
                 key={session.id}
                 session={session}
