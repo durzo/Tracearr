@@ -60,12 +60,14 @@ export function useUpdateServer() {
       name,
       url,
       clientIdentifier,
+      color,
     }: {
       id: string;
       name?: string;
       url?: string;
       clientIdentifier?: string;
-    }) => api.servers.update(id, { name, url, clientIdentifier }),
+      color?: string | null;
+    }) => api.servers.update(id, { name, url, clientIdentifier, color }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['servers', 'list'] });
       toast.success(t('toast.success.serverUpdated.title'), {

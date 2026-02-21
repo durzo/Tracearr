@@ -43,6 +43,7 @@ export interface Server {
   type: ServerType;
   url: string;
   displayOrder?: number;
+  color?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

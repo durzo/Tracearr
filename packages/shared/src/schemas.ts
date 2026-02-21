@@ -69,6 +69,11 @@ const dateValidationRefinements = {
 // ============================================================================
 
 export const uuidSchema = z.uuid();
+
+// Accepts either a single UUID string or an array of UUID strings from query params
+export const serverIdsQuerySchema = z
+  .union([uuidSchema.transform((id) => [id]), z.array(uuidSchema)])
+  .optional();
 export const paginationSchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(20),
@@ -132,9 +137,14 @@ export const updateServerSchema = z
     name: z.string().min(1).max(100).optional(),
     url: z.url().optional(),
     clientIdentifier: z.string().optional(),
+    color: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{6}$/, 'Color must be a valid hex color (e.g. #3b82f6)')
+      .optional()
+      .nullable(),
   })
-  .refine((data) => data.name !== undefined || data.url !== undefined, {
-    message: 'At least one of name or url is required',
+  .refine((data) => data.name !== undefined || data.url !== undefined || data.color !== undefined, {
+    message: 'At least one of name, url, or color is required',
   });
 
 // ============================================================================
@@ -570,11 +580,13 @@ export const violationIdParamSchema = z.object({
 
 export const serverIdFilterSchema = z.object({
   serverId: uuidSchema.optional(),
+  serverIds: serverIdsQuerySchema,
 });
 
 // Dashboard query schema with timezone support
 export const dashboardQuerySchema = z.object({
   serverId: uuidSchema.optional(),
+  serverIds: serverIdsQuerySchema,
   timezone: timezoneSchema,
 });
 

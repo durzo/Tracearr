@@ -427,6 +427,10 @@ export {
   toMetricDistance,
   fromMetricDistance,
   formatConditionFieldValue,
+  // Server colors
+  SERVER_COLOR_PALETTE,
+  SERVER_TYPE_BRAND_COLORS,
+  pickServerColor,
   // Timezone utilities
   getClientTimezone,
   isValidTimezone,

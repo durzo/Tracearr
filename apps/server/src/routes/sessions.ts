@@ -32,7 +32,11 @@ import countriesEn from 'i18n-iso-countries/langs/en.json' with { type: 'json' }
 countries.registerLocale(countriesEn);
 import { db } from '../db/client.js';
 import { sessions, serverUsers, servers, users } from '../db/schema.js';
-import { filterByServerAccess, hasServerAccess } from '../utils/serverFiltering.js';
+import {
+  filterByServerAccess,
+  hasServerAccess,
+  resolveServerIds,
+} from '../utils/serverFiltering.js';
 import { terminateSession } from '../services/termination.js';
 import { getCacheService } from '../services/cache.js';
 
@@ -1145,14 +1149,12 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   app.get('/active', { preHandler: [app.authenticate] }, async (request, reply) => {
     const authUser = request.user;
 
-    // Parse optional serverId filter
+    // Parse optional server filter (supports both legacy serverId and serverIds[])
     const query = serverIdFilterSchema.safeParse(request.query);
-    const serverId = query.success ? query.data.serverId : undefined;
-
-    // If specific server requested, validate access
-    if (serverId && !hasServerAccess(authUser, serverId)) {
-      return reply.forbidden('You do not have access to this server');
-    }
+    const { serverId: legacyServerId, serverIds: rawServerIds } = query.success
+      ? query.data
+      : { serverId: undefined, serverIds: undefined };
+    const resolvedIds = resolveServerIds(authUser, legacyServerId, rawServerIds);
 
     // Get active sessions from atomic SET-based cache
     const cacheService = getCacheService();
@@ -1162,13 +1164,12 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
       activeSessions = await cacheService.getAllActiveSessions();
     }
 
-    // Filter by specific server if requested
-    if (serverId) {
-      activeSessions = activeSessions.filter((s) => s.serverId === serverId);
-    } else {
-      // Otherwise filter by user's accessible servers (owners see all)
-      activeSessions = filterByServerAccess(activeSessions, authUser);
+    // Filter by resolved server IDs
+    if (resolvedIds !== undefined) {
+      const idSet = new Set(resolvedIds);
+      activeSessions = activeSessions.filter((s) => idSet.has(s.serverId));
     }
+    // else: owner with no filter, keep all
 
     return { data: activeSessions };
   });

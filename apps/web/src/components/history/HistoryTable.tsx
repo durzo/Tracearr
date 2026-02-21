@@ -378,7 +378,7 @@ export const HistoryTableRow = forwardRef<
             }
 
             return (
-              <Badge variant="secondary" className="gap-1 text-xs">
+              <Badge variant="success" className="gap-1 text-xs">
                 <MonitorPlay className="h-3 w-3" />
                 {session.videoDecision === 'copy' || session.audioDecision === 'copy'
                   ? 'Direct Stream'

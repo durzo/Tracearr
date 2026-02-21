@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Link } from 'react-router';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -18,17 +18,29 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-// Custom marker icon for active sessions
-const activeSessionIcon = L.divIcon({
-  className: 'stream-marker',
-  html: `<div class="relative">
-    <div class="absolute -inset-1 animate-ping rounded-full bg-green-500/50"></div>
-    <div class="relative h-4 w-4 rounded-full bg-green-500 border-2 border-white shadow-lg"></div>
-  </div>`,
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
-  popupAnchor: [0, -10],
-});
+// Default green for active sessions
+const DEFAULT_MARKER_COLOR = '#22c55e';
+
+// Cache of created marker icons by color to avoid re-creating on each render
+const markerIconCache = new Map<string, L.DivIcon>();
+
+function getSessionIcon(color: string = DEFAULT_MARKER_COLOR): L.DivIcon {
+  const cached = markerIconCache.get(color);
+  if (cached) return cached;
+
+  const icon = L.divIcon({
+    className: 'stream-marker',
+    html: `<div class="relative">
+      <div class="absolute -inset-1 animate-ping rounded-full" style="background:${color}50"></div>
+      <div class="relative h-4 w-4 rounded-full border-2 border-white shadow-lg" style="background:${color}"></div>
+    </div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+    popupAnchor: [0, -10],
+  });
+  markerIconCache.set(color, icon);
+  return icon;
+}
 
 // Location marker icon
 const locationIcon = L.divIcon({
@@ -121,6 +133,8 @@ interface StreamCardProps {
   locations?: LocationStats[];
   className?: string;
   height?: number | string;
+  isMultiServer?: boolean;
+  serverColorMap?: Map<string, string | null>;
 }
 
 // Component to fit bounds when data changes
@@ -163,7 +177,55 @@ const TILE_URLS = {
   light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
 };
 
-export function StreamCard({ sessions, locations, className, height = 300 }: StreamCardProps) {
+// Legend overlay showing server names with color swatches
+function ServerLegend({
+  sessions,
+  serverColorMap,
+}: {
+  sessions?: ActiveSession[];
+  serverColorMap?: Map<string, string | null>;
+}) {
+  // Deduplicate servers from active sessions
+  const servers = useMemo(() => {
+    if (!sessions) return [];
+    const seen = new Map<string, string>();
+    for (const s of sessions) {
+      if (s.server && !seen.has(s.server.id)) {
+        seen.set(s.server.id, s.server.name);
+      }
+    }
+    return [...seen.entries()].map(([id, name]) => ({
+      id,
+      name,
+      color: serverColorMap?.get(id) ?? DEFAULT_MARKER_COLOR,
+    }));
+  }, [sessions, serverColorMap]);
+
+  if (servers.length < 2) return null;
+
+  return (
+    <div className="bg-card/90 border-border absolute right-2 bottom-2 z-10 rounded-md border px-2.5 py-1.5 text-xs shadow-sm backdrop-blur-sm">
+      {servers.map((server) => (
+        <div key={server.id} className="flex items-center gap-1.5 py-0.5">
+          <span
+            className="inline-block h-2 w-2 shrink-0 rounded-full"
+            style={{ backgroundColor: server.color }}
+          />
+          <span className="text-foreground">{server.name}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function StreamCard({
+  sessions,
+  locations,
+  className,
+  height = 300,
+  isMultiServer,
+  serverColorMap,
+}: StreamCardProps) {
   const hasData =
     sessions?.some((s) => s.geoLat && s.geoLon) || locations?.some((l) => l.lat && l.lon);
   const { theme } = useTheme();
@@ -199,12 +261,13 @@ export function StreamCard({ sessions, locations, className, height = 300 }: Str
 
           const avatarUrl = getAvatarUrl(session.serverId, session.user.thumbUrl, 32);
           const { primary: mediaTitle, secondary: mediaSubtitle } = formatMediaTitle(session);
+          const markerColor = serverColorMap?.get(session.server.id) ?? DEFAULT_MARKER_COLOR;
 
           return (
             <Marker
               key={session.id}
               position={[session.geoLat, session.geoLon]}
-              icon={activeSessionIcon}
+              icon={getSessionIcon(markerColor)}
             >
               <Popup>
                 <div className="text-foreground min-w-[180px] p-2.5">
@@ -299,6 +362,11 @@ export function StreamCard({ sessions, locations, className, height = 300 }: Str
         <div className="bg-background/50 absolute inset-0 flex items-center justify-center">
           <p className="text-muted-foreground text-sm">No location data available</p>
         </div>
+      )}
+
+      {/* Server legend for multi-server mode */}
+      {isMultiServer && hasData && (
+        <ServerLegend sessions={sessions} serverColorMap={serverColorMap} />
       )}
     </div>
   );

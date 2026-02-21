@@ -661,6 +661,33 @@ export function formatAudioChannels(channels: number | null | undefined): string
   return `${channels}ch`;
 }
 
+// Server color palette (40-60% HSL lightness, visible on both dark and light backgrounds)
+export const SERVER_COLOR_PALETTE = [
+  { hex: '#E5A00D', label: 'Gold' }, // Plex brand
+  { hex: '#AA5CC3', label: 'Purple' }, // Jellyfin brand
+  { hex: '#52B54B', label: 'Green' }, // Emby brand
+  { hex: '#3B82F6', label: 'Blue' },
+  { hex: '#EF4444', label: 'Red' },
+  { hex: '#14B8A6', label: 'Teal' },
+] as const;
+
+export const SERVER_TYPE_BRAND_COLORS: Record<string, string> = {
+  plex: '#E5A00D',
+  jellyfin: '#AA5CC3',
+  emby: '#52B54B',
+};
+
+/** Pick best color for a server given its type and colors already used by other servers */
+export function pickServerColor(type: string, usedColors: (string | null | undefined)[]): string {
+  const used = new Set(usedColors.filter(Boolean).map((c) => c!.toLowerCase()));
+  const brand = SERVER_TYPE_BRAND_COLORS[type] ?? '#3B82F6';
+  if (!used.has(brand.toLowerCase())) return brand;
+  for (const preset of SERVER_COLOR_PALETTE) {
+    if (!used.has(preset.hex.toLowerCase())) return preset.hex;
+  }
+  return brand; // all taken, duplicate is fine
+}
+
 // Time constants in milliseconds (avoid magic numbers)
 export const TIME_MS = {
   SECOND: 1000,

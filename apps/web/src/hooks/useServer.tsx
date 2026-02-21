@@ -12,17 +12,27 @@ import type { Server } from '@tracearr/shared';
 import { api } from '@/lib/api';
 import { useAuth } from './useAuth';
 
-// Local storage key for persisting selected server
-const SELECTED_SERVER_KEY = 'tracearr_selected_server';
+// Local storage keys
+const SELECTED_SERVERS_KEY = 'tracearr_selected_servers';
+const LEGACY_SELECTED_SERVER_KEY = 'tracearr_selected_server';
 
 interface ServerContextValue {
   servers: Server[];
-  selectedServer: Server | null;
-  selectedServerId: string | null;
+  selectedServerIds: string[];
+  selectedServers: Server[];
+  isMultiServer: boolean;
+  isAllServersSelected: boolean;
   isLoading: boolean;
   isFetching: boolean;
-  selectServer: (serverId: string) => void;
+  toggleServer: (serverId: string) => void;
+  selectAllServers: () => void;
+  deselectAllExcept: (serverId: string) => void;
   refetch: () => Promise<unknown>;
+
+  // Backward compat (for pages not yet migrated to multi-select)
+  selectedServerId: string | null;
+  selectedServer: Server | null;
+  selectServer: (serverId: string) => void;
 }
 
 const ServerContext = createContext<ServerContextValue | null>(null);
@@ -30,9 +40,17 @@ const ServerContext = createContext<ServerContextValue | null>(null);
 export function ServerProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated, user } = useAuth();
   const queryClient = useQueryClient();
-  const [selectedServerId, setSelectedServerId] = useState<string | null>(() => {
-    // Initialize from localStorage
-    return localStorage.getItem(SELECTED_SERVER_KEY);
+
+  const [selectedServerIds, setSelectedServerIds] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem(SELECTED_SERVERS_KEY);
+      if (stored) return JSON.parse(stored) as string[];
+    } catch {
+      /* ignore parse errors */
+    }
+    // Fall back to legacy single-server key
+    const legacy = localStorage.getItem(LEGACY_SELECTED_SERVER_KEY);
+    return legacy ? [legacy] : [];
   });
 
   // Fetch available servers (only when authenticated)
@@ -55,61 +73,100 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     return servers.filter((s) => user.serverIds.includes(s.id));
   }, [servers, user]);
 
-  // Validate and auto-select server when servers load
+  // Validate selection when servers load
   useEffect(() => {
-    // Don't do anything while still loading servers or waiting for user data
-    // This prevents clearing selection before we have the full picture
-    if (isLoading || !user) {
-      return;
-    }
+    if (isLoading || !user) return;
 
     if (accessibleServers.length === 0) {
-      // No servers available after loading, clear selection
-      if (selectedServerId) {
-        setSelectedServerId(null);
-        localStorage.removeItem(SELECTED_SERVER_KEY);
+      if (selectedServerIds.length > 0) {
+        setSelectedServerIds([]);
+        localStorage.removeItem(SELECTED_SERVERS_KEY);
+        localStorage.removeItem(LEGACY_SELECTED_SERVER_KEY);
       }
       return;
     }
 
-    // If selected server is not in accessible list, select first available
-    const currentServerValid =
-      selectedServerId && accessibleServers.some((s) => s.id === selectedServerId);
-    if (!currentServerValid) {
-      const firstServer = accessibleServers[0];
-      if (firstServer) {
-        setSelectedServerId(firstServer.id);
-        localStorage.setItem(SELECTED_SERVER_KEY, firstServer.id);
-      }
+    // Remove any IDs not in accessible servers
+    const accessibleIds = new Set(accessibleServers.map((s) => s.id));
+    const validated = selectedServerIds.filter((id) => accessibleIds.has(id));
+
+    // If result is empty, select all accessible servers (default)
+    const next = validated.length > 0 ? validated : accessibleServers.map((s) => s.id);
+
+    if (
+      next.length !== selectedServerIds.length ||
+      next.some((id, i) => id !== selectedServerIds[i])
+    ) {
+      setSelectedServerIds(next);
+      localStorage.setItem(SELECTED_SERVERS_KEY, JSON.stringify(next));
     }
-  }, [accessibleServers, selectedServerId, isLoading, user]);
+  }, [accessibleServers, selectedServerIds, isLoading, user]);
 
   // Clear selection on logout
   useEffect(() => {
     if (!isAuthenticated) {
-      setSelectedServerId(null);
-      localStorage.removeItem(SELECTED_SERVER_KEY);
+      setSelectedServerIds([]);
+      localStorage.removeItem(SELECTED_SERVERS_KEY);
+      localStorage.removeItem(LEGACY_SELECTED_SERVER_KEY);
     }
   }, [isAuthenticated]);
 
-  const selectServer = useCallback(
+  const invalidateServerQueries = useCallback(() => {
+    void queryClient.invalidateQueries({
+      predicate: (query) => query.queryKey[0] !== 'servers',
+    });
+  }, [queryClient]);
+
+  const toggleServer = useCallback(
     (serverId: string) => {
-      setSelectedServerId(serverId);
-      localStorage.setItem(SELECTED_SERVER_KEY, serverId);
-      // Invalidate server-dependent queries to force refetch with new server context
-      // We exclude 'servers' query as that's not server-dependent
-      void queryClient.invalidateQueries({
-        predicate: (query) => {
-          const key = query.queryKey[0];
-          // Keep server list, invalidate everything else that may be server-specific
-          return key !== 'servers';
-        },
+      setSelectedServerIds((prev) => {
+        const next = prev.includes(serverId)
+          ? prev.filter((id) => id !== serverId)
+          : [...prev, serverId];
+        // Prevent empty selection
+        if (next.length === 0) return prev;
+        localStorage.setItem(SELECTED_SERVERS_KEY, JSON.stringify(next));
+        return next;
       });
+      invalidateServerQueries();
     },
-    [queryClient]
+    [invalidateServerQueries]
   );
 
-  // Get the full server object for the selected ID
+  const selectAllServers = useCallback(() => {
+    const allIds = accessibleServers.map((s) => s.id);
+    setSelectedServerIds(allIds);
+    localStorage.setItem(SELECTED_SERVERS_KEY, JSON.stringify(allIds));
+    invalidateServerQueries();
+  }, [accessibleServers, invalidateServerQueries]);
+
+  const deselectAllExcept = useCallback(
+    (serverId: string) => {
+      setSelectedServerIds([serverId]);
+      localStorage.setItem(SELECTED_SERVERS_KEY, JSON.stringify([serverId]));
+      invalidateServerQueries();
+    },
+    [invalidateServerQueries]
+  );
+
+  // Backward compat: selectServer sets single selection
+  const selectServer = useCallback(
+    (serverId: string) => {
+      deselectAllExcept(serverId);
+    },
+    [deselectAllExcept]
+  );
+
+  // Computed values
+  const isMultiServer = selectedServerIds.length > 1;
+  const isAllServersSelected = selectedServerIds.length === accessibleServers.length;
+  const selectedServers = useMemo(
+    () => accessibleServers.filter((s) => selectedServerIds.includes(s.id)),
+    [accessibleServers, selectedServerIds]
+  );
+
+  // Backward compat
+  const selectedServerId = selectedServerIds.length === 1 ? (selectedServerIds[0] ?? null) : null;
   const selectedServer = useMemo(() => {
     if (!selectedServerId) return null;
     return accessibleServers.find((s) => s.id === selectedServerId) ?? null;
@@ -118,21 +175,36 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   const value = useMemo<ServerContextValue>(
     () => ({
       servers: accessibleServers,
-      selectedServer,
-      selectedServerId,
+      selectedServerIds,
+      selectedServers,
+      isMultiServer,
+      isAllServersSelected,
       isLoading,
       isFetching,
-      selectServer,
+      toggleServer,
+      selectAllServers,
+      deselectAllExcept,
       refetch,
+      // Backward compat
+      selectedServerId,
+      selectedServer,
+      selectServer,
     }),
     [
       accessibleServers,
-      selectedServer,
-      selectedServerId,
+      selectedServerIds,
+      selectedServers,
+      isMultiServer,
+      isAllServersSelected,
       isLoading,
       isFetching,
-      selectServer,
+      toggleServer,
+      selectAllServers,
+      deselectAllExcept,
       refetch,
+      selectedServerId,
+      selectedServer,
+      selectServer,
     ]
   );
 
@@ -147,7 +219,13 @@ export function useServer(): ServerContextValue {
   return context;
 }
 
-// Convenience hook to get just the selected server ID (common use case)
+// Convenience hook to get just the selected server IDs
+export function useSelectedServerIds(): string[] {
+  const { selectedServerIds } = useServer();
+  return selectedServerIds;
+}
+
+// Backward compat convenience hook
 export function useSelectedServerId(): string | null {
   const { selectedServerId } = useServer();
   return selectedServerId;

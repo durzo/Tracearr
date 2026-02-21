@@ -516,7 +516,10 @@ class ApiClient {
     },
     create: (data: { name: string; type: string; url: string; token: string }) =>
       this.request<Server>('/servers', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id: string, data: { name?: string; url?: string; clientIdentifier?: string }) =>
+    update: (
+      id: string,
+      data: { name?: string; url?: string; clientIdentifier?: string; color?: string | null }
+    ) =>
       this.request<Server>(`/servers/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(
@@ -524,6 +527,7 @@ class ApiClient {
             name?: string;
             url?: string;
             clientIdentifier?: string;
+            color?: string | null;
           }
         ),
       }),
@@ -713,9 +717,13 @@ class ApiClient {
     rulesFilterOptions: () => {
       return this.request<RulesFilterOptions>('/sessions/filter-options?includeAllCountries=true');
     },
-    getActive: async (serverId?: string) => {
+    getActive: async (serverIds?: string[]) => {
       const params = new URLSearchParams();
-      if (serverId) params.set('serverId', serverId);
+      if (serverIds?.length) {
+        for (const id of serverIds) {
+          params.append('serverIds', id);
+        }
+      }
       const query = params.toString();
       const response = await this.request<{ data: ActiveSession[] }>(
         `/sessions/active${query ? `?${query}` : ''}`
@@ -841,9 +849,13 @@ class ApiClient {
   }
 
   stats = {
-    dashboard: (serverId?: string) => {
+    dashboard: (serverIds?: string[]) => {
       const params = new URLSearchParams();
-      if (serverId) params.set('serverId', serverId);
+      if (serverIds?.length) {
+        for (const id of serverIds) {
+          params.append('serverIds', id);
+        }
+      }
       // Include timezone so "today" is calculated in user's local timezone
       params.set('timezone', getBrowserTimezone());
       return this.request<DashboardStats>(`/stats/dashboard?${params.toString()}`);

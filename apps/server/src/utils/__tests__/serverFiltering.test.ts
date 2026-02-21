@@ -16,6 +16,7 @@ import {
   buildServerFilterCondition,
   filterByServerAccess,
   hasServerAccess,
+  resolveServerIds,
   validateServerAccess,
 } from '../serverFiltering.js';
 import type { Column } from 'drizzle-orm';
@@ -159,6 +160,57 @@ describe('buildServerAccessCondition', () => {
     const result = buildServerAccessCondition(adminUserMultiServer, mockServerIdColumn);
     expect(result).toBeDefined();
     // Multiple servers should use inArray()
+  });
+});
+
+const memberUser: AuthUser = {
+  userId: 'member-1',
+  username: 'member',
+  role: 'member',
+  serverIds: ['server-1', 'server-2', 'server-3'],
+};
+
+describe('resolveServerIds', () => {
+  it('returns undefined for owner with no filter (all servers)', () => {
+    expect(resolveServerIds(ownerUser, undefined, undefined)).toBeUndefined();
+  });
+
+  it('returns single serverId when legacy param is used', () => {
+    expect(resolveServerIds(ownerUser, 'server-1', undefined)).toEqual(['server-1']);
+  });
+
+  it('returns serverIds array when provided', () => {
+    expect(resolveServerIds(ownerUser, undefined, ['server-1', 'server-2'])).toEqual([
+      'server-1',
+      'server-2',
+    ]);
+  });
+
+  it('serverIds takes precedence over serverId', () => {
+    expect(resolveServerIds(ownerUser, 'server-1', ['server-2', 'server-3'])).toEqual([
+      'server-2',
+      'server-3',
+    ]);
+  });
+
+  it('intersects with member accessible servers', () => {
+    expect(resolveServerIds(memberUser, undefined, ['server-1', 'server-d'])).toEqual(['server-1']);
+  });
+
+  it('returns member accessible servers when no filter', () => {
+    expect(resolveServerIds(memberUser, undefined, undefined)).toEqual([
+      'server-1',
+      'server-2',
+      'server-3',
+    ]);
+  });
+
+  it('returns empty array when member requests inaccessible server', () => {
+    expect(resolveServerIds(memberUser, undefined, ['server-d'])).toEqual([]);
+  });
+
+  it('validates single serverId access for member', () => {
+    expect(resolveServerIds(memberUser, 'server-d', undefined)).toEqual([]);
   });
 });
 

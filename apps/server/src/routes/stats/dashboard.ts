@@ -5,7 +5,7 @@
  */
 
 import type { FastifyPluginAsync } from 'fastify';
-import { eq, gte, sql, and, inArray } from 'drizzle-orm';
+import { gte, sql, and, inArray } from 'drizzle-orm';
 import { REDIS_KEYS, TIME_MS, type DashboardStats, dashboardQuerySchema } from '@tracearr/shared';
 import { db } from '../../db/client.js';
 import { sessions } from '../../db/schema.js';
@@ -16,10 +16,9 @@ import {
   uniqueUsersSince,
 } from '../../db/prepared.js';
 import {
-  filterByServerAccess,
-  validateServerAccess,
-  buildServerAccessCondition,
-  buildServerFilterFragment,
+  resolveServerIds,
+  buildMultiServerCondition,
+  buildMultiServerFragment,
 } from '../../utils/serverFiltering.js';
 import { getCacheService } from '../../services/cache.js';
 import { getStartOfDayInTimezone } from './utils.js';
@@ -38,23 +37,16 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('Invalid query parameters');
     }
 
-    const { serverId, timezone } = query.data;
+    const { serverId: legacyServerId, serverIds: rawServerIds, timezone } = query.data;
     const authUser = request.user;
     // Default to UTC for backwards compatibility
     const tz = timezone ?? 'UTC';
 
-    // Validate server access if specific server requested
-    if (serverId) {
-      const error = validateServerAccess(authUser, serverId);
-      if (error) {
-        return reply.forbidden(error);
-      }
-    }
+    const resolvedIds = resolveServerIds(authUser, legacyServerId, rawServerIds);
 
-    // Build cache key (includes server and timezone for correct caching)
-    const cacheKey = serverId
-      ? `${REDIS_KEYS.DASHBOARD_STATS}:${serverId}:${tz}`
-      : `${REDIS_KEYS.DASHBOARD_STATS}:${tz}`;
+    // Build cache key (includes server IDs and timezone for correct caching)
+    const cacheKeySegment = resolvedIds === undefined ? 'all' : resolvedIds.sort().join(',');
+    const cacheKey = `${REDIS_KEYS.DASHBOARD_STATS}:${cacheKeySegment}:${tz}`;
 
     // Try cache first
     const cached = await app.redis.get(cacheKey);
@@ -72,12 +64,11 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     if (cacheService) {
       try {
         let activeSessions = await cacheService.getAllActiveSessions();
-        // Filter by user's accessible servers
-        activeSessions = filterByServerAccess(activeSessions, authUser);
-        // If specific server requested, filter further
-        if (serverId) {
-          activeSessions = activeSessions.filter((s) => s.serverId === serverId);
+        if (resolvedIds !== undefined) {
+          const idSet = new Set(resolvedIds);
+          activeSessions = activeSessions.filter((s) => idSet.has(s.serverId));
         }
+        // else: owner with no filter, keep all
         activeStreams = activeSessions.length;
       } catch {
         // Ignore cache errors - activeStreams stays 0
@@ -98,7 +89,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
 
     const MIN_PLAY_DURATION_MS = 120000;
 
-    if (!serverId && authUser.role === 'owner') {
+    if (resolvedIds === undefined && authUser.role === 'owner') {
       const [
         todayPlaysResult,
         watchTimeResult,
@@ -134,22 +125,16 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
           inArray(sessions.mediaType, PRIMARY_MEDIA_TYPES),
         ];
 
-        if (serverId) {
-          // Specific server requested
-          conditions.push(eq(sessions.serverId, serverId));
-        } else if (authUser.role !== 'owner') {
-          // Non-owner needs server access filter
-          const serverCondition = buildServerAccessCondition(authUser, sessions.serverId);
-          if (serverCondition) {
-            conditions.push(serverCondition);
-          }
+        const serverCondition = buildMultiServerCondition(resolvedIds, sessions.serverId);
+        if (serverCondition) {
+          conditions.push(serverCondition);
         }
 
         return conditions;
       };
 
-      const violationServerFilter = buildServerFilterFragment(serverId, authUser, 'su.server_id');
-      const sessionServerFilter = buildServerFilterFragment(serverId, authUser);
+      const violationServerFilter = buildMultiServerFragment(resolvedIds, 'su.server_id');
+      const sessionServerFilter = buildMultiServerFragment(resolvedIds);
 
       // Execute dynamic queries in parallel
       const [

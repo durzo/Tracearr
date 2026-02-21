@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Play, Clock, AlertTriangle, Tv, MapPin, Calendar, Users, Activity } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,23 +14,38 @@ import type { ActiveSession } from '@tracearr/shared';
 
 export function Dashboard() {
   const { t } = useTranslation(['pages', 'common']);
-  const { selectedServerId, selectedServer } = useServer();
-  const { data: stats, isLoading: statsLoading } = useDashboardStats(selectedServerId);
-  const { data: sessions } = useActiveSessions(selectedServerId);
+  const { selectedServerIds, selectedServers, isMultiServer, selectedServerId } = useServer();
+  const { data: stats, isLoading: statsLoading } = useDashboardStats(selectedServerIds);
+  const { data: sessions } = useActiveSessions(selectedServerIds);
 
   // Session detail sheet state
   const [selectedSession, setSelectedSession] = useState<ActiveSession | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  // Only show server resource stats for Plex servers
-  const isPlexServer = selectedServer?.type === 'plex';
+  // Build server color map for multi-server attribution
+  const serverColorMap = useMemo(
+    () => new Map(selectedServers.map((s) => [s.id, s.color ?? null])),
+    [selectedServers]
+  );
 
-  // Poll server statistics only when viewing a Plex server
+  // Sort sessions by server display order so cards group by server
+  const sortedSessions = useMemo(() => {
+    if (!sessions) return undefined;
+    const orderMap = new Map(selectedServers.map((s) => [s.id, s.displayOrder ?? 0]));
+    return [...sessions].sort(
+      (a, b) => (orderMap.get(a.serverId) ?? 0) - (orderMap.get(b.serverId) ?? 0)
+    );
+  }, [sessions, selectedServers]);
+
+  // Only show server resource stats for a single Plex server
+  const showServerResources = !isMultiServer && selectedServers[0]?.type === 'plex';
+
+  // Poll server statistics only when viewing a single Plex server
   const {
     data: serverStats,
     isLoading: statsChartLoading,
     averages,
-  } = useServerStatistics(selectedServerId ?? undefined, isPlexServer);
+  } = useServerStatistics(selectedServerId ?? undefined, showServerResources);
 
   const activeCount = sessions?.length ?? 0;
   const hasActiveStreams = activeCount > 0;
@@ -92,7 +107,7 @@ export function Dashboard() {
           )}
         </div>
 
-        {!sessions || sessions.length === 0 ? (
+        {!sortedSessions || sortedSessions.length === 0 ? (
           <Card className="border-dashed">
             <CardContent className="flex flex-col items-center justify-center py-12">
               <div className="bg-muted rounded-full p-4">
@@ -106,10 +121,12 @@ export function Dashboard() {
           </Card>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {sessions.map((session) => (
+            {sortedSessions.map((session) => (
               <NowPlayingCard
                 key={session.id}
                 session={session}
+                isMultiServer={isMultiServer}
+                serverColor={serverColorMap.get(session.server.id)}
                 onClick={() => {
                   setSelectedSession(session);
                   setSheetOpen(true);
@@ -128,13 +145,18 @@ export function Dashboard() {
             <h2 className="text-lg font-semibold">{t('dashboard.streamLocations')}</h2>
           </div>
           <Card className="overflow-hidden">
-            <StreamCard sessions={sessions} height={320} />
+            <StreamCard
+              sessions={sessions}
+              height={320}
+              isMultiServer={isMultiServer}
+              serverColorMap={serverColorMap}
+            />
           </Card>
         </section>
       )}
 
-      {/* Server Resource Stats (Plex only) */}
-      {isPlexServer && (
+      {/* Server Resource Stats (single Plex server only) */}
+      {showServerResources && (
         <section>
           <div className="mb-4 flex items-center gap-2">
             <Activity className="text-primary h-5 w-5" />

@@ -33,6 +33,7 @@ import {
   Pencil,
   GripVertical,
   Link2,
+  Check,
 } from 'lucide-react';
 import { MediaServerIcon } from '@/components/icons/MediaServerIcon';
 import { format } from 'date-fns';
@@ -43,6 +44,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { PlexServerSelector } from '@/components/auth/PlexServerSelector';
 import { PlexAccountsManager } from '@/components/settings/PlexAccountsManager';
+import { SERVER_COLOR_PALETTE, pickServerColor } from '@tracearr/shared';
 import type { Server } from '@tracearr/shared';
 import {
   useServers,
@@ -706,13 +708,14 @@ export function ServerSettings() {
       {/* Edit Server Dialog */}
       <EditServerDialog
         server={editServer}
+        servers={servers}
         onClose={() => {
           setEditServer(null);
         }}
-        onUpdate={(name, url, clientIdentifier) => {
+        onUpdate={(name, url, clientIdentifier, color) => {
           if (editServer) {
             updateServer.mutate(
-              { id: editServer.id, name, url, clientIdentifier },
+              { id: editServer.id, name, url, clientIdentifier, color },
               {
                 onSuccess: () => {
                   setEditServer(null);
@@ -733,17 +736,20 @@ export function ServerSettings() {
  */
 function EditServerDialog({
   server,
+  servers,
   onClose,
   onUpdate,
   isUpdating,
 }: {
   server: Server | null;
+  servers: Server[];
   onClose: () => void;
-  onUpdate: (name?: string, url?: string, clientIdentifier?: string) => void;
+  onUpdate: (name?: string, url?: string, clientIdentifier?: string, color?: string | null) => void;
   isUpdating: boolean;
 }) {
   const [editName, setEditName] = useState('');
   const [manualUrl, setManualUrl] = useState('');
+  const [editColor, setEditColor] = useState('#3b82f6');
   const isPlexServer = server?.type === 'plex';
 
   // Fetch connections for Plex servers
@@ -756,21 +762,27 @@ function EditServerDialog({
     if (server) {
       setEditName(server.name);
       setManualUrl(server.url);
+      const otherColors = servers.filter((s) => s.id !== server.id).map((s) => s.color);
+      setEditColor(server.color ?? pickServerColor(server.type, otherColors));
     }
-  }, [server]);
+  }, [server, servers]);
 
   const handlePlexSelect = (uri: string, _name: string, clientIdentifier: string) => {
-    onUpdate(editName !== server?.name ? editName : undefined, uri, clientIdentifier);
+    const colorChanged = editColor !== (server?.color ?? '') ? editColor : undefined;
+    onUpdate(editName !== server?.name ? editName : undefined, uri, clientIdentifier, colorChanged);
   };
 
   const hasNameChange = server ? editName.trim() !== server.name : false;
   const hasUrlChange = server ? manualUrl.trim() !== server.url : false;
-  const canSave = (hasNameChange || hasUrlChange) && editName.trim().length > 0;
+  const hasColorChange = server ? editColor !== (server.color ?? '') : false;
+  const canSave = (hasNameChange || hasUrlChange || hasColorChange) && editName.trim().length > 0;
 
   const handleSave = () => {
     onUpdate(
       hasNameChange ? editName.trim() : undefined,
-      hasUrlChange ? manualUrl.trim() : undefined
+      hasUrlChange ? manualUrl.trim() : undefined,
+      undefined,
+      hasColorChange ? editColor : undefined
     );
   };
 
@@ -847,6 +859,42 @@ function EditServerDialog({
               />
             </div>
           )}
+
+          {/* Color picker */}
+          <div className="space-y-2">
+            <Label>Server Color</Label>
+            <div className="flex items-center gap-2">
+              {SERVER_COLOR_PALETTE.map((preset) => {
+                const isSelected = editColor.toLowerCase() === preset.hex.toLowerCase();
+                return (
+                  <button
+                    key={preset.hex}
+                    type="button"
+                    onClick={() => setEditColor(preset.hex)}
+                    className={cn(
+                      'relative h-8 w-8 rounded-full transition-transform',
+                      'hover:scale-110',
+                      isSelected && 'ring-offset-background scale-110 ring-2 ring-offset-2'
+                    )}
+                    style={{
+                      backgroundColor: preset.hex,
+                      ['--tw-ring-color' as string]: isSelected ? preset.hex : undefined,
+                    }}
+                    title={preset.label}
+                  >
+                    {isSelected && (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <Check className="h-4 w-4 text-white drop-shadow-md" />
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-muted-foreground text-xs">
+              Used for visual attribution in multi-server view
+            </p>
+          </div>
         </div>
 
         <DialogFooter>
@@ -900,8 +948,10 @@ function SortableServerCard({
       <div
         className={cn(
           'flex items-center justify-between rounded-lg border p-4',
+          server.color && 'border-l-4',
           isDragging && 'ring-primary ring-2'
         )}
+        style={server.color ? { borderLeftColor: server.color } : undefined}
       >
         <div className="flex items-center gap-4">
           {isDraggable && (
