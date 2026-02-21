@@ -4,8 +4,8 @@ contact_links:
   url: https://github.com/connorgallopo/Tracearr/discussions/categories/feature-requests
   about: Suggest new features or enhancements in Discussions
 - name: Documentation
-  url: https://github.com/connorgallopo/tracearr#readme
-  about: Check the README for setup guides and common questions
+  url: https://docs.tracearr.com
+  about: Check the docs for setup guides and common questions
 - name: Discord Community
   url: https://discord.gg/a7n3sFd2Yw
   about: Get help from the community or discuss ideas
