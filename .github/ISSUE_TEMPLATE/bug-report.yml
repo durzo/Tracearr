@@ -1,5 +1,5 @@
-name: Bug Report
-description: Report a bug to help us improve Tracearr
+name: Tracearr Bug Report
+description: Report a bug with Tracearr
 title: "[Bug]: "
 labels: [ "bug", "needs-triage" ]
 body:
@@ -7,6 +7,8 @@ body:
   attributes:
     value: |
       Fill out the form below so we can track down and fix this.
+
+      **For mobile app bugs**, please use the **Mobile App Bug** template instead.
 
       **Before submitting:** Search [existing issues](https://github.com/connorgallopo/tracearr/issues) first.
 
@@ -67,8 +69,6 @@ body:
     description: Which part of Tracearr is affected?
     options:
     - Web Dashboard
-    - Mobile App (iOS)
-    - Mobile App (Android)
     - Server/Backend
     - Notifications (Discord, webhooks, etc.)
     - Rules/Violations
@@ -154,4 +154,6 @@ body:
     - label: Version number filled in above
       required: true
     - label: Docker compose/run command included (if applicable)
+      required: true
+    - label: I have searched the docs at https://docs.tracearr.com
       required: true

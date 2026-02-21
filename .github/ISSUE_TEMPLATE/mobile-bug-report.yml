@@ -1,0 +1,128 @@
+name: Mobile App Bug Report
+description: Report a bug with the Tracearr iOS or Android mobile app
+title: "[Mobile Bug]: "
+labels: [ "bug", "mobile", "needs-triage" ]
+body:
+- type: markdown
+  attributes:
+    value: |
+      Fill out the form below so we can track down and fix this.
+
+      **For server or web dashboard bugs**, please use the **Tracearr Bug Report** template instead.
+
+      **Before submitting:** Search [existing issues](https://github.com/connorgallopo/tracearr/issues) first.
+
+- type: dropdown
+  id: platform
+  attributes:
+    label: Platform
+    description: Which platform are you using?
+    options:
+    - iOS
+    - Android
+  validations:
+    required: true
+
+- type: input
+  id: app_version
+  attributes:
+    label: App Version
+    description: "Find this in the mobile app settings"
+    placeholder: "e.g., 1.0.0 (build 42)"
+  validations:
+    required: true
+
+- type: input
+  id: device
+  attributes:
+    label: Device & OS Version
+    description: "Your device model and operating system version"
+    placeholder: "e.g., iPhone 15 Pro - iOS 18.2, Pixel 8 - Android 15"
+  validations:
+    required: true
+
+- type: input
+  id: server_version
+  attributes:
+    label: Tracearr Server Version
+    description: "The version of your Tracearr server (find this at the bottom of the web dashboard navigation)"
+    placeholder: "e.g., v1.4.0"
+  validations:
+    required: true
+
+- type: dropdown
+  id: affected_area
+  attributes:
+    label: Affected Area
+    description: Which part of the mobile app is affected?
+    options:
+    - Dashboard / Home Screen
+    - Session Details
+    - Library / Media Browsing
+    - Notifications / Push Alerts
+    - Settings / Configuration
+    - Login / Authentication
+    - Connection to Server
+    - Other (specify below)
+  validations:
+    required: true
+
+- type: textarea
+  id: description
+  attributes:
+    label: Bug Description
+    description: What went wrong? Be as specific as possible.
+    placeholder: "Describe the bug clearly..."
+  validations:
+    required: true
+
+- type: textarea
+  id: reproduction
+  attributes:
+    label: Steps to Reproduce
+    description: How can we reproduce this issue?
+    placeholder: |
+      1. Open the app
+      2. Navigate to '...'
+      3. Tap on '...'
+      4. See error
+  validations:
+    required: true
+
+- type: textarea
+  id: screenshots
+  attributes:
+    label: Screenshots / Screen Recording
+    description: "If possible, attach screenshots or a screen recording showing the issue"
+
+- type: dropdown
+  id: previously_worked
+  attributes:
+    label: Was this working before?
+    description: Did this functionality work previously?
+    options:
+    - "No, this is my first time using the app"
+    - "Yes, it stopped working after an app update"
+    - "Yes, it stopped working after a server update"
+    - "Yes, it stopped working without any changes"
+    - "Not sure"
+
+- type: textarea
+  id: additional
+  attributes:
+    label: Additional Context
+    description: "Network conditions (Wi-Fi/cellular), related issues, anything else that might help"
+
+- type: checkboxes
+  id: checklist
+  attributes:
+    label: Checklist
+    options:
+    - label: This isn't a duplicate of an existing issue
+      required: true
+    - label: App and server version numbers filled in above
+      required: true
+    - label: I have searched existing issues for similar reports
+      required: true
+    - label: I have searched the docs at https://docs.tracearr.com
+      required: true
