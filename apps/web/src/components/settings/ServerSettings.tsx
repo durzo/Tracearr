@@ -33,6 +33,7 @@ import {
   Pencil,
   GripVertical,
   Link2,
+  Check,
 } from 'lucide-react';
 import { MediaServerIcon } from '@/components/icons/MediaServerIcon';
 import { format } from 'date-fns';
@@ -43,6 +44,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { PlexServerSelector } from '@/components/auth/PlexServerSelector';
 import { PlexAccountsManager } from '@/components/settings/PlexAccountsManager';
+import { SERVER_COLOR_PALETTE, pickServerColor } from '@tracearr/shared';
 import type { Server } from '@tracearr/shared';
 import {
   useServers,
@@ -706,6 +708,7 @@ export function ServerSettings() {
       {/* Edit Server Dialog */}
       <EditServerDialog
         server={editServer}
+        servers={servers}
         onClose={() => {
           setEditServer(null);
         }}
@@ -733,11 +736,13 @@ export function ServerSettings() {
  */
 function EditServerDialog({
   server,
+  servers,
   onClose,
   onUpdate,
   isUpdating,
 }: {
   server: Server | null;
+  servers: Server[];
   onClose: () => void;
   onUpdate: (name?: string, url?: string, clientIdentifier?: string, color?: string | null) => void;
   isUpdating: boolean;
@@ -757,18 +762,19 @@ function EditServerDialog({
     if (server) {
       setEditName(server.name);
       setManualUrl(server.url);
-      setEditColor(server.color ?? '#3b82f6');
+      const otherColors = servers.filter((s) => s.id !== server.id).map((s) => s.color);
+      setEditColor(server.color ?? pickServerColor(server.type, otherColors));
     }
-  }, [server]);
+  }, [server, servers]);
 
   const handlePlexSelect = (uri: string, _name: string, clientIdentifier: string) => {
-    const colorChanged = editColor !== (server?.color ?? '#3b82f6') ? editColor : undefined;
+    const colorChanged = editColor !== (server?.color ?? '') ? editColor : undefined;
     onUpdate(editName !== server?.name ? editName : undefined, uri, clientIdentifier, colorChanged);
   };
 
   const hasNameChange = server ? editName.trim() !== server.name : false;
   const hasUrlChange = server ? manualUrl.trim() !== server.url : false;
-  const hasColorChange = server ? editColor !== (server.color ?? '#3b82f6') : false;
+  const hasColorChange = server ? editColor !== (server.color ?? '') : false;
   const canSave = (hasNameChange || hasUrlChange || hasColorChange) && editName.trim().length > 0;
 
   const handleSave = () => {
@@ -856,16 +862,34 @@ function EditServerDialog({
 
           {/* Color picker */}
           <div className="space-y-2">
-            <Label htmlFor="edit-color">Server Color</Label>
-            <div className="flex items-center gap-3">
-              <input
-                type="color"
-                id="edit-color"
-                value={editColor}
-                onChange={(e) => setEditColor(e.target.value)}
-                className="h-9 w-9 cursor-pointer rounded-md border p-0.5"
-              />
-              <span className="text-muted-foreground text-sm">{editColor}</span>
+            <Label>Server Color</Label>
+            <div className="flex items-center gap-2">
+              {SERVER_COLOR_PALETTE.map((preset) => {
+                const isSelected = editColor.toLowerCase() === preset.hex.toLowerCase();
+                return (
+                  <button
+                    key={preset.hex}
+                    type="button"
+                    onClick={() => setEditColor(preset.hex)}
+                    className={cn(
+                      'relative h-8 w-8 rounded-full transition-transform',
+                      'hover:scale-110',
+                      isSelected && 'ring-offset-background scale-110 ring-2 ring-offset-2'
+                    )}
+                    style={{
+                      backgroundColor: preset.hex,
+                      ['--tw-ring-color' as string]: isSelected ? preset.hex : undefined,
+                    }}
+                    title={preset.label}
+                  >
+                    {isSelected && (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <Check className="h-4 w-4 text-white drop-shadow-md" />
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
             </div>
             <p className="text-muted-foreground text-xs">
               Used for visual attribution in multi-server view
@@ -924,8 +948,10 @@ function SortableServerCard({
       <div
         className={cn(
           'flex items-center justify-between rounded-lg border p-4',
+          server.color && 'border-l-4',
           isDragging && 'ring-primary ring-2'
         )}
+        style={server.color ? { borderLeftColor: server.color } : undefined}
       >
         <div className="flex items-center gap-4">
           {isDraggable && (
@@ -942,12 +968,6 @@ function SortableServerCard({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              {server.color && (
-                <span
-                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: server.color }}
-                />
-              )}
               <h3 className="font-semibold">{server.name}</h3>
               <button onClick={onEdit} className="hover:text-primary" title="Edit server">
                 <Pencil className="h-3 w-3" />
