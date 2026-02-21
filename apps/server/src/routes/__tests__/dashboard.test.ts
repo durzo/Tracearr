@@ -138,8 +138,8 @@ describe('Dashboard Stats Routes', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
       expect(body).toEqual(cachedStats);
-      // Cache key now includes timezone (defaults to UTC)
-      expect(redisMock.get).toHaveBeenCalledWith(`${REDIS_KEYS.DASHBOARD_STATS}:UTC`);
+      // Cache key includes server segment ('all' for owner with no filter) and timezone
+      expect(redisMock.get).toHaveBeenCalledWith(`${REDIS_KEYS.DASHBOARD_STATS}:all:UTC`);
       // Should not call database when cache hit
       expect(playsCountSince.execute).not.toHaveBeenCalled();
     });
@@ -174,9 +174,9 @@ describe('Dashboard Stats Routes', () => {
       expect(body.activeUsersToday).toBe(6);
       expect(body.activeStreams).toBe(0);
 
-      // Should cache the results (cache key includes timezone)
+      // Should cache the results (cache key includes server segment and timezone)
       expect(redisMock.setex).toHaveBeenCalledWith(
-        `${REDIS_KEYS.DASHBOARD_STATS}:UTC`,
+        `${REDIS_KEYS.DASHBOARD_STATS}:all:UTC`,
         60,
         expect.any(String)
       );
@@ -333,7 +333,7 @@ describe('Dashboard Stats Routes', () => {
       expect(body.watchTimeHours).toBe(5.6);
     });
 
-    it('should reject access to server not in user access list', async () => {
+    it('should return empty stats when non-owner requests server not in access list', async () => {
       const serverId1 = randomUUID();
       const serverId2 = randomUUID();
       // Non-owner user only has access to serverId1
@@ -344,15 +344,24 @@ describe('Dashboard Stats Routes', () => {
         serverIds: [serverId1],
       };
 
-      app = await buildTestApp(viewerUser);
+      const redisMock = {
+        get: vi.fn().mockResolvedValue(null),
+        setex: vi.fn().mockResolvedValue('OK'),
+      };
 
-      // Try to access stats for serverId2 (not in user's serverIds)
+      app = await buildTestApp(viewerUser, redisMock);
+
+      // Request stats for serverId2 (not in user's serverIds)
+      // resolveServerIds intersects requested IDs with user's access, yielding empty set
       const response = await app.inject({
         method: 'GET',
         url: `/stats/dashboard?serverId=${serverId2}`,
       });
 
-      expect(response.statusCode).toBe(403);
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      // Empty intersection means queries return zero results
+      expect(body.activeStreams).toBe(0);
     });
 
     it('should reject invalid serverId format', async () => {
