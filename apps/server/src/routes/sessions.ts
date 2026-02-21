@@ -33,7 +33,7 @@ countries.registerLocale(countriesEn);
 import { db } from '../db/client.js';
 import { sessions, serverUsers, servers, users } from '../db/schema.js';
 import {
-  filterByServerAccess,
+  _filterByServerAccess,
   hasServerAccess,
   resolveServerIds,
 } from '../utils/serverFiltering.js';
@@ -1146,7 +1146,7 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
   /**
    * GET /sessions/active - Get currently active streams from cache
    */
-  app.get('/active', { preHandler: [app.authenticate] }, async (request, reply) => {
+  app.get('/active', { preHandler: [app.authenticate] }, async (request, _reply) => {
     const authUser = request.user;
 
     // Parse optional server filter (supports both legacy serverId and serverIds[])
