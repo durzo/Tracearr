@@ -32,11 +32,7 @@ import countriesEn from 'i18n-iso-countries/langs/en.json' with { type: 'json' }
 countries.registerLocale(countriesEn);
 import { db } from '../db/client.js';
 import { sessions, serverUsers, servers, users } from '../db/schema.js';
-import {
-  _filterByServerAccess,
-  hasServerAccess,
-  resolveServerIds,
-} from '../utils/serverFiltering.js';
+import { hasServerAccess, resolveServerIds } from '../utils/serverFiltering.js';
 import { terminateSession } from '../services/termination.js';
 import { getCacheService } from '../services/cache.js';
 
