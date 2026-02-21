@@ -1,5 +1,17 @@
 import { useState } from 'react';
-import { Monitor, Smartphone, Tablet, Tv, Play, Pause, Zap, Cpu, Server, X } from 'lucide-react';
+import {
+  Monitor,
+  MonitorPlay,
+  Smartphone,
+  Tablet,
+  Tv,
+  Play,
+  Pause,
+  Zap,
+  Cpu,
+  Server,
+  X,
+} from 'lucide-react';
 import { getAvatarUrl } from '@/components/users/utils';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -88,6 +100,15 @@ export function NowPlayingCard({
       )}
       onClick={onClick}
     >
+      {/* Server color accent */}
+      {isMultiServer && serverColor && (
+        <div
+          className="absolute top-0 left-0 z-10 h-full w-1"
+          style={{ backgroundColor: serverColor }}
+          aria-hidden="true"
+        />
+      )}
+
       {/* Background with poster blur */}
       {posterUrl && (
         <div
@@ -153,19 +174,16 @@ export function NowPlayingCard({
 
                 if (session.isTranscode) {
                   return (
-                    <Badge variant="warning" className="text-xs">
-                      {isHwTranscode ? (
-                        <Cpu className="mr-1 h-3 w-3" />
-                      ) : (
-                        <Zap className="mr-1 h-3 w-3" />
-                      )}
+                    <Badge variant="warning" className="gap-1 text-xs">
+                      {isHwTranscode ? <Cpu className="h-3 w-3" /> : <Zap className="h-3 w-3" />}
                       Transcode
                     </Badge>
                   );
                 }
 
                 return (
-                  <Badge variant="default" className="bg-green-600 text-xs hover:bg-green-700">
+                  <Badge variant="success" className="gap-1 text-xs">
+                    <MonitorPlay className="h-3 w-3" />
                     {session.videoDecision === 'copy' || session.audioDecision === 'copy'
                       ? 'Direct Stream'
                       : 'Direct Play'}
@@ -228,10 +246,6 @@ export function NowPlayingCard({
         <span className="flex min-w-0 items-center gap-1.5">
           {isMultiServer && session.server && (
             <>
-              <span
-                className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ backgroundColor: serverColor ?? '#6b7280' }}
-              />
               <span className="shrink-0">{session.server.name}</span>
               <span className="text-muted-foreground/50">·</span>
             </>
