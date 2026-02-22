@@ -349,48 +349,47 @@ function createStatements() {
 
 type Statements = ReturnType<typeof createStatements>;
 
-// Initialize at module load
-let _s: Statements = createStatements();
+// Named exports — populated by initPreparedStatements() during server startup
+// and reassigned after pool recreation (e.g. TimescaleDB extension upgrade).
+// NOT eagerly initialised so the module can be imported without a live db.
+export let playsCountSince: Statements['playsCountSince'];
+export let watchTimeSince: Statements['watchTimeSince'];
+export let violationsCountSince: Statements['violationsCountSince'];
+export let uniqueUsersSince: Statements['uniqueUsersSince'];
+export let unacknowledgedViolationsCount: Statements['unacknowledgedViolationsCount'];
+export let serverUserByExternalId: Statements['serverUserByExternalId'];
+export let sessionByServerAndKey: Statements['sessionByServerAndKey'];
+export let serverUserById: Statements['serverUserById'];
+export let userById: Statements['userById'];
+export let sessionById: Statements['sessionById'];
+export let playsByPlatformSince: Statements['playsByPlatformSince'];
+export let qualityStatsSince: Statements['qualityStatsSince'];
+export let watchTimeByTypeSince: Statements['watchTimeByTypeSince'];
+export let getActiveRules: Statements['getActiveRules'];
+export let getUserRecentSessions: Statements['getUserRecentSessions'];
+export let getUnackedViolations: Statements['getUnackedViolations'];
+export let serverById: Statements['serverById'];
 
-// Named exports — reassigned by initPreparedStatements() after pool recreation
-export let playsCountSince = _s.playsCountSince;
-export let watchTimeSince = _s.watchTimeSince;
-export let violationsCountSince = _s.violationsCountSince;
-export let uniqueUsersSince = _s.uniqueUsersSince;
-export let unacknowledgedViolationsCount = _s.unacknowledgedViolationsCount;
-export let serverUserByExternalId = _s.serverUserByExternalId;
-export let sessionByServerAndKey = _s.sessionByServerAndKey;
-export let serverUserById = _s.serverUserById;
-export let userById = _s.userById;
-export let sessionById = _s.sessionById;
-export let playsByPlatformSince = _s.playsByPlatformSince;
-export let qualityStatsSince = _s.qualityStatsSince;
-export let watchTimeByTypeSince = _s.watchTimeByTypeSince;
-export let getActiveRules = _s.getActiveRules;
-export let getUserRecentSessions = _s.getUserRecentSessions;
-export let getUnackedViolations = _s.getUnackedViolations;
-export let serverById = _s.serverById;
-
-/** Recreate all prepared statements against the current db instance */
+/** Create (or recreate) all prepared statements against the current db instance */
 export function initPreparedStatements(): void {
-  _s = createStatements();
-  playsCountSince = _s.playsCountSince;
-  watchTimeSince = _s.watchTimeSince;
-  violationsCountSince = _s.violationsCountSince;
-  uniqueUsersSince = _s.uniqueUsersSince;
-  unacknowledgedViolationsCount = _s.unacknowledgedViolationsCount;
-  serverUserByExternalId = _s.serverUserByExternalId;
-  sessionByServerAndKey = _s.sessionByServerAndKey;
-  serverUserById = _s.serverUserById;
-  userById = _s.userById;
-  sessionById = _s.sessionById;
-  playsByPlatformSince = _s.playsByPlatformSince;
-  qualityStatsSince = _s.qualityStatsSince;
-  watchTimeByTypeSince = _s.watchTimeByTypeSince;
-  getActiveRules = _s.getActiveRules;
-  getUserRecentSessions = _s.getUserRecentSessions;
-  getUnackedViolations = _s.getUnackedViolations;
-  serverById = _s.serverById;
+  const s = createStatements();
+  playsCountSince = s.playsCountSince;
+  watchTimeSince = s.watchTimeSince;
+  violationsCountSince = s.violationsCountSince;
+  uniqueUsersSince = s.uniqueUsersSince;
+  unacknowledgedViolationsCount = s.unacknowledgedViolationsCount;
+  serverUserByExternalId = s.serverUserByExternalId;
+  sessionByServerAndKey = s.sessionByServerAndKey;
+  serverUserById = s.serverUserById;
+  userById = s.userById;
+  sessionById = s.sessionById;
+  playsByPlatformSince = s.playsByPlatformSince;
+  qualityStatsSince = s.qualityStatsSince;
+  watchTimeByTypeSince = s.watchTimeByTypeSince;
+  getActiveRules = s.getActiveRules;
+  getUserRecentSessions = s.getUserRecentSessions;
+  getUnackedViolations = s.getUnackedViolations;
+  serverById = s.serverById;
 }
 
 // ============================================================================

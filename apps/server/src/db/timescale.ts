@@ -6,7 +6,6 @@
  */
 
 import { db, recreatePool } from './client.js';
-import { initPreparedStatements } from './prepared.js';
 import { sql } from 'drizzle-orm';
 import pg from 'pg';
 import { PRIMARY_MEDIA_TYPES_SQL_LITERAL } from '../constants/mediaTypes.js';
@@ -1186,10 +1185,12 @@ export async function updateTimescaleExtensions(): Promise<void> {
     });
   }
 
-  // Recreate the pool so new connections pick up the updated extension,
-  // then rebuild prepared statements against the new db instance
+  // Recreate the pool so new connections pick up the updated extension.
+  // Prepared statements are rebuilt by initPreparedStatements() later in the
+  // startup sequence (after migrations), so no need to do it here.
+  // If updateTimescaleExtensions() is ever called outside of initializeServices(),
+  // you will need to call initPreparedStatements() immediately after.
   await recreatePool();
-  initPreparedStatements();
 }
 
 /**

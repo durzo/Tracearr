@@ -449,6 +449,10 @@ async function initializeServices(app: FastifyInstance) {
     throw err;
   }
 
+  // Build prepared statements now that the db pool is ready
+  const { initPreparedStatements } = await import('./db/prepared.js');
+  initPreparedStatements();
+
   // Initialize TimescaleDB features (hypertable, compression, aggregates)
   try {
     app.log.info('Initializing TimescaleDB...');
