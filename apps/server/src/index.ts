@@ -433,10 +433,14 @@ async function initializeServices(app: FastifyInstance) {
 
   // Update TimescaleDB extensions before migrations — must happen before any
   // query touches timescaledb objects, otherwise the old version gets locked in.
-  try {
-    await updateTimescaleExtensions();
-  } catch (err) {
-    app.log.warn({ err }, 'Failed to update TimescaleDB extensions (non-fatal)');
+  // Opt-in only: requires ALTER EXTENSION privilege, which managed DB hosts often lack.
+  // Note: we generally dont want users to update extensions since it can cause issues.
+  if (process.env.AUTO_UPDATE_EXTENSIONS === 'true') {
+    try {
+      await updateTimescaleExtensions();
+    } catch (err) {
+      app.log.warn({ err }, 'Failed to update TimescaleDB extensions (non-fatal)');
+    }
   }
 
   // Run database migrations
