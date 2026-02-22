@@ -53,7 +53,7 @@ export function Dashboard() {
     data: bandwidthStats,
     isLoading: bandwidthChartLoading,
     averages: bandwidthAverages,
-  } = useServerBandwidth(selectedServerId ?? undefined, isPlexServer, bandwidthPollInterval);
+  } = useServerBandwidth(selectedServerId ?? undefined, showServerResources, bandwidthPollInterval);
 
   const activeCount = sessions?.length ?? 0;
   const hasActiveStreams = activeCount > 0;
