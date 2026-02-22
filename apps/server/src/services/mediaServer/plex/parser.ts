@@ -1482,22 +1482,26 @@ function parseLibraryItem(item: Record<string, unknown>): MediaLibraryItem {
 
   // Parse addedAt from Unix timestamp with validation
   // Reject dates before 2015 to prevent bad data like 1969/1970
-  // Fallback chain: addedAt timestamp -> Jan 1 of year -> now
+  // Fallback chain: addedAt timestamp -> Jan 1 of year -> cutoff date
   const MIN_VALID_YEAR = 2015;
   const addedAtTimestamp = parseOptionalNumber(item.addedAt);
   const year = parseOptionalNumber(item.year);
   let addedAt: Date;
+  // Fallback date for items with invalid/missing addedAt - use cutoff date instead of "today"
+  // This clusters legacy items at the cutoff rather than polluting current date stats
+  const FALLBACK_DATE = new Date(Date.UTC(MIN_VALID_YEAR, 0, 1));
+
   if (addedAtTimestamp) {
     const parsedDate = new Date(addedAtTimestamp * 1000);
     if (!isNaN(parsedDate.getTime()) && parsedDate.getFullYear() >= MIN_VALID_YEAR) {
       addedAt = parsedDate;
     } else {
       const yearDate = year && year >= MIN_VALID_YEAR ? new Date(Date.UTC(year, 0, 1)) : undefined;
-      addedAt = yearDate && !isNaN(yearDate.getTime()) ? yearDate : new Date();
+      addedAt = yearDate && !isNaN(yearDate.getTime()) ? yearDate : FALLBACK_DATE;
     }
   } else {
     const yearDate = year && year >= MIN_VALID_YEAR ? new Date(Date.UTC(year, 0, 1)) : undefined;
-    addedAt = yearDate && !isNaN(yearDate.getTime()) ? yearDate : new Date();
+    addedAt = yearDate && !isNaN(yearDate.getTime()) ? yearDate : FALLBACK_DATE;
   }
 
   const result: MediaLibraryItem = {

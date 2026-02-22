@@ -687,15 +687,17 @@ export function parseLibraryItem(item: Record<string, unknown>): MediaLibraryIte
   // Parse year first so we can use it as addedAt fallback
   const year = parseOptionalNumber(item.ProductionYear);
 
-  // Fallback chain for addedAt: DateCreated -> Jan 1 of ProductionYear -> now
+  // Fallback chain for addedAt: DateCreated -> Jan 1 of ProductionYear -> cutoff date
   // Only use year fallback if it's >= MIN_VALID_YEAR (2015)
+  // Final fallback uses cutoff date instead of "today" to cluster legacy items at the cutoff
   const dateCreated = parseLibraryDate(item.DateCreated);
   let yearFallback: Date | undefined;
   if (year && year >= MIN_VALID_YEAR) {
     const d = new Date(Date.UTC(year, 0, 1));
     if (!isNaN(d.getTime())) yearFallback = d;
   }
-  const addedAt = dateCreated ?? yearFallback ?? new Date();
+  const FALLBACK_DATE = new Date(Date.UTC(MIN_VALID_YEAR, 0, 1));
+  const addedAt = dateCreated ?? yearFallback ?? FALLBACK_DATE;
 
   const result: MediaLibraryItem = {
     ratingKey: parseString(item.Id),

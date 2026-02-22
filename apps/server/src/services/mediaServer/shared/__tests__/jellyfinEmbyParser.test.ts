@@ -607,16 +607,16 @@ describe('parseLibraryItemsResponse', () => {
     expect(result[2]!.ratingKey).toBe('3');
   });
 
-  it('uses current date when DateCreated is missing', () => {
+  it('uses cutoff date (2015-01-01) when DateCreated is missing', () => {
+    // When DateCreated is missing and year < 2015, fallback to Jan 1, 2015
+    // This clusters legacy items at the cutoff rather than polluting current date stats
     const input = [{ Id: 'nodateitem', Name: 'No Date', Type: 'Movie' }];
 
-    const before = new Date();
     const result = parseLibraryItemsResponse(input);
-    const after = new Date();
 
     const item = result[0]!;
-    expect(item.addedAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
-    expect(item.addedAt.getTime()).toBeLessThanOrEqual(after.getTime());
+    const expectedFallback = new Date(Date.UTC(2015, 0, 1));
+    expect(item.addedAt.getTime()).toBe(expectedFallback.getTime());
   });
 });
 
