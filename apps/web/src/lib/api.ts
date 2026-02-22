@@ -565,6 +565,17 @@ class ApiClient {
         }[];
         fetchedAt: string;
       }>(`/servers/${id}/statistics`),
+    bandwidth: (id: string) =>
+      this.request<{
+        serverId: string;
+        data: {
+          at: number;
+          timespan: number;
+          lanBytes: number;
+          wanBytes: number;
+        }[];
+        fetchedAt: string;
+      }>(`/servers/${id}/bandwidth`),
     health: async () => {
       const response = await this.request<{
         data: { serverId: string; serverName: string }[];

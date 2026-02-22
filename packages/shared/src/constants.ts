@@ -710,6 +710,20 @@ export const SERVER_STATS_CONFIG = {
   DATA_POINTS: 20,
 } as const;
 
+// Server bandwidth statistics configuration (Local/Remote)
+// Used with Plex's undocumented /statistics/bandwidth endpoint
+// Data arrives per-second from Plex, displayed at 1-second granularity
+export const BANDWIDTH_STATS_CONFIG = {
+  // Poll interval in seconds (how often we fetch new data)
+  POLL_INTERVAL_SECONDS: 6,
+  // Timespan parameter for Plex API
+  TIMESPAN_SECONDS: 6,
+  // Fixed 2-minute window (120 data points at 1s intervals)
+  WINDOW_SECONDS: 120,
+  // Data points to display (2 min * 1/s = 120 points)
+  DATA_POINTS: 120,
+} as const;
+
 // Session limits
 export const SESSION_LIMITS = {
   MAX_RECENT_PER_USER: 100,
