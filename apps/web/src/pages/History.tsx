@@ -8,7 +8,6 @@ import { useSearchParams, useParams, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useInView } from 'react-intersection-observer';
 import { Card, CardContent } from '@/components/ui/card';
-import { Trash2 } from 'lucide-react';
 import {
   HistoryFiltersBar,
   DEFAULT_COLUMN_VISIBILITY,
@@ -17,18 +16,14 @@ import {
 import { HistoryTable, type SortableColumn } from '@/components/history/HistoryTable';
 import { HistoryAggregates } from '@/components/history/HistoryAggregates';
 import { SessionDetailSheet } from '@/components/history/SessionDetailSheet';
-import { BulkActionsToolbar, type BulkAction } from '@/components/ui/bulk-actions-toolbar';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   useHistorySessions,
   useHistoryAggregates,
   useFilterOptions,
-  useBulkDeleteSessions,
   useSession,
   type HistoryFilters,
 } from '@/hooks/queries';
 import { useServer } from '@/hooks/useServer';
-import { useRowSelection } from '@/hooks/useRowSelection';
 import type { SessionWithDetails } from '@tracearr/shared';
 
 // Local storage key for column visibility
@@ -194,9 +189,6 @@ export function History() {
     }
   }, [linkedSession]);
   const [columnVisibility, setColumnVisibility] = useState<ColumnVisibility>(loadColumnVisibility);
-  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
-
-  const bulkDeleteSessions = useBulkDeleteSessions();
 
   // Parse filters from URL on mount and when URL changes
   const filters = useMemo(() => {
@@ -244,40 +236,6 @@ export function History() {
   // Use aggregates from dedicated query (doesn't reload on sort changes)
   const aggregates = aggregatesData;
   const total = aggregatesData?.playCount;
-
-  // Row selection for bulk operations
-  const {
-    selectedIds,
-    selectedCount,
-    toggleRow,
-    togglePage,
-    clearSelection,
-    isPageSelected,
-    isPageIndeterminate,
-  } = useRowSelection({
-    getRowId: (session: SessionWithDetails) => session.id,
-    totalCount: sessions.length, // Using visible sessions count since we don't support "select all matching"
-  });
-
-  const handleBulkDelete = () => {
-    bulkDeleteSessions.mutate(Array.from(selectedIds), {
-      onSuccess: () => {
-        clearSelection();
-        setBulkDeleteConfirmOpen(false);
-      },
-    });
-  };
-
-  const bulkActions: BulkAction[] = [
-    {
-      key: 'delete',
-      label: t('common:actions.delete'),
-      icon: <Trash2 className="h-4 w-4" />,
-      variant: 'destructive',
-      onClick: () => setBulkDeleteConfirmOpen(true),
-      isLoading: bulkDeleteSessions.isPending,
-    },
-  ];
 
   // Handle filter changes - update URL
   const handleFiltersChange = useCallback(
@@ -356,12 +314,6 @@ export function History() {
             sortBy={filters.orderBy ?? 'startedAt'}
             sortDir={filters.orderDir ?? 'desc'}
             onSortChange={handleSortChange}
-            selectable
-            selectedIds={selectedIds}
-            onRowSelect={toggleRow}
-            onSelectAllVisible={() => togglePage(sessions)}
-            isAllVisibleSelected={isPageSelected(sessions)}
-            isAllVisibleIndeterminate={isPageIndeterminate(sessions)}
           />
 
           {/* Infinite scroll trigger */}
@@ -395,24 +347,6 @@ export function History() {
             if (sessionId) void navigate('/history', { replace: true });
           }
         }}
-      />
-
-      {/* Bulk Actions Toolbar */}
-      <BulkActionsToolbar
-        selectedCount={selectedCount}
-        actions={bulkActions}
-        onClearSelection={clearSelection}
-      />
-
-      {/* Bulk Delete Confirmation */}
-      <ConfirmDialog
-        open={bulkDeleteConfirmOpen}
-        onOpenChange={setBulkDeleteConfirmOpen}
-        title={t('pages:history.deleteSession', { count: selectedCount })}
-        description={t('pages:history.deleteSessionsConfirm')}
-        confirmLabel={t('common:actions.delete')}
-        onConfirm={handleBulkDelete}
-        isLoading={bulkDeleteSessions.isPending}
       />
     </div>
   );
