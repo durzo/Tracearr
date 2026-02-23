@@ -235,16 +235,35 @@ export class LibrarySyncService {
     // =========================================================================
     if (isIncremental && client.getLibraryItemsSince) {
       try {
-        const { totalCount: incrementalCount } = await client.getLibraryItemsSince(
+        const { items: newItems, totalCount: incrementalCount } = await client.getLibraryItemsSince(
           libraryId,
-          syncState.lastSyncedAt!,
-          { offset: 0, limit: 1 }
+          syncState.lastSyncedAt!
         );
 
-        // Nothing new and count hasn't changed — skip item processing
-        if (incrementalCount === 0 && totalCount === syncState.lastItemCount) {
+        // Check for new episodes/tracks independently — new episodes can arrive
+        // for shows that were added months ago (no new Series in the result).
+        let newLeaves: MediaLibraryItem[] = [];
+        if (client.getLibraryLeavesSince) {
+          try {
+            const { items: leaves } = await client.getLibraryLeavesSince(
+              libraryId,
+              syncState.lastSyncedAt!
+            );
+            newLeaves = leaves;
+          } catch (leafErr) {
+            console.warn(
+              `[LibrarySync] Incremental leaf fetch failed for ${libraryName}, skipping leaves:`,
+              leafErr
+            );
+          }
+        }
+
+        if (
+          incrementalCount === 0 &&
+          newLeaves.length === 0 &&
+          totalCount === syncState.lastItemCount
+        ) {
           console.log(`[LibrarySync] ${libraryName}: no changes since last sync, skipping`);
-          // Copy last snapshot to today so the growth timeline stays continuous
           const snapshot = await this.copyLastSnapshot(serverId, libraryId);
           await this.saveSyncState(serverId, libraryId, totalCount);
           return {
@@ -258,70 +277,46 @@ export class LibrarySyncService {
           };
         }
 
-        // Fetch new/updated items in batches
         const allItems: MediaLibraryItem[] = [];
-        let offset = 0;
 
-        while (offset < incrementalCount) {
-          const { items } = await client.getLibraryItemsSince(libraryId, syncState.lastSyncedAt!, {
-            offset,
-            limit: BATCH_SIZE,
-          });
+        for (let i = 0; i < newItems.length; i += BATCH_SIZE) {
+          const batch = newItems.slice(i, i + BATCH_SIZE);
+          allItems.push(...batch);
+          await this.upsertItems(serverId, libraryId, batch);
 
-          if (items.length === 0) break;
-
-          for (const item of items) {
-            allItems.push(item);
-          }
-
-          await this.upsertItems(serverId, libraryId, items);
-          offset += BATCH_SIZE;
-
-          if (offset < incrementalCount) {
+          if (i + BATCH_SIZE < newItems.length) {
             await delay(BATCH_DELAY_MS_INCREMENTAL);
           }
         }
 
-        // Also fetch new/updated leaves incrementally (episodes for TV, tracks for music)
-        const hasShows = allItems.some((item) => item.mediaType === 'show');
-        const hasArtists = allItems.some((item) => item.mediaType === 'artist');
+        // Plex respects offset/limit, so paginate if more items remain
+        if (newItems.length < incrementalCount) {
+          let offset = newItems.length;
+          while (offset < incrementalCount) {
+            const { items } = await client.getLibraryItemsSince(
+              libraryId,
+              syncState.lastSyncedAt!,
+              { offset, limit: BATCH_SIZE }
+            );
+            if (items.length === 0) break;
 
-        if ((hasShows || hasArtists) && client.getLibraryLeaves) {
-          if (client.getLibraryLeavesSince) {
-            try {
-              const { totalCount: leavesCount } = await client.getLibraryLeavesSince(
-                libraryId,
-                syncState.lastSyncedAt!,
-                { offset: 0, limit: 1 }
-              );
+            allItems.push(...items);
+            await this.upsertItems(serverId, libraryId, items);
+            offset += items.length;
 
-              let leavesOffset = 0;
-              while (leavesOffset < leavesCount) {
-                const { items: leaves } = await client.getLibraryLeavesSince(
-                  libraryId,
-                  syncState.lastSyncedAt!,
-                  { offset: leavesOffset, limit: BATCH_SIZE }
-                );
-
-                if (leaves.length === 0) break;
-
-                for (const leaf of leaves) {
-                  allItems.push(leaf);
-                }
-
-                await this.upsertItems(serverId, libraryId, leaves);
-                leavesOffset += BATCH_SIZE;
-
-                if (leavesOffset < leavesCount) {
-                  await delay(BATCH_DELAY_MS_INCREMENTAL);
-                }
-              }
-            } catch (leafErr) {
-              console.warn(
-                `[LibrarySync] Incremental leaf fetch failed for ${libraryName}, skipping leaves:`,
-                leafErr
-              );
+            if (offset < incrementalCount) {
+              await delay(BATCH_DELAY_MS_INCREMENTAL);
             }
+          }
+        }
+
+        for (let i = 0; i < newLeaves.length; i += BATCH_SIZE) {
+          const batch = newLeaves.slice(i, i + BATCH_SIZE);
+          allItems.push(...batch);
+          await this.upsertItems(serverId, libraryId, batch);
+
+          if (i + BATCH_SIZE < newLeaves.length) {
+            await delay(BATCH_DELAY_MS_INCREMENTAL);
           }
         }
 
@@ -332,9 +327,9 @@ export class LibrarySyncService {
           libraryId,
           libraryName,
           itemsProcessed: allItems.length,
-          itemsAdded: allItems.length, // all fetched items are new or updated
-          itemsRemoved: 0, // totalCount >= lastItemCount, so no removals
-          snapshotId: null, // skip snapshot for incremental; last full sync snapshot remains valid
+          itemsAdded: allItems.length,
+          itemsRemoved: 0,
+          snapshotId: null,
         };
       } catch (error) {
         console.warn(

@@ -157,6 +157,8 @@ function mockMediaServerClient(options: {
   totalCount?: number;
   itemsSince?: MediaLibraryItem[];
   totalCountSince?: number;
+  leavesSince?: MediaLibraryItem[];
+  leavesCountSince?: number;
 }) {
   const client = {
     getLibraries: vi.fn().mockResolvedValue(options.libraries ?? [createMockLibrary()]),
@@ -167,6 +169,10 @@ function mockMediaServerClient(options: {
     getLibraryItemsSince: vi.fn().mockResolvedValue({
       items: options.itemsSince ?? [],
       totalCount: options.totalCountSince ?? options.itemsSince?.length ?? 0,
+    }),
+    getLibraryLeavesSince: vi.fn().mockResolvedValue({
+      items: options.leavesSince ?? [],
+      totalCount: options.leavesCountSince ?? options.leavesSince?.length ?? 0,
     }),
     serverType: 'plex' as const,
     getSessions: vi.fn(),
@@ -848,12 +854,8 @@ describe('LibrarySyncService', () => {
       const service = new LibrarySyncService();
       const results = await service.syncServer(serverId);
 
-      // Incremental path: getLibraryItemsSince used for batch loop
-      expect(client.getLibraryItemsSince).toHaveBeenCalledWith(
-        '1',
-        expect.any(Date),
-        expect.objectContaining({ offset: 0, limit: 100 })
-      );
+      expect(client.getLibraryItemsSince).toHaveBeenCalledWith('1', expect.any(Date));
+      expect(client.getLibraryLeavesSince).toHaveBeenCalled();
       expect(results[0]!.itemsAdded).toBe(1);
       expect(results[0]!.itemsRemoved).toBe(0);
       expect(results[0]!.snapshotId).toBeNull();
@@ -886,17 +888,50 @@ describe('LibrarySyncService', () => {
       const service = new LibrarySyncService();
       const results = await service.syncServer(serverId);
 
-      // Should return early without upsert or snapshot
       expect(results[0]!.itemsProcessed).toBe(0);
       expect(results[0]!.itemsAdded).toBe(0);
       expect(results[0]!.itemsRemoved).toBe(0);
       expect(results[0]!.snapshotId).toBeNull();
-      // No upsert should happen
       expect(db.transaction).not.toHaveBeenCalled();
-      // getLibraryItemsSince called once for count check
-      expect(client.getLibraryItemsSince).toHaveBeenCalled();
-      // Redis state should be updated even on early return
+      expect(client.getLibraryItemsSince).toHaveBeenCalledTimes(1);
+      expect(client.getLibraryLeavesSince).toHaveBeenCalledTimes(1);
       expect(mockRedis.set).toHaveBeenCalled();
+    });
+
+    it('fetches new episodes even when no new shows exist', async () => {
+      const mockServer = createMockServer({ id: serverId });
+      const lastSyncedAt = new Date(Date.now() - 60_000);
+      const newEpisode = createMockLibraryItem({ ratingKey: 'new-ep-1', mediaType: 'episode' });
+      const mockRedis = createMockRedis({
+        get: vi
+          .fn()
+          .mockResolvedValueOnce(lastSyncedAt.toISOString()) // lastSyncedAt
+          .mockResolvedValueOnce('5'), // lastItemCount = 5, totalCount = 5
+      });
+      initLibrarySyncRedis(mockRedis);
+
+      setupSelectForIncrementalTest(mockServer);
+      mockInsertChain([{ id: randomUUID() }]);
+      mockDeleteChain();
+      mockTransaction();
+
+      const client = mockMediaServerClient({
+        libraries: [createMockLibrary()],
+        items: [],
+        totalCount: 5, // same as lastItemCount — no new shows
+        itemsSince: [], // no new top-level items
+        totalCountSince: 0,
+        leavesSince: [newEpisode], // but there ARE new episodes
+        leavesCountSince: 1,
+      });
+
+      const service = new LibrarySyncService();
+      const results = await service.syncServer(serverId);
+
+      expect(results[0]!.itemsProcessed).toBe(1);
+      expect(results[0]!.itemsAdded).toBe(1);
+      expect(db.transaction).toHaveBeenCalled();
+      expect(client.getLibraryLeavesSince).toHaveBeenCalled();
     });
 
     it('falls back to full scan when getLibraryItemsSince throws', async () => {
