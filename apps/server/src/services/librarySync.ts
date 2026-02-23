@@ -9,7 +9,7 @@
  * 5. Report progress via callback for real-time updates
  */
 
-import { eq, and, inArray, sql, gte, lt } from 'drizzle-orm';
+import { eq, and, inArray, sql, gte, lt, desc } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { servers, libraryItems, librarySnapshots } from '../db/schema.js';
 import { createMediaServerClient, type MediaLibraryItem } from './mediaServer/index.js';
@@ -241,9 +241,11 @@ export class LibrarySyncService {
           { offset: 0, limit: 1 }
         );
 
-        // Nothing new and count hasn't changed — skip entirely
+        // Nothing new and count hasn't changed — skip item processing
         if (incrementalCount === 0 && totalCount === syncState.lastItemCount) {
           console.log(`[LibrarySync] ${libraryName}: no changes since last sync, skipping`);
+          // Copy last snapshot to today so the growth timeline stays continuous
+          const snapshot = await this.copyLastSnapshot(serverId, libraryId);
           await this.saveSyncState(serverId, libraryId, totalCount);
           return {
             serverId,
@@ -252,7 +254,7 @@ export class LibrarySyncService {
             itemsProcessed: 0,
             itemsAdded: 0,
             itemsRemoved: 0,
-            snapshotId: null,
+            snapshotId: snapshot?.id ?? null,
           };
         }
 
@@ -935,6 +937,77 @@ export class LibrarySyncService {
       .returning({ id: librarySnapshots.id });
 
     return { id: snapshot!.id };
+  }
+
+  /**
+   * Copy the most recent snapshot to today if one doesn't already exist.
+   * Used during incremental syncs when nothing changed — the library stats
+   * are identical, but the growth timeline needs a data point for today.
+   */
+  private async copyLastSnapshot(
+    serverId: string,
+    libraryId: string
+  ): Promise<{ id: string } | null> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // Already have a snapshot today? Nothing to do.
+    const [existing] = await db
+      .select({ id: librarySnapshots.id })
+      .from(librarySnapshots)
+      .where(
+        and(
+          eq(librarySnapshots.serverId, serverId),
+          eq(librarySnapshots.libraryId, libraryId),
+          gte(librarySnapshots.snapshotTime, today),
+          lt(librarySnapshots.snapshotTime, tomorrow)
+        )
+      )
+      .limit(1);
+
+    if (existing) return { id: existing.id };
+
+    // Find the most recent snapshot for this library
+    const [latest] = await db
+      .select()
+      .from(librarySnapshots)
+      .where(
+        and(eq(librarySnapshots.serverId, serverId), eq(librarySnapshots.libraryId, libraryId))
+      )
+      .orderBy(desc(librarySnapshots.snapshotTime))
+      .limit(1);
+
+    if (!latest) return null;
+
+    // Insert a copy with today's timestamp
+    const [copy] = await db
+      .insert(librarySnapshots)
+      .values({
+        serverId,
+        libraryId,
+        snapshotTime: new Date(),
+        itemCount: latest.itemCount,
+        totalSize: latest.totalSize,
+        movieCount: latest.movieCount,
+        episodeCount: latest.episodeCount,
+        seasonCount: latest.seasonCount,
+        showCount: latest.showCount,
+        musicCount: latest.musicCount,
+        count4k: latest.count4k,
+        count1080p: latest.count1080p,
+        count720p: latest.count720p,
+        countSd: latest.countSd,
+        hevcCount: latest.hevcCount,
+        h264Count: latest.h264Count,
+        av1Count: latest.av1Count,
+        enrichmentPending: 0,
+        enrichmentComplete: latest.enrichmentComplete,
+      })
+      .returning({ id: librarySnapshots.id });
+
+    return { id: copy!.id };
   }
 
   /**
