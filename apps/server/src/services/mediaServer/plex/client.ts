@@ -212,6 +212,48 @@ export class PlexClient implements IMediaServerClient, IMediaServerClientWithHis
   }
 
   /**
+   * Get library items added on or after the given date
+   *
+   * Same as getLibraryItems but filters by addedAt using Plex's addedAt>>= filter.
+   * The date is converted to a unix epoch in seconds.
+   *
+   * @param libraryId - The library section ID
+   * @param since - Only return items added at or after this date
+   * @param options - Pagination options (offset, limit)
+   * @returns Items and total count for pagination tracking
+   */
+  async getLibraryItemsSince(
+    libraryId: string,
+    since: Date,
+    options?: { offset?: number; limit?: number }
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? 100;
+
+    const params = new URLSearchParams({
+      includeGuids: '1',
+      'X-Plex-Container-Start': String(offset),
+      'X-Plex-Container-Size': String(limit),
+      'addedAt>>=': String(Math.floor(since.getTime() / 1000)),
+    });
+
+    const data = await fetchJson<unknown>(
+      `${this.baseUrl}/library/sections/${libraryId}/all?${params}`,
+      {
+        headers: this.buildHeaders(),
+        service: 'plex',
+        timeout: 30000,
+      }
+    );
+
+    const container = data as { MediaContainer?: { totalSize?: number } };
+    const totalCount = container?.MediaContainer?.totalSize ?? 0;
+    const items = parseLibraryItemsResponse(data);
+
+    return { items, totalCount };
+  }
+
+  /**
    * Get all leaf items (episodes) from a library section
    *
    * For TV show libraries, this returns all episodes across all shows.
@@ -246,6 +288,48 @@ export class PlexClient implements IMediaServerClient, IMediaServerClientWithHis
     const container = data as { MediaContainer?: { totalSize?: number } };
     const totalCount = container?.MediaContainer?.totalSize ?? 0;
 
+    const items = parseLibraryItemsResponse(data);
+
+    return { items, totalCount };
+  }
+
+  /**
+   * Get leaf items (episodes) added on or after the given date
+   *
+   * Same as getLibraryLeaves but filters by addedAt using Plex's addedAt>>= filter.
+   * The date is converted to a unix epoch in seconds.
+   *
+   * @param libraryId - Library section ID
+   * @param since - Only return items added at or after this date
+   * @param options - Pagination options
+   * @returns Episodes and total count for pagination tracking
+   */
+  async getLibraryLeavesSince(
+    libraryId: string,
+    since: Date,
+    options?: { offset?: number; limit?: number }
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? 100;
+
+    const params = new URLSearchParams({
+      includeGuids: '1',
+      'X-Plex-Container-Start': String(offset),
+      'X-Plex-Container-Size': String(limit),
+      'addedAt>>=': String(Math.floor(since.getTime() / 1000)),
+    });
+
+    const data = await fetchJson<unknown>(
+      `${this.baseUrl}/library/sections/${libraryId}/allLeaves?${params}`,
+      {
+        headers: this.buildHeaders(),
+        service: 'plex',
+        timeout: 30000,
+      }
+    );
+
+    const container = data as { MediaContainer?: { totalSize?: number } };
+    const totalCount = container?.MediaContainer?.totalSize ?? 0;
     const items = parseLibraryItemsResponse(data);
 
     return { items, totalCount };

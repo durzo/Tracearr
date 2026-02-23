@@ -226,6 +226,68 @@ export abstract class BaseMediaServerClient
   }
 
   /**
+   * Get library items modified since a given date
+   *
+   * Sorts by DateCreated descending and filters client-side. This works around
+   * Jellyfin/Emby's minDateLastSaved filter being unreliable (DateLastSaved is
+   * often unpopulated). We keep minDateLastSaved in the query so future server
+   * versions that fix the field will do the filtering server-side too.
+   *
+   * Handles its own pagination internally — the caller's offset/limit are ignored.
+   *
+   * @param libraryId - The parent library ID
+   * @param since - Only return items added after this date
+   * @returns Items and total count for pagination tracking
+   */
+  async getLibraryItemsSince(
+    libraryId: string,
+    since: Date,
+    _options?: { offset?: number; limit?: number }
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
+    const PAGE_SIZE = 200;
+    const allItems: MediaLibraryItem[] = [];
+    let serverOffset = 0;
+
+    while (true) {
+      const params = new URLSearchParams({
+        ParentId: libraryId,
+        Recursive: 'true',
+        IncludeItemTypes: 'Movie,Series,MusicArtist,MusicAlbum,Audio',
+        IsMissing: 'false',
+        Fields:
+          'ProviderIds,Path,MediaSources,DateCreated,ProductionYear,SeriesName,SeriesId,ParentIndexNumber,IndexNumber,Album,AlbumArtist,Artists',
+        StartIndex: String(serverOffset),
+        Limit: String(PAGE_SIZE),
+        SortBy: 'DateCreated',
+        SortOrder: 'Descending',
+        minDateLastSaved: since.toISOString(),
+      });
+
+      const data = await fetchJson<{ Items?: unknown[]; TotalRecordCount?: number }>(
+        `${this.baseUrl}/Items?${params}`,
+        {
+          headers: this.buildHeaders(),
+          service: this.serverType,
+          timeout: 30000,
+        }
+      );
+
+      const rawItems = this.parsers.parseLibraryItemsResponse(data.Items ?? []);
+      if (rawItems.length === 0) break;
+
+      const filtered = rawItems.filter((item) => item.addedAt >= since);
+      allItems.push(...filtered);
+
+      // If some items on this page predate `since`, we've passed the cutoff
+      if (filtered.length < rawItems.length) break;
+
+      serverOffset += rawItems.length;
+    }
+
+    return { items: allItems, totalCount: allItems.length };
+  }
+
+  /**
    * Get all episodes (leaves) in a TV library with pagination
    *
    * For TV libraries, this fetches only Episode items, separate from Series/Season.
@@ -268,6 +330,63 @@ export abstract class BaseMediaServerClient
     const totalCount = data.TotalRecordCount ?? items.length;
 
     return { items, totalCount };
+  }
+
+  /**
+   * Get episodes modified since a given date
+   *
+   * Same approach as getLibraryItemsSince — sorts by DateCreated descending
+   * and filters client-side to work around unreliable minDateLastSaved.
+   *
+   * @param libraryId - The parent library ID
+   * @param since - Only return episodes added after this date
+   * @returns Episodes and total count for pagination tracking
+   */
+  async getLibraryLeavesSince(
+    libraryId: string,
+    since: Date,
+    _options?: { offset?: number; limit?: number }
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
+    const PAGE_SIZE = 200;
+    const allItems: MediaLibraryItem[] = [];
+    let serverOffset = 0;
+
+    while (true) {
+      const params = new URLSearchParams({
+        ParentId: libraryId,
+        Recursive: 'true',
+        IncludeItemTypes: 'Episode',
+        IsMissing: 'false',
+        Fields:
+          'ProviderIds,Path,MediaSources,DateCreated,ProductionYear,SeriesName,SeriesId,ParentIndexNumber,IndexNumber',
+        StartIndex: String(serverOffset),
+        Limit: String(PAGE_SIZE),
+        SortBy: 'DateCreated',
+        SortOrder: 'Descending',
+        minDateLastSaved: since.toISOString(),
+      });
+
+      const data = await fetchJson<{ Items?: unknown[]; TotalRecordCount?: number }>(
+        `${this.baseUrl}/Items?${params}`,
+        {
+          headers: this.buildHeaders(),
+          service: this.serverType,
+          timeout: 30000,
+        }
+      );
+
+      const rawItems = this.parsers.parseLibraryItemsResponse(data.Items ?? []);
+      if (rawItems.length === 0) break;
+
+      const filtered = rawItems.filter((item) => item.addedAt >= since);
+      allItems.push(...filtered);
+
+      if (filtered.length < rawItems.length) break;
+
+      serverOffset += rawItems.length;
+    }
+
+    return { items: allItems, totalCount: allItems.length };
   }
 
   // ==========================================================================

@@ -17,7 +17,7 @@ import { WS_EVENTS, REDIS_KEYS } from '@tracearr/shared';
 import type { LibrarySyncProgress } from '@tracearr/shared';
 import { db } from '../db/client.js';
 import { servers } from '../db/schema.js';
-import { librarySyncService } from '../services/librarySync.js';
+import { librarySyncService, initLibrarySyncRedis } from '../services/librarySync.js';
 import { getPubSubService } from '../services/cache.js';
 import { enqueueMaintenanceJob } from './maintenanceQueue.js';
 import { VALID_LIBRARY_ITEM_CONDITION } from '../utils/snapshotValidation.js';
@@ -92,6 +92,7 @@ export function initLibrarySyncQueue(redisUrl: string): void {
 
   connectionOptions = { url: redisUrl };
   redisClient = new Redis(redisUrl);
+  initLibrarySyncRedis(redisClient);
   const bullPrefix = `${getRedisPrefix()}bull`;
 
   librarySyncQueue = new Queue<LibrarySyncJobData>(QUEUE_NAME, {
@@ -169,7 +170,7 @@ export function startLibrarySyncWorker(): void {
         };
 
         // Execute sync
-        const results = await librarySyncService.syncServer(serverId, onProgress);
+        const results = await librarySyncService.syncServer(serverId, onProgress, triggeredBy);
 
         // Invalidate library caches after successful sync
         await invalidateLibraryCaches(serverId);
@@ -342,8 +343,12 @@ export async function scheduleAutoSync(): Promise<void> {
     await librarySyncQueue.removeJobScheduler(scheduler.key);
   }
 
-  // Add repeatable job for each server
-  for (const server of allServers) {
+  // Add repeatable job for each server with staggered cron times
+  // Spreads DB, Redis, and API load across servers instead of firing all at once
+  for (let i = 0; i < allServers.length; i++) {
+    const server = allServers[i]!;
+    const minuteOffset = (10 + i * 4) % 60; // Server 0 at :10, server 1 at :14, wraps at 60
+
     await librarySyncQueue.add(
       `auto-sync-${server.id}`,
       {
@@ -352,7 +357,7 @@ export async function scheduleAutoSync(): Promise<void> {
       },
       {
         repeat: {
-          pattern: '10 */12 * * *', // Every 12 hours at :10 (offset from :00 to avoid collision)
+          pattern: `${minuteOffset} */12 * * *`,
           tz: 'UTC',
         },
         jobId: `scheduled-${server.id}`,
@@ -361,7 +366,7 @@ export async function scheduleAutoSync(): Promise<void> {
   }
 
   console.log(
-    `[LibrarySync] Scheduled auto-sync for ${allServers.length} server(s) every 12 hours`
+    `[LibrarySync] Scheduled auto-sync for ${allServers.length} server(s) every 12 hours (staggered)`
   );
 
   // Queue an immediate sync on boot (non-blocking, staggered to avoid overwhelming startup)

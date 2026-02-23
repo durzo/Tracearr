@@ -30,9 +30,10 @@ vi.mock('../mediaServer/index.js', () => ({
 // Import after mocking
 import { db } from '../../db/client.js';
 import { createMediaServerClient } from '../mediaServer/index.js';
-import { LibrarySyncService } from '../librarySync.js';
+import { LibrarySyncService, initLibrarySyncRedis } from '../librarySync.js';
 import type { MediaLibraryItem } from '../mediaServer/types.js';
 import type { LibrarySyncProgress } from '@tracearr/shared';
+import type { Redis } from 'ioredis';
 
 // ============================================================================
 // Test Data Factories
@@ -154,12 +155,24 @@ function mockMediaServerClient(options: {
   libraries?: ReturnType<typeof createMockLibrary>[];
   items?: MediaLibraryItem[];
   totalCount?: number;
+  itemsSince?: MediaLibraryItem[];
+  totalCountSince?: number;
+  leavesSince?: MediaLibraryItem[];
+  leavesCountSince?: number;
 }) {
   const client = {
     getLibraries: vi.fn().mockResolvedValue(options.libraries ?? [createMockLibrary()]),
     getLibraryItems: vi.fn().mockResolvedValue({
       items: options.items ?? [],
       totalCount: options.totalCount ?? options.items?.length ?? 0,
+    }),
+    getLibraryItemsSince: vi.fn().mockResolvedValue({
+      items: options.itemsSince ?? [],
+      totalCount: options.totalCountSince ?? options.itemsSince?.length ?? 0,
+    }),
+    getLibraryLeavesSince: vi.fn().mockResolvedValue({
+      items: options.leavesSince ?? [],
+      totalCount: options.leavesCountSince ?? options.leavesSince?.length ?? 0,
     }),
     serverType: 'plex' as const,
     getSessions: vi.fn(),
@@ -169,6 +182,44 @@ function mockMediaServerClient(options: {
   };
   vi.mocked(createMediaServerClient).mockReturnValue(client);
   return client;
+}
+
+function createMockRedis(overrides: Partial<Record<string, unknown>> = {}): Redis {
+  return {
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue('OK'),
+    ...overrides,
+  } as unknown as Redis;
+}
+
+/**
+ * Helper to set up a standard select chain for incremental sync tests.
+ * Returns server on first call, empty on subsequent calls.
+ */
+function setupSelectForIncrementalTest(mockServer: ReturnType<typeof createMockServer>) {
+  let selectCallCount = 0;
+  vi.mocked(db.select).mockImplementation(() => {
+    selectCallCount++;
+    const chain = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockImplementation(() => {
+        const whereResult = Promise.resolve([]);
+        (whereResult as typeof whereResult & { limit: typeof vi.fn }).limit = vi
+          .fn()
+          .mockImplementation(() => {
+            if (selectCallCount === 1) return Promise.resolve([mockServer]);
+            return Promise.resolve([]);
+          });
+        return whereResult;
+      }),
+      limit: vi.fn().mockImplementation(() => {
+        if (selectCallCount === 1) return Promise.resolve([mockServer]);
+        return Promise.resolve([]);
+      }),
+      returning: vi.fn().mockResolvedValue([]),
+    };
+    return chain as never;
+  });
 }
 
 beforeEach(() => {
@@ -677,6 +728,277 @@ describe('LibrarySyncService', () => {
 
       expect(results[0]!.itemsRemoved).toBe(1); // item-2 removed
       expect(db.delete).toHaveBeenCalled();
+    });
+  });
+
+  describe('incremental sync', () => {
+    const serverId = randomUUID();
+
+    beforeEach(() => {
+      // Reset Redis client between tests
+      initLibrarySyncRedis(null as unknown as Redis);
+    });
+
+    it('does full scan when no lastSyncedAt exists', async () => {
+      const mockServer = createMockServer({ id: serverId });
+      const mockItems = [createMockLibraryItem({ ratingKey: 'item-1' })];
+      const mockRedis = createMockRedis({
+        get: vi.fn().mockResolvedValue(null), // no sync state
+      });
+      initLibrarySyncRedis(mockRedis);
+
+      setupSelectForIncrementalTest(mockServer);
+      mockInsertChain([{ id: randomUUID() }]);
+      mockDeleteChain();
+      mockTransaction();
+
+      const client = mockMediaServerClient({
+        libraries: [createMockLibrary()],
+        items: mockItems,
+        totalCount: 1,
+      });
+
+      const service = new LibrarySyncService();
+      await service.syncServer(serverId);
+
+      // Full scan uses getLibraryItems (not getLibraryItemsSince) for the batch loop
+      expect(client.getLibraryItems).toHaveBeenCalledWith('1', { offset: 0, limit: 100 });
+      expect(client.getLibraryItemsSince).not.toHaveBeenCalled();
+    });
+
+    it('does full scan when totalCount < lastItemCount', async () => {
+      const mockServer = createMockServer({ id: serverId });
+      const mockItems = [createMockLibraryItem({ ratingKey: 'item-1' })];
+      // Redis says we had 100 items, but server now reports 90 — items were removed
+      const mockRedis = createMockRedis({
+        get: vi
+          .fn()
+          .mockResolvedValueOnce(new Date(Date.now() - 60_000).toISOString()) // lastSyncedAt
+          .mockResolvedValueOnce('100'), // lastItemCount
+      });
+      initLibrarySyncRedis(mockRedis);
+
+      setupSelectForIncrementalTest(mockServer);
+      mockInsertChain([{ id: randomUUID() }]);
+      mockDeleteChain();
+      mockTransaction();
+
+      const client = mockMediaServerClient({
+        libraries: [createMockLibrary()],
+        items: mockItems,
+        totalCount: 90, // fewer than lastItemCount=100
+      });
+
+      const service = new LibrarySyncService();
+      await service.syncServer(serverId);
+
+      expect(client.getLibraryItems).toHaveBeenCalledWith('1', { offset: 0, limit: 100 });
+      expect(client.getLibraryItemsSince).not.toHaveBeenCalled();
+    });
+
+    it('does full scan when triggeredBy is manual', async () => {
+      const mockServer = createMockServer({ id: serverId });
+      const mockItems = [createMockLibraryItem({ ratingKey: 'item-1' })];
+      // Redis has valid sync state — but it's a manual trigger
+      const mockRedis = createMockRedis({
+        get: vi
+          .fn()
+          .mockResolvedValueOnce(new Date(Date.now() - 60_000).toISOString()) // lastSyncedAt
+          .mockResolvedValueOnce('1'), // lastItemCount matches
+      });
+      initLibrarySyncRedis(mockRedis);
+
+      setupSelectForIncrementalTest(mockServer);
+      mockInsertChain([{ id: randomUUID() }]);
+      mockDeleteChain();
+      mockTransaction();
+
+      const client = mockMediaServerClient({
+        libraries: [createMockLibrary()],
+        items: mockItems,
+        totalCount: 1,
+      });
+
+      const service = new LibrarySyncService();
+      await service.syncServer(serverId, undefined, 'manual');
+
+      expect(client.getLibraryItems).toHaveBeenCalledWith('1', { offset: 0, limit: 100 });
+      expect(client.getLibraryItemsSince).not.toHaveBeenCalled();
+    });
+
+    it('does incremental scan when conditions are met', async () => {
+      const mockServer = createMockServer({ id: serverId });
+      const newItem = createMockLibraryItem({ ratingKey: 'new-item' });
+      const lastSyncedAt = new Date(Date.now() - 60_000);
+      const mockRedis = createMockRedis({
+        get: vi
+          .fn()
+          .mockResolvedValueOnce(lastSyncedAt.toISOString()) // lastSyncedAt
+          .mockResolvedValueOnce('5'), // lastItemCount = 5, totalCount = 6
+      });
+      initLibrarySyncRedis(mockRedis);
+
+      setupSelectForIncrementalTest(mockServer);
+      mockInsertChain([{ id: randomUUID() }]);
+      mockDeleteChain();
+      mockTransaction();
+
+      const client = mockMediaServerClient({
+        libraries: [createMockLibrary()],
+        items: [], // full scan returns nothing (shouldn't be called for batch loop)
+        totalCount: 6,
+        itemsSince: [newItem],
+        totalCountSince: 1,
+      });
+
+      const service = new LibrarySyncService();
+      const results = await service.syncServer(serverId);
+
+      expect(client.getLibraryItemsSince).toHaveBeenCalledWith('1', expect.any(Date));
+      expect(client.getLibraryLeavesSince).toHaveBeenCalled();
+      expect(results[0]!.itemsAdded).toBe(1);
+      expect(results[0]!.itemsRemoved).toBe(0);
+      expect(results[0]!.snapshotId).toBeNull();
+    });
+
+    it('skips when incremental finds 0 items and count matches', async () => {
+      const mockServer = createMockServer({ id: serverId });
+      const lastSyncedAt = new Date(Date.now() - 60_000);
+      const mockRedis = createMockRedis({
+        get: vi
+          .fn()
+          .mockResolvedValueOnce(lastSyncedAt.toISOString()) // lastSyncedAt
+          .mockResolvedValueOnce('5'), // lastItemCount = 5, totalCount = 5 (unchanged)
+      });
+      initLibrarySyncRedis(mockRedis);
+
+      setupSelectForIncrementalTest(mockServer);
+      mockInsertChain([]);
+      mockDeleteChain();
+      mockTransaction();
+
+      const client = mockMediaServerClient({
+        libraries: [createMockLibrary()],
+        items: [],
+        totalCount: 5, // same as lastItemCount
+        itemsSince: [],
+        totalCountSince: 0, // 0 new items
+      });
+
+      const service = new LibrarySyncService();
+      const results = await service.syncServer(serverId);
+
+      expect(results[0]!.itemsProcessed).toBe(0);
+      expect(results[0]!.itemsAdded).toBe(0);
+      expect(results[0]!.itemsRemoved).toBe(0);
+      expect(results[0]!.snapshotId).toBeNull();
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(client.getLibraryItemsSince).toHaveBeenCalledTimes(1);
+      expect(client.getLibraryLeavesSince).toHaveBeenCalledTimes(1);
+      expect(mockRedis.set).toHaveBeenCalled();
+    });
+
+    it('fetches new episodes even when no new shows exist', async () => {
+      const mockServer = createMockServer({ id: serverId });
+      const lastSyncedAt = new Date(Date.now() - 60_000);
+      const newEpisode = createMockLibraryItem({ ratingKey: 'new-ep-1', mediaType: 'episode' });
+      const mockRedis = createMockRedis({
+        get: vi
+          .fn()
+          .mockResolvedValueOnce(lastSyncedAt.toISOString()) // lastSyncedAt
+          .mockResolvedValueOnce('5'), // lastItemCount = 5, totalCount = 5
+      });
+      initLibrarySyncRedis(mockRedis);
+
+      setupSelectForIncrementalTest(mockServer);
+      mockInsertChain([{ id: randomUUID() }]);
+      mockDeleteChain();
+      mockTransaction();
+
+      const client = mockMediaServerClient({
+        libraries: [createMockLibrary()],
+        items: [],
+        totalCount: 5, // same as lastItemCount — no new shows
+        itemsSince: [], // no new top-level items
+        totalCountSince: 0,
+        leavesSince: [newEpisode], // but there ARE new episodes
+        leavesCountSince: 1,
+      });
+
+      const service = new LibrarySyncService();
+      const results = await service.syncServer(serverId);
+
+      expect(results[0]!.itemsProcessed).toBe(1);
+      expect(results[0]!.itemsAdded).toBe(1);
+      expect(db.transaction).toHaveBeenCalled();
+      expect(client.getLibraryLeavesSince).toHaveBeenCalled();
+    });
+
+    it('falls back to full scan when getLibraryItemsSince throws', async () => {
+      const mockServer = createMockServer({ id: serverId });
+      const mockItems = [createMockLibraryItem({ ratingKey: 'item-1' })];
+      const lastSyncedAt = new Date(Date.now() - 60_000);
+      const mockRedis = createMockRedis({
+        get: vi.fn().mockResolvedValueOnce(lastSyncedAt.toISOString()).mockResolvedValueOnce('1'),
+      });
+      initLibrarySyncRedis(mockRedis);
+
+      setupSelectForIncrementalTest(mockServer);
+      mockInsertChain([{ id: randomUUID() }]);
+      mockDeleteChain();
+      mockTransaction();
+
+      const client = mockMediaServerClient({
+        libraries: [createMockLibrary()],
+        items: mockItems,
+        totalCount: 1,
+      });
+      // Make incremental fetch throw
+      client.getLibraryItemsSince.mockRejectedValue(new Error('API error'));
+
+      const service = new LibrarySyncService();
+      const results = await service.syncServer(serverId);
+
+      // Should fall back to full scan
+      expect(client.getLibraryItems).toHaveBeenCalledWith('1', { offset: 0, limit: 100 });
+      expect(results[0]!.itemsProcessed).toBe(1);
+    });
+
+    it('stores sync state with 5-minute safety margin', async () => {
+      const mockServer = createMockServer({ id: serverId });
+      const mockItems = [createMockLibraryItem({ ratingKey: 'item-1' })];
+      const mockRedis = createMockRedis({
+        get: vi.fn().mockResolvedValue(null),
+      });
+      initLibrarySyncRedis(mockRedis);
+
+      setupSelectForIncrementalTest(mockServer);
+      mockInsertChain([{ id: randomUUID() }]);
+      mockDeleteChain();
+      mockTransaction();
+
+      mockMediaServerClient({
+        libraries: [createMockLibrary()],
+        items: mockItems,
+        totalCount: 1,
+      });
+
+      const beforeSync = Date.now();
+      const service = new LibrarySyncService();
+      await service.syncServer(serverId);
+
+      // Redis.set should have been called with the sync state keys
+      const setCalls = vi.mocked(mockRedis.set).mock.calls;
+      // Find the call for LIBRARY_SYNC_LAST key
+      const lastCall = setCalls.find((call) => String(call[0]).includes('sync:last'));
+      expect(lastCall).toBeDefined();
+
+      // The stored timestamp should be ~5 minutes before now
+      const storedTimestamp = new Date(lastCall![1] as string).getTime();
+      const fiveMinutesMs = 5 * 60 * 1000;
+      // Should be roughly (beforeSync - 5min), with some tolerance
+      expect(storedTimestamp).toBeLessThan(beforeSync - fiveMinutesMs + 5000);
+      expect(storedTimestamp).toBeGreaterThan(beforeSync - fiveMinutesMs - 5000);
     });
   });
 });

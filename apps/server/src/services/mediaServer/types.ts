@@ -445,6 +445,36 @@ export interface IMediaServerClient {
       limit?: number;
     }
   ): Promise<{ items: MediaLibraryItem[]; totalCount: number }>;
+
+  /**
+   * Get items added or changed since a given date. Used for incremental sync.
+   * Optional — falls back to full fetch if not implemented.
+   *
+   * @param libraryId - The library identifier
+   * @param since - Only return items added or modified after this date
+   * @param options - Pagination options
+   * @returns Promise with items array and total count for pagination
+   */
+  getLibraryItemsSince?(
+    libraryId: string,
+    since: Date,
+    options?: { offset?: number; limit?: number }
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }>;
+
+  /**
+   * Get leaf items (episodes/tracks) added or changed since a given date.
+   * Optional — falls back to full fetch if not implemented.
+   *
+   * @param libraryId - The library identifier
+   * @param since - Only return items added or modified after this date
+   * @param options - Pagination options
+   * @returns Promise with items array and total count for pagination
+   */
+  getLibraryLeavesSince?(
+    libraryId: string,
+    since: Date,
+    options?: { offset?: number; limit?: number }
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }>;
 }
 
 /**
