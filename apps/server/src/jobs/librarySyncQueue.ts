@@ -343,8 +343,12 @@ export async function scheduleAutoSync(): Promise<void> {
     await librarySyncQueue.removeJobScheduler(scheduler.key);
   }
 
-  // Add repeatable job for each server
-  for (const server of allServers) {
+  // Add repeatable job for each server with staggered cron times
+  // Spreads DB, Redis, and API load across servers instead of firing all at once
+  for (let i = 0; i < allServers.length; i++) {
+    const server = allServers[i]!;
+    const minuteOffset = 10 + i * 4; // Server 0 at :10, server 1 at :14, etc.
+
     await librarySyncQueue.add(
       `auto-sync-${server.id}`,
       {
@@ -353,7 +357,7 @@ export async function scheduleAutoSync(): Promise<void> {
       },
       {
         repeat: {
-          pattern: '10 */12 * * *', // Every 12 hours at :10 (offset from :00 to avoid collision)
+          pattern: `${minuteOffset} */12 * * *`,
           tz: 'UTC',
         },
         jobId: `scheduled-${server.id}`,
@@ -362,7 +366,7 @@ export async function scheduleAutoSync(): Promise<void> {
   }
 
   console.log(
-    `[LibrarySync] Scheduled auto-sync for ${allServers.length} server(s) every 12 hours`
+    `[LibrarySync] Scheduled auto-sync for ${allServers.length} server(s) every 12 hours (staggered)`
   );
 
   // Queue an immediate sync on boot (non-blocking, staggered to avoid overwhelming startup)
