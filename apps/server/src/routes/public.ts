@@ -149,7 +149,7 @@ export const publicRoutes: FastifyPluginAsync = async (app) => {
    * GET /docs - OpenAPI 3.0 specification
    * No authentication required - allows integrations to discover the API
    */
-  app.get('/docs', async (request, reply) => {
+  app.get('/docs', { preHandler: [app.authenticatePublicApi] }, async (request, reply) => {
     const spec = generateOpenAPIDocument() as Record<string, unknown>;
 
     // Derive basePath from the pre-rewrite URL so Swagger UI's "Try it out"
