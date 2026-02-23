@@ -22,6 +22,7 @@ export default mergeConfig(
         'src/test/schemas.test.ts',
         'src/services/mediaServer/__tests__/*.test.ts',
         'src/services/mediaServer/shared/__tests__/*.test.ts',
+        'src/services/mediaServer/plex/__tests__/*.test.ts',
         'src/services/rules/__tests__/*.test.ts',
       ],
       coverage: {
