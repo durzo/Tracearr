@@ -226,6 +226,52 @@ export abstract class BaseMediaServerClient
   }
 
   /**
+   * Get library items modified since a given date
+   *
+   * Same as getLibraryItems but adds minDateLastSaved to filter to items
+   * whose metadata was saved after the given date. Used for incremental syncs.
+   *
+   * @param libraryId - The parent library ID
+   * @param since - Only return items saved after this date
+   * @param options - Pagination options
+   * @returns Items and total count for pagination tracking
+   */
+  async getLibraryItemsSince(
+    libraryId: string,
+    since: Date,
+    options?: { offset?: number; limit?: number }
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? 100;
+
+    const params = new URLSearchParams({
+      ParentId: libraryId,
+      Recursive: 'true',
+      IncludeItemTypes: 'Movie,Series,MusicArtist,MusicAlbum,Audio',
+      IsMissing: 'false',
+      Fields:
+        'ProviderIds,Path,MediaSources,DateCreated,ProductionYear,SeriesName,SeriesId,ParentIndexNumber,IndexNumber,Album,AlbumArtist,Artists',
+      StartIndex: String(offset),
+      Limit: String(limit),
+      minDateLastSaved: since.toISOString(),
+    });
+
+    const data = await fetchJson<{ Items?: unknown[]; TotalRecordCount?: number }>(
+      `${this.baseUrl}/Items?${params}`,
+      {
+        headers: this.buildHeaders(),
+        service: this.serverType,
+        timeout: 30000,
+      }
+    );
+
+    const items = this.parsers.parseLibraryItemsResponse(data.Items ?? []);
+    const totalCount = data.TotalRecordCount ?? items.length;
+
+    return { items, totalCount };
+  }
+
+  /**
    * Get all episodes (leaves) in a TV library with pagination
    *
    * For TV libraries, this fetches only Episode items, separate from Series/Season.
@@ -253,6 +299,52 @@ export abstract class BaseMediaServerClient
         'ProviderIds,Path,MediaSources,DateCreated,ProductionYear,SeriesName,SeriesId,ParentIndexNumber,IndexNumber',
       StartIndex: String(offset),
       Limit: String(limit),
+    });
+
+    const data = await fetchJson<{ Items?: unknown[]; TotalRecordCount?: number }>(
+      `${this.baseUrl}/Items?${params}`,
+      {
+        headers: this.buildHeaders(),
+        service: this.serverType,
+        timeout: 30000,
+      }
+    );
+
+    const items = this.parsers.parseLibraryItemsResponse(data.Items ?? []);
+    const totalCount = data.TotalRecordCount ?? items.length;
+
+    return { items, totalCount };
+  }
+
+  /**
+   * Get episodes modified since a given date
+   *
+   * Same as getLibraryLeaves but adds minDateLastSaved to filter to episodes
+   * whose metadata was saved after the given date. Used for incremental syncs.
+   *
+   * @param libraryId - The parent library ID
+   * @param since - Only return episodes saved after this date
+   * @param options - Pagination options
+   * @returns Episodes and total count for pagination tracking
+   */
+  async getLibraryLeavesSince(
+    libraryId: string,
+    since: Date,
+    options?: { offset?: number; limit?: number }
+  ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? 100;
+
+    const params = new URLSearchParams({
+      ParentId: libraryId,
+      Recursive: 'true',
+      IncludeItemTypes: 'Episode',
+      IsMissing: 'false',
+      Fields:
+        'ProviderIds,Path,MediaSources,DateCreated,ProductionYear,SeriesName,SeriesId,ParentIndexNumber,IndexNumber',
+      StartIndex: String(offset),
+      Limit: String(limit),
+      minDateLastSaved: since.toISOString(),
     });
 
     const data = await fetchJson<{ Items?: unknown[]; TotalRecordCount?: number }>(
