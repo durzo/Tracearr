@@ -228,47 +228,63 @@ export abstract class BaseMediaServerClient
   /**
    * Get library items modified since a given date
    *
-   * Same as getLibraryItems but adds minDateLastSaved to filter to items
-   * whose metadata was saved after the given date. Used for incremental syncs.
+   * Sorts by DateCreated descending and filters client-side. This works around
+   * Jellyfin/Emby's minDateLastSaved filter being unreliable (DateLastSaved is
+   * often unpopulated). We keep minDateLastSaved in the query so future server
+   * versions that fix the field will do the filtering server-side too.
+   *
+   * Handles its own pagination internally — the caller's offset/limit are ignored.
    *
    * @param libraryId - The parent library ID
-   * @param since - Only return items saved after this date
-   * @param options - Pagination options
+   * @param since - Only return items added after this date
    * @returns Items and total count for pagination tracking
    */
   async getLibraryItemsSince(
     libraryId: string,
     since: Date,
-    options?: { offset?: number; limit?: number }
+    _options?: { offset?: number; limit?: number }
   ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
-    const offset = options?.offset ?? 0;
-    const limit = options?.limit ?? 100;
+    const PAGE_SIZE = 200;
+    const allItems: MediaLibraryItem[] = [];
+    let serverOffset = 0;
 
-    const params = new URLSearchParams({
-      ParentId: libraryId,
-      Recursive: 'true',
-      IncludeItemTypes: 'Movie,Series,MusicArtist,MusicAlbum,Audio',
-      IsMissing: 'false',
-      Fields:
-        'ProviderIds,Path,MediaSources,DateCreated,ProductionYear,SeriesName,SeriesId,ParentIndexNumber,IndexNumber,Album,AlbumArtist,Artists',
-      StartIndex: String(offset),
-      Limit: String(limit),
-      minDateLastSaved: since.toISOString(),
-    });
+    while (true) {
+      const params = new URLSearchParams({
+        ParentId: libraryId,
+        Recursive: 'true',
+        IncludeItemTypes: 'Movie,Series,MusicArtist,MusicAlbum,Audio',
+        IsMissing: 'false',
+        Fields:
+          'ProviderIds,Path,MediaSources,DateCreated,ProductionYear,SeriesName,SeriesId,ParentIndexNumber,IndexNumber,Album,AlbumArtist,Artists',
+        StartIndex: String(serverOffset),
+        Limit: String(PAGE_SIZE),
+        SortBy: 'DateCreated',
+        SortOrder: 'Descending',
+        minDateLastSaved: since.toISOString(),
+      });
 
-    const data = await fetchJson<{ Items?: unknown[]; TotalRecordCount?: number }>(
-      `${this.baseUrl}/Items?${params}`,
-      {
-        headers: this.buildHeaders(),
-        service: this.serverType,
-        timeout: 30000,
-      }
-    );
+      const data = await fetchJson<{ Items?: unknown[]; TotalRecordCount?: number }>(
+        `${this.baseUrl}/Items?${params}`,
+        {
+          headers: this.buildHeaders(),
+          service: this.serverType,
+          timeout: 30000,
+        }
+      );
 
-    const items = this.parsers.parseLibraryItemsResponse(data.Items ?? []);
-    const totalCount = data.TotalRecordCount ?? items.length;
+      const rawItems = this.parsers.parseLibraryItemsResponse(data.Items ?? []);
+      if (rawItems.length === 0) break;
 
-    return { items, totalCount };
+      const filtered = rawItems.filter((item) => item.addedAt >= since);
+      allItems.push(...filtered);
+
+      // If some items on this page predate `since`, we've passed the cutoff
+      if (filtered.length < rawItems.length) break;
+
+      serverOffset += rawItems.length;
+    }
+
+    return { items: allItems, totalCount: allItems.length };
   }
 
   /**
@@ -319,47 +335,58 @@ export abstract class BaseMediaServerClient
   /**
    * Get episodes modified since a given date
    *
-   * Same as getLibraryLeaves but adds minDateLastSaved to filter to episodes
-   * whose metadata was saved after the given date. Used for incremental syncs.
+   * Same approach as getLibraryItemsSince — sorts by DateCreated descending
+   * and filters client-side to work around unreliable minDateLastSaved.
    *
    * @param libraryId - The parent library ID
-   * @param since - Only return episodes saved after this date
-   * @param options - Pagination options
+   * @param since - Only return episodes added after this date
    * @returns Episodes and total count for pagination tracking
    */
   async getLibraryLeavesSince(
     libraryId: string,
     since: Date,
-    options?: { offset?: number; limit?: number }
+    _options?: { offset?: number; limit?: number }
   ): Promise<{ items: MediaLibraryItem[]; totalCount: number }> {
-    const offset = options?.offset ?? 0;
-    const limit = options?.limit ?? 100;
+    const PAGE_SIZE = 200;
+    const allItems: MediaLibraryItem[] = [];
+    let serverOffset = 0;
 
-    const params = new URLSearchParams({
-      ParentId: libraryId,
-      Recursive: 'true',
-      IncludeItemTypes: 'Episode',
-      IsMissing: 'false',
-      Fields:
-        'ProviderIds,Path,MediaSources,DateCreated,ProductionYear,SeriesName,SeriesId,ParentIndexNumber,IndexNumber',
-      StartIndex: String(offset),
-      Limit: String(limit),
-      minDateLastSaved: since.toISOString(),
-    });
+    while (true) {
+      const params = new URLSearchParams({
+        ParentId: libraryId,
+        Recursive: 'true',
+        IncludeItemTypes: 'Episode',
+        IsMissing: 'false',
+        Fields:
+          'ProviderIds,Path,MediaSources,DateCreated,ProductionYear,SeriesName,SeriesId,ParentIndexNumber,IndexNumber',
+        StartIndex: String(serverOffset),
+        Limit: String(PAGE_SIZE),
+        SortBy: 'DateCreated',
+        SortOrder: 'Descending',
+        minDateLastSaved: since.toISOString(),
+      });
 
-    const data = await fetchJson<{ Items?: unknown[]; TotalRecordCount?: number }>(
-      `${this.baseUrl}/Items?${params}`,
-      {
-        headers: this.buildHeaders(),
-        service: this.serverType,
-        timeout: 30000,
-      }
-    );
+      const data = await fetchJson<{ Items?: unknown[]; TotalRecordCount?: number }>(
+        `${this.baseUrl}/Items?${params}`,
+        {
+          headers: this.buildHeaders(),
+          service: this.serverType,
+          timeout: 30000,
+        }
+      );
 
-    const items = this.parsers.parseLibraryItemsResponse(data.Items ?? []);
-    const totalCount = data.TotalRecordCount ?? items.length;
+      const rawItems = this.parsers.parseLibraryItemsResponse(data.Items ?? []);
+      if (rawItems.length === 0) break;
 
-    return { items, totalCount };
+      const filtered = rawItems.filter((item) => item.addedAt >= since);
+      allItems.push(...filtered);
+
+      if (filtered.length < rawItems.length) break;
+
+      serverOffset += rawItems.length;
+    }
+
+    return { items: allItems, totalCount: allItems.length };
   }
 
   // ==========================================================================

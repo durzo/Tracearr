@@ -14,8 +14,18 @@ function makeClient() {
   return new JellyfinClient({ url: 'http://jellyfin.local:8096', token: 'test-api-key' });
 }
 
-function makeItemsResponse(items: unknown[] = [], totalRecordCount = 0) {
-  return { Items: items, TotalRecordCount: totalRecordCount };
+function makeItem(id: string, dateCreated: string) {
+  return {
+    Id: id,
+    Name: `Item ${id}`,
+    Type: 'Movie',
+    DateCreated: dateCreated,
+    ProviderIds: {},
+  };
+}
+
+function makeItemsResponse(items: unknown[] = [], totalRecordCount?: number) {
+  return { Items: items, TotalRecordCount: totalRecordCount ?? items.length };
 }
 
 beforeEach(() => {
@@ -24,17 +34,29 @@ beforeEach(() => {
 
 describe('BaseMediaServerClient incremental fetch methods', () => {
   describe('getLibraryItemsSince', () => {
-    it('uses the /Items endpoint', async () => {
+    it('includes ParentId and Recursive=true in the query', async () => {
       mockFetchJson.mockResolvedValue(makeItemsResponse());
 
       const client = makeClient();
-      await client.getLibraryItemsSince('lib-1', new Date('2024-06-01T00:00:00Z'));
+      await client.getLibraryItemsSince('abc-123', new Date());
 
       const calledUrl = mockFetchJson.mock.calls[0]?.[0] as string;
-      expect(calledUrl).toContain('/Items?');
+      expect(calledUrl).toContain('ParentId=abc-123');
+      expect(calledUrl).toContain('Recursive=true');
     });
 
-    it('includes minDateLastSaved as ISO 8601 in the query string', async () => {
+    it('includes SortBy=DateCreated and SortOrder=Descending', async () => {
+      mockFetchJson.mockResolvedValue(makeItemsResponse());
+
+      const client = makeClient();
+      await client.getLibraryItemsSince('lib-1', new Date());
+
+      const calledUrl = mockFetchJson.mock.calls[0]?.[0] as string;
+      expect(calledUrl).toContain('SortBy=DateCreated');
+      expect(calledUrl).toContain('SortOrder=Descending');
+    });
+
+    it('includes minDateLastSaved for forward-compatibility', async () => {
       mockFetchJson.mockResolvedValue(makeItemsResponse());
 
       const since = new Date('2024-06-01T12:00:00.000Z');
@@ -43,26 +65,6 @@ describe('BaseMediaServerClient incremental fetch methods', () => {
 
       const calledUrl = mockFetchJson.mock.calls[0]?.[0] as string;
       expect(calledUrl).toContain(`minDateLastSaved=${encodeURIComponent(since.toISOString())}`);
-    });
-
-    it('includes ParentId in the query string', async () => {
-      mockFetchJson.mockResolvedValue(makeItemsResponse());
-
-      const client = makeClient();
-      await client.getLibraryItemsSince('abc-123', new Date());
-
-      const calledUrl = mockFetchJson.mock.calls[0]?.[0] as string;
-      expect(calledUrl).toContain('ParentId=abc-123');
-    });
-
-    it('includes Recursive=true', async () => {
-      mockFetchJson.mockResolvedValue(makeItemsResponse());
-
-      const client = makeClient();
-      await client.getLibraryItemsSince('lib-1', new Date());
-
-      const calledUrl = mockFetchJson.mock.calls[0]?.[0] as string;
-      expect(calledUrl).toContain('Recursive=true');
     });
 
     it('includes the expected IncludeItemTypes (no Episode)', async () => {
@@ -87,7 +89,7 @@ describe('BaseMediaServerClient incremental fetch methods', () => {
       expect(calledUrl).toContain('IsMissing=false');
     });
 
-    it('includes Fields parameter', async () => {
+    it('includes Fields parameter with ProviderIds', async () => {
       mockFetchJson.mockResolvedValue(makeItemsResponse());
 
       const client = makeClient();
@@ -98,40 +100,78 @@ describe('BaseMediaServerClient incremental fetch methods', () => {
       expect(calledUrl).toContain('ProviderIds');
     });
 
-    it('passes offset and limit as StartIndex and Limit', async () => {
-      mockFetchJson.mockResolvedValue(makeItemsResponse());
+    it('filters items client-side by addedAt >= since', async () => {
+      const since = new Date('2024-06-01T00:00:00Z');
+      mockFetchJson.mockResolvedValue(
+        makeItemsResponse([
+          makeItem('1', '2024-07-01T00:00:00Z'), // after since
+          makeItem('2', '2024-06-15T00:00:00Z'), // after since
+          makeItem('3', '2024-05-01T00:00:00Z'), // before since
+        ])
+      );
 
       const client = makeClient();
-      await client.getLibraryItemsSince('lib-1', new Date(), { offset: 100, limit: 50 });
+      const result = await client.getLibraryItemsSince('lib-1', since);
 
-      const calledUrl = mockFetchJson.mock.calls[0]?.[0] as string;
-      expect(calledUrl).toContain('StartIndex=100');
-      expect(calledUrl).toContain('Limit=50');
+      expect(result.items).toHaveLength(2);
+      expect(result.totalCount).toBe(2);
     });
 
-    it('defaults offset to 0 and limit to 100 when options are omitted', async () => {
-      mockFetchJson.mockResolvedValue(makeItemsResponse());
+    it('returns 0 items when all items predate the since date', async () => {
+      const since = new Date('2024-06-01T00:00:00Z');
+      mockFetchJson.mockResolvedValue(
+        makeItemsResponse([
+          makeItem('1', '2024-05-01T00:00:00Z'),
+          makeItem('2', '2024-04-01T00:00:00Z'),
+        ])
+      );
 
       const client = makeClient();
-      await client.getLibraryItemsSince('lib-1', new Date());
+      const result = await client.getLibraryItemsSince('lib-1', since);
 
-      const calledUrl = mockFetchJson.mock.calls[0]?.[0] as string;
-      expect(calledUrl).toContain('StartIndex=0');
-      expect(calledUrl).toContain('Limit=100');
+      expect(result.items).toHaveLength(0);
+      expect(result.totalCount).toBe(0);
     });
 
-    it('returns items and totalCount in the expected shape', async () => {
-      mockFetchJson.mockResolvedValue(makeItemsResponse([], 42));
+    it('stops paginating when a page has items older than since', async () => {
+      const since = new Date('2024-06-01T00:00:00Z');
+
+      // First page: all new items
+      mockFetchJson
+        .mockResolvedValueOnce(
+          makeItemsResponse(
+            Array.from({ length: 200 }, (_, i) => makeItem(`new-${i}`, '2024-07-01T00:00:00Z')),
+            500
+          )
+        )
+        // Second page: mix of new and old → should stop here
+        .mockResolvedValueOnce(
+          makeItemsResponse([
+            makeItem('new-200', '2024-06-15T00:00:00Z'),
+            makeItem('old-1', '2024-05-01T00:00:00Z'),
+          ])
+        );
+
+      const client = makeClient();
+      const result = await client.getLibraryItemsSince('lib-1', since);
+
+      expect(result.items).toHaveLength(201);
+      expect(result.totalCount).toBe(201);
+      expect(mockFetchJson).toHaveBeenCalledTimes(2);
+    });
+
+    it('stops paginating when the server returns an empty page', async () => {
+      mockFetchJson.mockResolvedValue(makeItemsResponse([]));
 
       const client = makeClient();
       const result = await client.getLibraryItemsSince('lib-1', new Date());
 
-      expect(result).toHaveProperty('items');
-      expect(result).toHaveProperty('totalCount', 42);
-      expect(Array.isArray(result.items)).toBe(true);
+      expect(result.items).toHaveLength(0);
+      expect(result.totalCount).toBe(0);
+      expect(mockFetchJson).toHaveBeenCalledTimes(1);
     });
 
-    it('falls back to items.length when TotalRecordCount is absent', async () => {
+    it('returns empty result when TotalRecordCount is 0 and no items', async () => {
       mockFetchJson.mockResolvedValue({ Items: [] });
 
       const client = makeClient();
@@ -143,17 +183,30 @@ describe('BaseMediaServerClient incremental fetch methods', () => {
   });
 
   describe('getLibraryLeavesSince', () => {
-    it('uses the /Items endpoint', async () => {
+    it('includes ParentId and Recursive=true', async () => {
       mockFetchJson.mockResolvedValue(makeItemsResponse());
 
       const client = makeClient();
-      await client.getLibraryLeavesSince('lib-2', new Date('2024-03-01T00:00:00Z'));
+      await client.getLibraryLeavesSince('lib-2', new Date());
 
       const calledUrl = mockFetchJson.mock.calls[0]?.[0] as string;
       expect(calledUrl).toContain('/Items?');
+      expect(calledUrl).toContain('ParentId=lib-2');
+      expect(calledUrl).toContain('Recursive=true');
     });
 
-    it('includes minDateLastSaved as ISO 8601 in the query string', async () => {
+    it('includes SortBy=DateCreated and SortOrder=Descending', async () => {
+      mockFetchJson.mockResolvedValue(makeItemsResponse());
+
+      const client = makeClient();
+      await client.getLibraryLeavesSince('lib-2', new Date());
+
+      const calledUrl = mockFetchJson.mock.calls[0]?.[0] as string;
+      expect(calledUrl).toContain('SortBy=DateCreated');
+      expect(calledUrl).toContain('SortOrder=Descending');
+    });
+
+    it('includes minDateLastSaved for forward-compatibility', async () => {
       mockFetchJson.mockResolvedValue(makeItemsResponse());
 
       const since = new Date('2024-03-20T08:30:00.000Z');
@@ -172,26 +225,6 @@ describe('BaseMediaServerClient incremental fetch methods', () => {
 
       const calledUrl = mockFetchJson.mock.calls[0]?.[0] as string;
       expect(calledUrl).toContain('IncludeItemTypes=Episode');
-    });
-
-    it('includes ParentId in the query string', async () => {
-      mockFetchJson.mockResolvedValue(makeItemsResponse());
-
-      const client = makeClient();
-      await client.getLibraryLeavesSince('xyz-999', new Date());
-
-      const calledUrl = mockFetchJson.mock.calls[0]?.[0] as string;
-      expect(calledUrl).toContain('ParentId=xyz-999');
-    });
-
-    it('includes Recursive=true', async () => {
-      mockFetchJson.mockResolvedValue(makeItemsResponse());
-
-      const client = makeClient();
-      await client.getLibraryLeavesSince('lib-2', new Date());
-
-      const calledUrl = mockFetchJson.mock.calls[0]?.[0] as string;
-      expect(calledUrl).toContain('Recursive=true');
     });
 
     it('includes IsMissing=false', async () => {
@@ -216,29 +249,58 @@ describe('BaseMediaServerClient incremental fetch methods', () => {
       expect(calledUrl).toContain('ParentIndexNumber');
     });
 
-    it('passes offset and limit as StartIndex and Limit', async () => {
-      mockFetchJson.mockResolvedValue(makeItemsResponse());
+    it('filters items client-side by addedAt >= since', async () => {
+      const since = new Date('2024-06-01T00:00:00Z');
+      mockFetchJson.mockResolvedValue(
+        makeItemsResponse([
+          {
+            Id: '1',
+            Name: 'New Episode',
+            Type: 'Episode',
+            DateCreated: '2024-07-01T00:00:00Z',
+            SeriesName: 'Test Show',
+            SeriesId: 'series-1',
+            ParentIndexNumber: 1,
+            IndexNumber: 1,
+          },
+          {
+            Id: '2',
+            Name: 'Old Episode',
+            Type: 'Episode',
+            DateCreated: '2024-05-01T00:00:00Z',
+            SeriesName: 'Test Show',
+            SeriesId: 'series-1',
+            ParentIndexNumber: 1,
+            IndexNumber: 2,
+          },
+        ])
+      );
 
       const client = makeClient();
-      await client.getLibraryLeavesSince('lib-2', new Date(), { offset: 200, limit: 25 });
+      const result = await client.getLibraryLeavesSince('lib-2', since);
 
-      const calledUrl = mockFetchJson.mock.calls[0]?.[0] as string;
-      expect(calledUrl).toContain('StartIndex=200');
-      expect(calledUrl).toContain('Limit=25');
+      expect(result.items).toHaveLength(1);
+      expect(result.totalCount).toBe(1);
     });
 
-    it('returns items and totalCount in the expected shape', async () => {
-      mockFetchJson.mockResolvedValue(makeItemsResponse([], 7));
+    it('stops paginating when hitting old items', async () => {
+      const since = new Date('2024-06-01T00:00:00Z');
+      mockFetchJson.mockResolvedValue(
+        makeItemsResponse([
+          makeItem('old-1', '2024-03-01T00:00:00Z'),
+          makeItem('old-2', '2024-02-01T00:00:00Z'),
+        ])
+      );
 
       const client = makeClient();
-      const result = await client.getLibraryLeavesSince('lib-2', new Date());
+      const result = await client.getLibraryLeavesSince('lib-2', since);
 
-      expect(result).toHaveProperty('items');
-      expect(result).toHaveProperty('totalCount', 7);
-      expect(Array.isArray(result.items)).toBe(true);
+      expect(result.items).toHaveLength(0);
+      expect(result.totalCount).toBe(0);
+      expect(mockFetchJson).toHaveBeenCalledTimes(1);
     });
 
-    it('falls back to items.length when TotalRecordCount is absent', async () => {
+    it('returns empty result when server returns no items', async () => {
       mockFetchJson.mockResolvedValue({ Items: [] });
 
       const client = makeClient();
