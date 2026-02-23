@@ -14,11 +14,26 @@ import { db } from '../db/client.js';
 import { servers, libraryItems, librarySnapshots } from '../db/schema.js';
 import { createMediaServerClient, type MediaLibraryItem } from './mediaServer/index.js';
 import type { LibrarySyncProgress } from '@tracearr/shared';
+import { REDIS_KEYS } from '@tracearr/shared';
 import { getHeavyOpsStatus } from '../jobs/heavyOpsLock.js';
+import type { Redis } from 'ioredis';
 
 // Constants for batching and rate limiting
 const BATCH_SIZE = 100;
 const BATCH_DELAY_MS = 150;
+const BATCH_DELAY_MS_INCREMENTAL = 50;
+const SYNC_SAFETY_MARGIN_MS = 5 * 60 * 1000; // 5 minutes
+const SYNC_STATE_TTL = 30 * 24 * 60 * 60; // 30 days in seconds
+
+let redisClient: Redis | null = null;
+
+/**
+ * Initialize the library sync service with a Redis client.
+ * Required to enable incremental sync state persistence.
+ */
+export function initLibrarySyncRedis(redis: Redis): void {
+  redisClient = redis;
+}
 
 /**
  * Result of syncing a single library
@@ -57,9 +72,14 @@ export class LibrarySyncService {
    *
    * @param serverId - The server ID to sync
    * @param onProgress - Optional callback for progress updates
+   * @param triggeredBy - Whether sync was triggered manually or by scheduler
    * @returns Array of SyncResult for each library
    */
-  async syncServer(serverId: string, onProgress?: OnProgressCallback): Promise<SyncResult[]> {
+  async syncServer(
+    serverId: string,
+    onProgress?: OnProgressCallback,
+    triggeredBy: 'manual' | 'scheduled' = 'scheduled'
+  ): Promise<SyncResult[]> {
     const results: SyncResult[] = [];
 
     // Get server configuration
@@ -121,7 +141,8 @@ export class LibrarySyncService {
         onProgress,
         totalLibraries,
         i,
-        startedAt
+        startedAt,
+        triggeredBy
       );
 
       results.push(result);
@@ -162,15 +183,35 @@ export class LibrarySyncService {
     onProgress: OnProgressCallback | undefined,
     totalLibraries: number,
     processedLibraries: number,
-    startedAt: string
+    startedAt: string,
+    triggeredBy: 'manual' | 'scheduled'
   ): Promise<SyncResult> {
-    // Get previous item keys for delta detection
-    const previousKeys = await this.getPreviousItemKeys(serverId, libraryId);
-    const currentKeys = new Set<string>();
-    const allItems: MediaLibraryItem[] = [];
-
     // Fetch total count first
     const { totalCount } = await client.getLibraryItems(libraryId, { offset: 0, limit: 1 });
+
+    // Load sync state from Redis
+    const syncState = await this.getSyncState(serverId, libraryId);
+
+    // Decision tree: incremental only when we have prior state, count hasn't dropped, and not manual
+    const isIncremental =
+      syncState.lastSyncedAt !== null &&
+      syncState.lastItemCount !== null &&
+      totalCount >= syncState.lastItemCount &&
+      triggeredBy !== 'manual';
+
+    if (isIncremental) {
+      console.log(
+        `[LibrarySync] Incremental sync for ${libraryName}: last synced ${syncState.lastSyncedAt!.toISOString()}, ` +
+          `count ${syncState.lastItemCount} → ${totalCount}`
+      );
+    } else {
+      const reason = !syncState.lastSyncedAt
+        ? 'first sync'
+        : totalCount < (syncState.lastItemCount ?? 0)
+          ? 'items removed'
+          : 'manual trigger';
+      console.log(`[LibrarySync] Full sync for ${libraryName}: ${reason}`);
+    }
 
     // Report starting library
     if (onProgress) {
@@ -188,6 +229,128 @@ export class LibrarySyncService {
         startedAt,
       });
     }
+
+    // =========================================================================
+    // INCREMENTAL PATH
+    // =========================================================================
+    if (isIncremental && client.getLibraryItemsSince) {
+      try {
+        const { totalCount: incrementalCount } = await client.getLibraryItemsSince(
+          libraryId,
+          syncState.lastSyncedAt!,
+          { offset: 0, limit: 1 }
+        );
+
+        // Nothing new and count hasn't changed — skip entirely
+        if (incrementalCount === 0 && totalCount === syncState.lastItemCount) {
+          console.log(`[LibrarySync] ${libraryName}: no changes since last sync, skipping`);
+          await this.saveSyncState(serverId, libraryId, totalCount);
+          return {
+            serverId,
+            libraryId,
+            libraryName,
+            itemsProcessed: 0,
+            itemsAdded: 0,
+            itemsRemoved: 0,
+            snapshotId: null,
+          };
+        }
+
+        // Fetch new/updated items in batches
+        const allItems: MediaLibraryItem[] = [];
+        let offset = 0;
+
+        while (offset < incrementalCount) {
+          const { items } = await client.getLibraryItemsSince(libraryId, syncState.lastSyncedAt!, {
+            offset,
+            limit: BATCH_SIZE,
+          });
+
+          if (items.length === 0) break;
+
+          for (const item of items) {
+            allItems.push(item);
+          }
+
+          await this.upsertItems(serverId, libraryId, items);
+          offset += BATCH_SIZE;
+
+          if (offset < incrementalCount) {
+            await delay(BATCH_DELAY_MS_INCREMENTAL);
+          }
+        }
+
+        // Also fetch new/updated leaves incrementally (episodes for TV, tracks for music)
+        const hasShows = allItems.some((item) => item.mediaType === 'show');
+        const hasArtists = allItems.some((item) => item.mediaType === 'artist');
+
+        if ((hasShows || hasArtists) && client.getLibraryLeaves) {
+          if (client.getLibraryLeavesSince) {
+            try {
+              const { totalCount: leavesCount } = await client.getLibraryLeavesSince(
+                libraryId,
+                syncState.lastSyncedAt!,
+                { offset: 0, limit: 1 }
+              );
+
+              let leavesOffset = 0;
+              while (leavesOffset < leavesCount) {
+                const { items: leaves } = await client.getLibraryLeavesSince(
+                  libraryId,
+                  syncState.lastSyncedAt!,
+                  { offset: leavesOffset, limit: BATCH_SIZE }
+                );
+
+                if (leaves.length === 0) break;
+
+                for (const leaf of leaves) {
+                  allItems.push(leaf);
+                }
+
+                await this.upsertItems(serverId, libraryId, leaves);
+                leavesOffset += BATCH_SIZE;
+
+                if (leavesOffset < leavesCount) {
+                  await delay(BATCH_DELAY_MS_INCREMENTAL);
+                }
+              }
+            } catch (leafErr) {
+              console.warn(
+                `[LibrarySync] Incremental leaf fetch failed for ${libraryName}, skipping leaves:`,
+                leafErr
+              );
+            }
+          }
+        }
+
+        await this.saveSyncState(serverId, libraryId, totalCount);
+
+        return {
+          serverId,
+          libraryId,
+          libraryName,
+          itemsProcessed: allItems.length,
+          itemsAdded: allItems.length, // all fetched items are new or updated
+          itemsRemoved: 0, // totalCount >= lastItemCount, so no removals
+          snapshotId: null, // skip snapshot for incremental; last full sync snapshot remains valid
+        };
+      } catch (error) {
+        console.warn(
+          `[LibrarySync] Incremental fetch failed for ${libraryName}, falling back to full scan:`,
+          error
+        );
+        // Fall through to full scan path below
+      }
+    }
+
+    // =========================================================================
+    // FULL SCAN PATH (original code, unchanged)
+    // =========================================================================
+
+    // Get previous item keys for delta detection
+    const previousKeys = await this.getPreviousItemKeys(serverId, libraryId);
+    const currentKeys = new Set<string>();
+    const allItems: MediaLibraryItem[] = [];
 
     // Fetch items in batches with pagination
     let offset = 0;
@@ -409,6 +572,7 @@ export class LibrarySyncService {
       console.warn(
         `[LibrarySync] Skipping snapshot for ${libraryName}: has ${showCount} shows but no episodes (likely incomplete sync)`
       );
+      await this.saveSyncState(serverId, libraryId, totalCount);
       return {
         serverId,
         libraryId,
@@ -424,6 +588,7 @@ export class LibrarySyncService {
       console.warn(
         `[LibrarySync] Skipping snapshot for ${libraryName}: has ${artistCount} artists but no tracks (likely incomplete sync)`
       );
+      await this.saveSyncState(serverId, libraryId, totalCount);
       return {
         serverId,
         libraryId,
@@ -442,6 +607,7 @@ export class LibrarySyncService {
       console.log(
         `[LibrarySync] Skipping snapshot creation - ${heavyOps.jobType} job is running: ${heavyOps.description}`
       );
+      await this.saveSyncState(serverId, libraryId, totalCount);
       return {
         serverId,
         libraryId,
@@ -456,6 +622,8 @@ export class LibrarySyncService {
     // Create snapshot (may return null if data is invalid - e.g., no file sizes)
     const snapshot = await this.createSnapshot(serverId, libraryId, allItems);
 
+    await this.saveSyncState(serverId, libraryId, totalCount);
+
     return {
       serverId,
       libraryId,
@@ -465,6 +633,56 @@ export class LibrarySyncService {
       itemsRemoved: removedKeys.length,
       snapshotId: snapshot?.id ?? null,
     };
+  }
+
+  /**
+   * Load incremental sync state for a library from Redis.
+   */
+  private async getSyncState(
+    serverId: string,
+    libraryId: string
+  ): Promise<{ lastSyncedAt: Date | null; lastItemCount: number | null }> {
+    if (!redisClient) return { lastSyncedAt: null, lastItemCount: null };
+
+    const [lastStr, countStr] = await Promise.all([
+      redisClient.get(REDIS_KEYS.LIBRARY_SYNC_LAST(serverId, libraryId)),
+      redisClient.get(REDIS_KEYS.LIBRARY_SYNC_COUNT(serverId, libraryId)),
+    ]);
+
+    return {
+      lastSyncedAt: lastStr ? new Date(lastStr) : null,
+      lastItemCount: countStr ? parseInt(countStr, 10) : null,
+    };
+  }
+
+  /**
+   * Persist incremental sync state for a library to Redis.
+   * Stores the current time minus a safety margin so items added during sync
+   * are not missed on the next incremental run.
+   */
+  private async saveSyncState(
+    serverId: string,
+    libraryId: string,
+    itemCount: number
+  ): Promise<void> {
+    if (!redisClient) return;
+
+    const safeTimestamp = new Date(Date.now() - SYNC_SAFETY_MARGIN_MS).toISOString();
+
+    await Promise.all([
+      redisClient.set(
+        REDIS_KEYS.LIBRARY_SYNC_LAST(serverId, libraryId),
+        safeTimestamp,
+        'EX',
+        SYNC_STATE_TTL
+      ),
+      redisClient.set(
+        REDIS_KEYS.LIBRARY_SYNC_COUNT(serverId, libraryId),
+        String(itemCount),
+        'EX',
+        SYNC_STATE_TTL
+      ),
+    ]);
   }
 
   /**
