@@ -188,6 +188,11 @@ export const REDIS_KEYS = {
   get LIBRARY_RESOLUTION() {
     return `${_redisPrefix}tracearr:library:resolution`;
   },
+  // Library sync state
+  LIBRARY_SYNC_LAST: (serverId: string, libraryId: string) =>
+    `${_redisPrefix}tracearr:library:sync:last:${serverId}:${libraryId}`,
+  LIBRARY_SYNC_COUNT: (serverId: string, libraryId: string) =>
+    `${_redisPrefix}tracearr:library:sync:count:${serverId}:${libraryId}`,
   // Auth tokens
   REFRESH_TOKEN: (hash: string) => `${_redisPrefix}tracearr:refresh:${hash}`,
   PLEX_TEMP_TOKEN: (token: string) => `${_redisPrefix}tracearr:plex_temp:${token}`,
