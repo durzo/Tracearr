@@ -17,7 +17,7 @@ import { WS_EVENTS, REDIS_KEYS } from '@tracearr/shared';
 import type { LibrarySyncProgress } from '@tracearr/shared';
 import { db } from '../db/client.js';
 import { servers } from '../db/schema.js';
-import { librarySyncService } from '../services/librarySync.js';
+import { librarySyncService, initLibrarySyncRedis } from '../services/librarySync.js';
 import { getPubSubService } from '../services/cache.js';
 import { enqueueMaintenanceJob } from './maintenanceQueue.js';
 import { VALID_LIBRARY_ITEM_CONDITION } from '../utils/snapshotValidation.js';
@@ -92,6 +92,7 @@ export function initLibrarySyncQueue(redisUrl: string): void {
 
   connectionOptions = { url: redisUrl };
   redisClient = new Redis(redisUrl);
+  initLibrarySyncRedis(redisClient);
   const bullPrefix = `${getRedisPrefix()}bull`;
 
   librarySyncQueue = new Queue<LibrarySyncJobData>(QUEUE_NAME, {
@@ -169,7 +170,7 @@ export function startLibrarySyncWorker(): void {
         };
 
         // Execute sync
-        const results = await librarySyncService.syncServer(serverId, onProgress);
+        const results = await librarySyncService.syncServer(serverId, onProgress, triggeredBy);
 
         // Invalidate library caches after successful sync
         await invalidateLibraryCaches(serverId);
