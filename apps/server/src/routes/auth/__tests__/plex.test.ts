@@ -1201,6 +1201,7 @@ describe('Plex Auth Routes', () => {
         vi.mocked(getUserById).mockResolvedValue(existingOwner);
 
         // Mock the update calls
+        vi.mocked(db.update).mockReset();
         vi.mocked(db.update).mockReturnValue({
           set: vi.fn().mockReturnThis(),
           where: vi.fn().mockImplementation(() => {
