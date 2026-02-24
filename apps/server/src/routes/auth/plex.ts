@@ -186,6 +186,19 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
             })
             .where(eq(plexAccounts.id, account.id));
 
+          const refreshed = await db
+            .update(servers)
+            .set({ token: authResult.token, updatedAt: new Date() })
+            .where(eq(servers.plexAccountId, account.id))
+            .returning({ id: servers.id, name: servers.name });
+
+          if (refreshed.length > 0) {
+            app.log.info(
+              { plexAccountId: account.id, servers: refreshed.map((s) => s.name) },
+              'Refreshed Plex token for linked servers'
+            );
+          }
+
           // Update user display info
           await db
             .update(users)
