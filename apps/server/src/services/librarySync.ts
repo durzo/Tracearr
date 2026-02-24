@@ -148,6 +148,19 @@ export class LibrarySyncService {
       results.push(result);
     }
 
+    // Clean up items and snapshots for libraries that no longer exist on the server.
+    // Skip when server reports 0 libraries (e.g., during restart) to avoid deleting all data.
+    if (libraries.length > 0) {
+      const currentLibraryIds = new Set(libraries.map((lib) => lib.id));
+      const cleanup = await this.cleanupOrphanedLibraries(serverId, currentLibraryIds);
+      if (cleanup.removedLibraryIds.length > 0) {
+        console.log(
+          `[LibrarySync] Cleaned up ${cleanup.removedLibraryIds.length} orphaned libraries ` +
+            `for ${server.name}: ${cleanup.removedLibraryIds.join(', ')}`
+        );
+      }
+    }
+
     // Report completion
     if (onProgress) {
       const totalItems = results.reduce((sum, r) => sum + r.itemsProcessed, 0);
@@ -1062,6 +1075,78 @@ export class LibrarySyncService {
           )
         );
     }
+  }
+
+  /**
+   * Detect and remove items/snapshots for libraries that no longer exist on the media server.
+   *
+   * When users move content between libraries or delete/recreate libraries,
+   * items get new IDs and the old libraryId entries become orphans.
+   */
+  private async cleanupOrphanedLibraries(
+    serverId: string,
+    currentLibraryIds: Set<string>
+  ): Promise<{ removedLibraryIds: string[] }> {
+    // Find distinct library IDs that exist in the DB for this server
+    const itemLibraryRows = await db
+      .selectDistinct({ libraryId: libraryItems.libraryId })
+      .from(libraryItems)
+      .where(eq(libraryItems.serverId, serverId));
+
+    const snapshotLibraryRows = await db
+      .selectDistinct({ libraryId: librarySnapshots.libraryId })
+      .from(librarySnapshots)
+      .where(eq(librarySnapshots.serverId, serverId));
+
+    // Combine and subtract current library IDs to find orphans
+    const allDbLibraryIds = new Set<string>();
+    for (const row of itemLibraryRows) allDbLibraryIds.add(row.libraryId);
+    for (const row of snapshotLibraryRows) allDbLibraryIds.add(row.libraryId);
+
+    const orphanedIds = [...allDbLibraryIds].filter((id) => !currentLibraryIds.has(id));
+    if (orphanedIds.length === 0) {
+      return { removedLibraryIds: [] };
+    }
+
+    // Delete orphaned items and snapshots per library.
+    const cleanedIds: string[] = [];
+    let deletedSnapshots = false;
+
+    for (const libraryId of orphanedIds) {
+      try {
+        await db
+          .delete(libraryItems)
+          .where(and(eq(libraryItems.serverId, serverId), eq(libraryItems.libraryId, libraryId)));
+
+        await db
+          .delete(librarySnapshots)
+          .where(
+            and(eq(librarySnapshots.serverId, serverId), eq(librarySnapshots.libraryId, libraryId))
+          );
+
+        cleanedIds.push(libraryId);
+        if (snapshotLibraryRows.some((row) => row.libraryId === libraryId)) {
+          deletedSnapshots = true;
+        }
+      } catch (err) {
+        console.warn(`[LibrarySync] Failed to clean up orphaned library ${libraryId}:`, err);
+      }
+    }
+
+    if (deletedSnapshots) {
+      try {
+        await db.execute(
+          sql`CALL refresh_continuous_aggregate('library_stats_daily'::regclass, NULL, NULL)`
+        );
+        await db.execute(
+          sql`CALL refresh_continuous_aggregate('content_quality_daily'::regclass, NULL, NULL)`
+        );
+      } catch (err) {
+        console.warn('[LibrarySync] Failed to refresh aggregates after orphan cleanup:', err);
+      }
+    }
+
+    return { removedLibraryIds: cleanedIds };
   }
 }
 

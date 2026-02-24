@@ -16,9 +16,11 @@ import { randomUUID } from 'node:crypto';
 vi.mock('../../db/client.js', () => ({
   db: {
     select: vi.fn(),
+    selectDistinct: vi.fn(),
     insert: vi.fn(),
     delete: vi.fn(),
     transaction: vi.fn(),
+    execute: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -151,6 +153,22 @@ function mockTransaction() {
   return { tx, insertChain, deleteChain };
 }
 
+function mockSelectDistinctChain(results: unknown[][]) {
+  let callCount = 0;
+  const mock = vi.fn().mockImplementation(() => {
+    const result = results[callCount] ?? [];
+    callCount++;
+    return {
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue(result),
+      }),
+    } as never;
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  vi.mocked((db as any).selectDistinct as ReturnType<typeof vi.fn>).mockImplementation(mock);
+  return mock;
+}
+
 function mockMediaServerClient(options: {
   libraries?: ReturnType<typeof createMockLibrary>[];
   items?: MediaLibraryItem[];
@@ -224,6 +242,8 @@ function setupSelectForIncrementalTest(mockServer: ReturnType<typeof createMockS
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: no orphaned libraries (selectDistinct returns matching current libraries)
+  mockSelectDistinctChain([[], []]);
 });
 
 // ============================================================================
@@ -999,6 +1019,250 @@ describe('LibrarySyncService', () => {
       // Should be roughly (beforeSync - 5min), with some tolerance
       expect(storedTimestamp).toBeLessThan(beforeSync - fiveMinutesMs + 5000);
       expect(storedTimestamp).toBeGreaterThan(beforeSync - fiveMinutesMs - 5000);
+    });
+  });
+
+  describe('orphaned library cleanup', () => {
+    function setupSyncWithOrphans(options: {
+      server: ReturnType<typeof createMockServer>;
+      libraries: ReturnType<typeof createMockLibrary>[];
+      items: MediaLibraryItem[];
+      itemLibraryIds: { libraryId: string }[];
+      snapshotLibraryIds: { libraryId: string }[];
+    }) {
+      let selectCallCount = 0;
+      vi.mocked(db.select).mockImplementation(() => {
+        selectCallCount++;
+        const chain = {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockImplementation(() => {
+            const whereResult = Promise.resolve([]);
+            (whereResult as typeof whereResult & { limit: typeof vi.fn }).limit = vi
+              .fn()
+              .mockImplementation(() => {
+                if (selectCallCount === 1) return Promise.resolve([options.server]);
+                return Promise.resolve([]);
+              });
+            return whereResult;
+          }),
+          limit: vi.fn().mockImplementation(() => {
+            if (selectCallCount === 1) return Promise.resolve([options.server]);
+            return Promise.resolve([]);
+          }),
+          returning: vi.fn().mockResolvedValue([]),
+        };
+        return chain as never;
+      });
+
+      mockSelectDistinctChain([options.itemLibraryIds, options.snapshotLibraryIds]);
+      mockInsertChain([{ id: randomUUID() }]);
+      mockDeleteChain();
+      mockTransaction();
+      mockMediaServerClient({
+        libraries: options.libraries,
+        items: options.items,
+        totalCount: options.items.length,
+      });
+    }
+
+    it('should not clean up when no orphaned libraries exist', async () => {
+      const mockServer = createMockServer();
+      const libraries = [
+        createMockLibrary({ id: 'lib-1', name: 'Movies' }),
+        createMockLibrary({ id: 'lib-2', name: 'TV Shows', type: 'show' }),
+      ];
+
+      setupSyncWithOrphans({
+        server: mockServer,
+        libraries,
+        items: [createMockLibraryItem()],
+        // DB has same libraries as server
+        itemLibraryIds: [{ libraryId: 'lib-1' }, { libraryId: 'lib-2' }],
+        snapshotLibraryIds: [{ libraryId: 'lib-1' }, { libraryId: 'lib-2' }],
+      });
+
+      const service = new LibrarySyncService();
+      await service.syncServer(mockServer.id);
+
+      // Delete should only be called for normal syncLibrary operations, not for orphan cleanup
+      // Verify execute was NOT called (no aggregate refresh)
+      expect(db.execute).not.toHaveBeenCalled();
+    });
+
+    it('should clean up orphaned library items and snapshots', async () => {
+      const mockServer = createMockServer();
+      const libraries = [createMockLibrary({ id: 'lib-2', name: 'New Movies' })];
+
+      setupSyncWithOrphans({
+        server: mockServer,
+        libraries,
+        items: [createMockLibraryItem()],
+        itemLibraryIds: [{ libraryId: 'lib-1' }, { libraryId: 'lib-2' }],
+        snapshotLibraryIds: [{ libraryId: 'lib-1' }, { libraryId: 'lib-2' }],
+      });
+
+      const service = new LibrarySyncService();
+      await service.syncServer(mockServer.id);
+
+      const deleteCalls = vi.mocked(db.delete).mock.calls;
+      expect(deleteCalls.length).toBeGreaterThanOrEqual(2);
+
+      expect(db.execute).toHaveBeenCalledTimes(2);
+    });
+
+    it('should clean up multiple orphaned libraries', async () => {
+      const mockServer = createMockServer();
+      const libraries = [createMockLibrary({ id: 'lib-3', name: 'Current Library' })];
+
+      setupSyncWithOrphans({
+        server: mockServer,
+        libraries,
+        items: [createMockLibraryItem()],
+        // DB has lib-1, lib-2 (orphaned) and lib-3 (current)
+        itemLibraryIds: [{ libraryId: 'lib-1' }, { libraryId: 'lib-2' }, { libraryId: 'lib-3' }],
+        snapshotLibraryIds: [
+          { libraryId: 'lib-1' },
+          { libraryId: 'lib-2' },
+          { libraryId: 'lib-3' },
+        ],
+      });
+
+      const service = new LibrarySyncService();
+      await service.syncServer(mockServer.id);
+
+      // Should delete for both orphaned libraries (2 deletes each: items + snapshots)
+      const deleteCalls = vi.mocked(db.delete).mock.calls;
+      expect(deleteCalls.length).toBeGreaterThanOrEqual(4);
+
+      // Aggregate refresh should be called
+      expect(db.execute).toHaveBeenCalledTimes(2);
+    });
+
+    it('should skip aggregate refresh when only items are orphaned (no snapshots)', async () => {
+      const mockServer = createMockServer();
+      const libraries = [createMockLibrary({ id: 'lib-2', name: 'Current' })];
+
+      setupSyncWithOrphans({
+        server: mockServer,
+        libraries,
+        items: [createMockLibraryItem()],
+        // Orphaned lib-1 only in items, not in snapshots
+        itemLibraryIds: [{ libraryId: 'lib-1' }, { libraryId: 'lib-2' }],
+        snapshotLibraryIds: [{ libraryId: 'lib-2' }],
+      });
+
+      const service = new LibrarySyncService();
+      await service.syncServer(mockServer.id);
+
+      // Delete should be called for orphan cleanup
+      expect(db.delete).toHaveBeenCalled();
+
+      // Execute should NOT be called (no orphaned snapshots = no aggregate refresh)
+      expect(db.execute).not.toHaveBeenCalled();
+    });
+
+    it('should not fail sync when aggregate refresh throws', async () => {
+      const mockServer = createMockServer();
+      const libraries = [createMockLibrary({ id: 'lib-2', name: 'Current' })];
+
+      setupSyncWithOrphans({
+        server: mockServer,
+        libraries,
+        items: [createMockLibraryItem()],
+        itemLibraryIds: [{ libraryId: 'lib-1' }, { libraryId: 'lib-2' }],
+        snapshotLibraryIds: [{ libraryId: 'lib-1' }, { libraryId: 'lib-2' }],
+      });
+
+      // Make aggregate refresh fail
+      vi.mocked(db.execute).mockRejectedValue(new Error('TimescaleDB not available'));
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const service = new LibrarySyncService();
+
+      // Sync should complete without throwing
+      await expect(service.syncServer(mockServer.id)).resolves.not.toThrow();
+
+      // Warning should be logged
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to refresh aggregates'),
+        expect.any(Error)
+      );
+
+      warnSpy.mockRestore();
+    });
+
+    it('should not delete all data when server returns 0 libraries', async () => {
+      const mockServer = createMockServer();
+
+      setupSyncWithOrphans({
+        server: mockServer,
+        libraries: [], // Server returned no libraries (e.g., during restart)
+        items: [],
+        // DB has existing data that should NOT be deleted
+        itemLibraryIds: [{ libraryId: 'lib-1' }, { libraryId: 'lib-2' }],
+        snapshotLibraryIds: [{ libraryId: 'lib-1' }, { libraryId: 'lib-2' }],
+      });
+
+      const service = new LibrarySyncService();
+      await service.syncServer(mockServer.id);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((db as any).selectDistinct).not.toHaveBeenCalled();
+      // No aggregate refresh either
+      expect(db.execute).not.toHaveBeenCalled();
+    });
+
+    it('should continue cleanup if one library delete fails (compressed chunks)', async () => {
+      const mockServer = createMockServer();
+      const libraries = [createMockLibrary({ id: 'lib-3', name: 'Current' })];
+
+      setupSyncWithOrphans({
+        server: mockServer,
+        libraries,
+        items: [createMockLibraryItem()],
+        // Two orphaned libraries
+        itemLibraryIds: [{ libraryId: 'lib-1' }, { libraryId: 'lib-2' }, { libraryId: 'lib-3' }],
+        snapshotLibraryIds: [
+          { libraryId: 'lib-1' },
+          { libraryId: 'lib-2' },
+          { libraryId: 'lib-3' },
+        ],
+      });
+
+      // Make delete throw on the first call (simulating compressed chunk error)
+      // then succeed on subsequent calls
+      let deleteCallCount = 0;
+      vi.mocked(db.delete).mockImplementation(() => {
+        deleteCallCount++;
+        return {
+          where: vi.fn().mockImplementation(() => {
+            // Fail on the very first orphan delete (lib-1 items)
+            if (deleteCallCount === 1) {
+              return Promise.reject(new Error('cannot delete from compressed chunk'));
+            }
+            return Promise.resolve(undefined);
+          }),
+        } as never;
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const service = new LibrarySyncService();
+      // Sync should complete without throwing
+      await expect(service.syncServer(mockServer.id)).resolves.not.toThrow();
+
+      // Should have warned about the failed library
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to clean up orphaned library'),
+        expect.any(Error)
+      );
+
+      // Second orphaned library should still have been attempted
+      expect(deleteCallCount).toBeGreaterThan(1);
+
+      warnSpy.mockRestore();
     });
   });
 });
