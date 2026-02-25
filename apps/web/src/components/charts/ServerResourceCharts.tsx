@@ -4,8 +4,6 @@ import HighchartsReact from 'highcharts-react-official';
 import type { ServerResourceDataPoint } from '@tracearr/shared';
 import { ChartSkeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Cpu, MemoryStick } from 'lucide-react';
-
 // Colors matching Plex's style
 const COLORS = {
   process: '#00b4e4', // Plex-style cyan for "Plex Media Server"
@@ -16,18 +14,7 @@ const COLORS = {
   systemGradientEnd: 'rgba(204, 123, 159, 0.05)',
 };
 
-interface ServerResourceChartsProps {
-  data: ServerResourceDataPoint[] | undefined;
-  isLoading?: boolean;
-  averages?: {
-    hostCpu: number;
-    processCpu: number;
-    hostMemory: number;
-    processMemory: number;
-  } | null;
-}
-
-interface ResourceChartProps {
+export interface ResourceChartProps {
   title: string;
   icon: React.ReactNode;
   data: ServerResourceDataPoint[] | undefined;
@@ -52,7 +39,7 @@ const X_LABELS: Record<number, string> = {
 /**
  * Single resource chart (CPU or RAM)
  */
-function ResourceChart({
+export function ResourceChart({
   title,
   icon,
   data,
@@ -315,36 +302,5 @@ function ResourceChart({
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-/**
- * Server resource monitoring charts (CPU + RAM)
- * Displays real-time server resource utilization matching Plex's dashboard style
- */
-export function ServerResourceCharts({ data, isLoading, averages }: ServerResourceChartsProps) {
-  return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <ResourceChart
-        title="CPU"
-        icon={<Cpu className="h-4 w-4" />}
-        data={data}
-        processKey="processCpuUtilization"
-        hostKey="hostCpuUtilization"
-        processAvg={averages?.processCpu}
-        hostAvg={averages?.hostCpu}
-        isLoading={isLoading}
-      />
-      <ResourceChart
-        title="RAM"
-        icon={<MemoryStick className="h-4 w-4" />}
-        data={data}
-        processKey="processMemoryUtilization"
-        hostKey="hostMemoryUtilization"
-        processAvg={averages?.processMemory}
-        hostAvg={averages?.hostMemory}
-        isLoading={isLoading}
-      />
-    </div>
   );
 }

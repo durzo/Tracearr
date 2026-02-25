@@ -6,8 +6,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { NowPlayingCard } from '@/components/sessions';
 import { StreamCard } from '@/components/map';
 import { SessionDetailSheet } from '@/components/history/SessionDetailSheet';
-import { ServerResourceCharts } from '@/components/charts/ServerResourceCharts';
-import { ServerBandwidthChart } from '@/components/charts/BandwidthChart';
+import { DraggableResourceCards } from '@/components/charts/DraggableResourceCards';
 import { useDashboardStats, useActiveSessions } from '@/hooks/queries';
 import { useServerStatistics, useServerBandwidth } from '@/hooks/queries/useServers';
 import { useServer } from '@/hooks/useServer';
@@ -170,20 +169,16 @@ export function Dashboard() {
             <Activity className="text-primary h-5 w-5" />
             <h2 className="text-lg font-semibold">{t('dashboard.serverResources')}</h2>
           </div>
-          <ServerResourceCharts
-            data={serverStats?.data}
-            isLoading={statsChartLoading}
-            averages={averages}
+          <DraggableResourceCards
+            resourceData={serverStats?.data}
+            resourceLoading={statsChartLoading}
+            resourceAverages={averages}
+            bandwidthData={bandwidthStats?.data}
+            bandwidthLoading={bandwidthChartLoading}
+            bandwidthAverages={bandwidthAverages}
+            bandwidthPollInterval={bandwidthPollInterval}
+            onBandwidthPollIntervalChange={setBandwidthPollInterval}
           />
-          <div className="mt-4">
-            <ServerBandwidthChart
-              data={bandwidthStats?.data}
-              isLoading={bandwidthChartLoading}
-              averages={bandwidthAverages}
-              pollInterval={bandwidthPollInterval}
-              onPollIntervalChange={setBandwidthPollInterval}
-            />
-          </div>
         </section>
       )}
 
