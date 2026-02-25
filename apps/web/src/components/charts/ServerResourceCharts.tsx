@@ -324,7 +324,7 @@ function ResourceChart({
  */
 export function ServerResourceCharts({ data, isLoading, averages }: ServerResourceChartsProps) {
   return (
-    <div className="grid gap-4 md:grid-cols-2">
+    <>
       <ResourceChart
         title="CPU"
         icon={<Cpu className="h-4 w-4" />}
@@ -345,6 +345,6 @@ export function ServerResourceCharts({ data, isLoading, averages }: ServerResour
         hostAvg={averages?.hostMemory}
         isLoading={isLoading}
       />
-    </div>
+    </>
   );
 }
