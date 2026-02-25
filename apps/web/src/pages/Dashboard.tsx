@@ -170,12 +170,12 @@ export function Dashboard() {
             <Activity className="text-primary h-5 w-5" />
             <h2 className="text-lg font-semibold">{t('dashboard.serverResources')}</h2>
           </div>
-          <ServerResourceCharts
-            data={serverStats?.data}
-            isLoading={statsChartLoading}
-            averages={averages}
-          />
-          <div className="mt-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            <ServerResourceCharts
+              data={serverStats?.data}
+              isLoading={statsChartLoading}
+              averages={averages}
+            />
             <ServerBandwidthChart
               data={bandwidthStats?.data}
               isLoading={bandwidthChartLoading}
