@@ -266,6 +266,28 @@ const StatsResponse = z
   })
   .openapi('StatsResponse');
 
+const StatsTodayQuery = z.object({
+  serverId: ServerIdParam.optional().openapi({ description: 'Filter by server' }),
+  timezone: z.string().default('UTC').openapi({
+    description: 'IANA timezone for "today" calculation',
+    example: 'America/New_York',
+  }),
+});
+
+const StatsTodayResponse = z
+  .object({
+    activeStreams: z.number().int().openapi({ example: 5 }),
+    todayPlays: z
+      .number()
+      .int()
+      .openapi({ description: 'Validated plays (>= 2 min)', example: 47 }),
+    watchTimeHours: z.number().openapi({ description: 'Hours watched today', example: 12.5 }),
+    alertsLast24h: z.number().int().openapi({ example: 3 }),
+    activeUsersToday: z.number().int().openapi({ example: 8 }),
+    timestamp: z.iso.datetime(),
+  })
+  .openapi('StatsTodayResponse');
+
 registry.registerPath({
   method: 'get',
   path: '/api/v1/public/stats',
@@ -279,6 +301,25 @@ registry.registerPath({
       description: 'Statistics retrieved',
       content: { 'application/json': { schema: StatsResponse } },
     },
+    401: { description: 'Invalid or missing API key' },
+  },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/public/stats/today',
+  tags: ['Public API'],
+  summary: "Today's dashboard statistics",
+  description:
+    'Dashboard metrics for "today" in the specified timezone. Includes active streams, validated plays (>= 2 min), watch time, alerts, and active users.',
+  security: [{ bearerAuth: [] }],
+  request: { query: StatsTodayQuery },
+  responses: {
+    200: {
+      description: 'Statistics retrieved',
+      content: { 'application/json': { schema: StatsTodayResponse } },
+    },
+    400: { description: 'Invalid timezone or serverId' },
     401: { description: 'Invalid or missing API key' },
   },
 });
@@ -357,6 +398,30 @@ const StreamsSummaryOnlyResponse = z
   })
   .openapi('StreamsSummaryOnlyResponse');
 
+const TerminateStreamBody = z
+  .object({
+    reason: z.string().optional().openapi({
+      description: 'Message to display to user before termination',
+    }),
+  })
+  .openapi('TerminateStreamBody');
+
+const TerminateStreamResponse = z
+  .object({
+    success: z.literal(true),
+    terminationLogId: z.uuid(),
+    message: z.string().openapi({ example: 'Stream termination command sent successfully' }),
+  })
+  .openapi('TerminateStreamResponse');
+
+const TerminateStreamErrorResponse = z
+  .object({
+    success: z.literal(false),
+    error: z.string(),
+    terminationLogId: z.uuid(),
+  })
+  .openapi('TerminateStreamErrorResponse');
+
 registry.registerPath({
   method: 'get',
   path: '/api/v1/public/streams',
@@ -377,6 +442,36 @@ registry.registerPath({
       },
     },
     401: { description: 'Invalid or missing API key' },
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/public/streams/{id}/terminate',
+  tags: ['Public API'],
+  summary: 'Terminate active stream',
+  description:
+    'Stop an active playback session. Optionally display a message to the user (supported on all platforms).',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({ id: z.uuid().openapi({ description: 'Session ID from /streams' }) }),
+    body: {
+      content: { 'application/json': { schema: TerminateStreamBody } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Termination successful',
+      content: { 'application/json': { schema: TerminateStreamResponse } },
+    },
+    400: { description: 'Invalid session ID or request body' },
+    401: { description: 'Invalid or missing API key' },
+    404: { description: 'Session not found' },
+    409: { description: 'Session already ended' },
+    500: {
+      description: 'Termination failed',
+      content: { 'application/json': { schema: TerminateStreamErrorResponse } },
+    },
   },
 });
 
