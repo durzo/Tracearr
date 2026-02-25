@@ -115,12 +115,6 @@ export function ServerBandwidthChart({
       remoteData.push([x, (point.wanBytes * 8) / point.timespan]);
     }
 
-    // Dynamic y-axis max: 20% above peak value so the chart fills the space
-    // Minimum of 1000 bps (1 Kbps) so the y-axis always has labels, even with zero traffic
-    const allValues = [...localData, ...remoteData].map(([, y]) => y);
-    const peakValue = Math.max(...allValues, 0);
-    const yMax = Math.max(1000, Math.ceil(peakValue * 1.2));
-
     return {
       chart: {
         type: 'area',
@@ -168,7 +162,7 @@ export function ServerBandwidthChart({
         },
         gridLineColor: 'hsl(var(--border) / 0.5)',
         min: 0,
-        max: yMax,
+        softMax: 1000, // 1 Kbps floor so the axis has labels when traffic is zero
       },
       plotOptions: {
         area: {
