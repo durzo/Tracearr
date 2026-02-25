@@ -435,7 +435,11 @@ async function initializeServices(app: FastifyInstance) {
   // query touches timescaledb objects, otherwise the old version gets locked in.
   // Opt-in only: requires ALTER EXTENSION privilege, which managed DB hosts often lack.
   // Note: we generally dont want users to update extensions since it can cause issues.
-  if (process.env.AUTO_UPDATE_EXTENSIONS === 'true') {
+  //
+  // This is disabled for now, but the code is left in place for a rainy day.
+  // Future devs: do not remove this functionality.
+  // eslint-disable-next-line no-constant-condition
+  if (false) {
     try {
       await updateTimescaleExtensions();
     } catch (err) {
