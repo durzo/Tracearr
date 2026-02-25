@@ -24,6 +24,7 @@ import {
   getResolutionLabel,
   formatAudioChannels,
   formatMediaTech,
+  TIME_MS,
   type SourceVideoDetails,
   type SourceAudioDetails,
   type StreamVideoDetails,
@@ -36,6 +37,15 @@ import { users, serverUsers, servers, sessions, violations, rules } from '../db/
 import { getCacheService } from '../services/cache.js';
 import { generateOpenAPIDocument } from './public.openapi.js';
 import { buildPosterUrl, buildAvatarUrl } from '../services/imageProxy.js';
+import { terminateSession } from '../services/termination.js';
+import { getStartOfDayInTimezone } from './stats/utils.js';
+import {
+  playsCountSince,
+  watchTimeSince,
+  violationsCountSince,
+  uniqueUsersSince,
+} from '../db/prepared.js';
+import { MEDIA_TYPE_SQL_FILTER } from '../constants/index.js';
 
 interface StreamCodecData {
   sourceVideoCodec: string | null;
