@@ -425,6 +425,8 @@ export {
   formatBitrate,
   formatMediaTech,
   getResolutionLabel,
+  formatResolutionDisplay,
+  type ResolutionLabel,
   formatAudioChannels,
   getDistanceUnit,
   getSpeedUnit,

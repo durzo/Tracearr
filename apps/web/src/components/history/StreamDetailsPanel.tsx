@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import {
   formatBitrate,
   formatMediaTech,
+  formatResolutionDisplay,
   type SourceVideoDetails,
   type SourceAudioDetails,
   type StreamVideoDetails,
@@ -63,38 +64,6 @@ function UnavailableBitrate() {
       </TooltipContent>
     </Tooltip>
   );
-}
-
-// Format resolution using width-first logic to correctly classify
-// widescreen/cinemascope content (e.g., 1920x800 = 1080p, not 720p)
-function formatResolution(
-  width: number | null | undefined,
-  height: number | null | undefined
-): string {
-  if (!width && !height) return '—';
-
-  // Determine label using width-first logic (industry standard)
-  let label: string | undefined;
-  if (width) {
-    if (width >= 3840) label = '4K';
-    else if (width >= 1920) label = '1080p';
-    else if (width >= 1280) label = '720p';
-    else if (width >= 854) label = '480p';
-    else label = 'SD';
-  } else if (height) {
-    // Fallback to height when width unavailable
-    if (height >= 2160) label = '4K';
-    else if (height >= 1080) label = '1080p';
-    else if (height >= 720) label = '720p';
-    else if (height >= 480) label = '480p';
-    else label = 'SD';
-  }
-
-  // Format with dimensions if available
-  if (width && height) return `${width}×${height} (${label})`;
-  if (width) return `${width}w (${label})`;
-  if (height) return `${height}p (${label})`;
-  return '—';
 }
 
 // Format channels (e.g., 8 -> "7.1", 6 -> "5.1", 2 -> "Stereo")
@@ -336,8 +305,8 @@ export function StreamDetailsPanel({
 
               <ComparisonRow
                 label="Resolution"
-                sourceValue={formatResolution(sourceVideoWidth, sourceVideoHeight)}
-                streamValue={formatResolution(
+                sourceValue={formatResolutionDisplay(sourceVideoWidth, sourceVideoHeight)}
+                streamValue={formatResolutionDisplay(
                   streamVideoDetails?.width ?? sourceVideoWidth,
                   streamVideoDetails?.height ?? sourceVideoHeight
                 )}

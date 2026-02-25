@@ -606,43 +606,104 @@ export function formatMediaTech(value: string | null | undefined): string {
   return MEDIA_TECH_DISPLAY[lower] ?? value.toUpperCase();
 }
 
+// Resolution tier values for comparison
+const RESOLUTION_TIERS = {
+  '8K': 6,
+  '4K': 5,
+  '1440p': 4,
+  '1080p': 3,
+  '720p': 2,
+  '480p': 1,
+  SD: 0,
+} as const;
+export type ResolutionLabel = keyof typeof RESOLUTION_TIERS;
+
+function getResolutionFromWidth(width: number): ResolutionLabel {
+  if (width >= 7680) return '8K';
+  if (width >= 3840) return '4K';
+  if (width >= 2560) return '1440p';
+  if (width >= 1920) return '1080p';
+  if (width >= 1280) return '720p';
+  if (width >= 854) return '480p';
+  return 'SD';
+}
+
+function getResolutionFromHeight(height: number): ResolutionLabel {
+  if (height >= 4320) return '8K';
+  if (height >= 2160) return '4K';
+  if (height >= 1440) return '1440p';
+  if (height >= 1080) return '1080p';
+  if (height >= 720) return '720p';
+  if (height >= 480) return '480p';
+  return 'SD';
+}
+
 /**
  * Get video resolution label from width and height.
- * Uses width-first logic to correctly classify widescreen/cinemascope content
- * (e.g., 1920x800 = 1080p, not 720p based on height alone).
+ * Uses MAX of width-based and height-based logic to correctly classify all aspect ratios:
+ * - Widescreen/cinemascope: 1920x800 → max(1080p, 720p) = 1080p
+ * - 4:3 aspect ratio: 1440x1080 → max(720p, 1080p) = 1080p
+ * - Standard 16:9: 1920x1080 → max(1080p, 1080p) = 1080p
  *
  * @param width - Video width in pixels
  * @param height - Video height in pixels
- * @returns Resolution label: "4K", "1080p", "720p", "480p", "SD", or null if unknown
+ * @returns Resolution label: "8K", "4K", "1440p", "1080p", "720p", "480p", "SD", or null
  *
  * @example
+ * getResolutionLabel(7680, 4320) // "8K"
  * getResolutionLabel(3840, 2160) // "4K"
+ * getResolutionLabel(2560, 1440) // "1440p"
  * getResolutionLabel(1920, 1080) // "1080p"
- * getResolutionLabel(1920, 800)  // "1080p" (cinemascope)
+ * getResolutionLabel(1920, 800)  // "1080p" (cinemascope - width indicates quality)
+ * getResolutionLabel(1440, 1080) // "1080p" (4:3 - height indicates quality)
  * getResolutionLabel(1280, 720)  // "720p"
  * getResolutionLabel(null, 1080) // "1080p" (fallback to height)
  */
 export function getResolutionLabel(
   width: number | null | undefined,
   height: number | null | undefined
-): string | null {
-  // Prefer width-based classification (industry standard)
-  if (width) {
-    if (width >= 3840) return '4K';
-    if (width >= 1920) return '1080p';
-    if (width >= 1280) return '720p';
-    if (width >= 854) return '480p';
-    return 'SD';
+): ResolutionLabel | null {
+  if (width && height) {
+    const widthRes = getResolutionFromWidth(width);
+    const heightRes = getResolutionFromHeight(height);
+    return RESOLUTION_TIERS[widthRes] >= RESOLUTION_TIERS[heightRes] ? widthRes : heightRes;
   }
-  // Fallback to height when width unavailable
+  // Width-only
+  if (width) {
+    return getResolutionFromWidth(width);
+  }
+  // Height-only fallback
   if (height) {
-    if (height >= 2160) return '4K';
-    if (height >= 1080) return '1080p';
-    if (height >= 720) return '720p';
-    if (height >= 480) return '480p';
-    return 'SD';
+    return getResolutionFromHeight(height);
   }
   return null;
+}
+
+/**
+ * Format video resolution with dimensions and label for display.
+ *
+ * @param width - Video width in pixels
+ * @param height - Video height in pixels
+ * @returns Formatted string like "1920×1080 (1080p)" or "—" if unknown
+ *
+ * @example
+ * formatResolutionDisplay(1920, 1080) // "1920×1080 (1080p)"
+ * formatResolutionDisplay(1440, 1080) // "1440×1080 (1080p)" - 4:3 correctly labeled
+ * formatResolutionDisplay(1920, 800)  // "1920×800 (1080p)" - cinemascope correctly labeled
+ * formatResolutionDisplay(null, 1080) // "1080p (1080p)"
+ * formatResolutionDisplay(null, null) // "—"
+ */
+export function formatResolutionDisplay(
+  width: number | null | undefined,
+  height: number | null | undefined
+): string {
+  const label = getResolutionLabel(width, height);
+  if (!label) return '—';
+
+  if (width && height) return `${width}×${height} (${label})`;
+  if (width) return `${width}w (${label})`;
+  if (height) return `${height}p (${label})`;
+  return '—';
 }
 
 /**
