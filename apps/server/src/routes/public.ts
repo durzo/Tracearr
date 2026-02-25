@@ -24,7 +24,8 @@ import {
   getResolutionLabel,
   formatAudioChannels,
   formatMediaTech,
-  TIME_MS,
+  sessionIdParamSchema,
+  terminateSessionBodySchema,
   type SourceVideoDetails,
   type SourceAudioDetails,
   type StreamVideoDetails,
@@ -38,14 +39,7 @@ import { getCacheService } from '../services/cache.js';
 import { generateOpenAPIDocument } from './public.openapi.js';
 import { buildPosterUrl, buildAvatarUrl } from '../services/imageProxy.js';
 import { terminateSession } from '../services/termination.js';
-import { getStartOfDayInTimezone } from './stats/utils.js';
-import {
-  playsCountSince,
-  watchTimeSince,
-  violationsCountSince,
-  uniqueUsersSince,
-} from '../db/prepared.js';
-import { MEDIA_TYPE_SQL_FILTER } from '../constants/index.js';
+import { getDashboardStats } from '../services/dashboardStats.js';
 
 interface StreamCodecData {
   sourceVideoCodec: string | null;
@@ -852,4 +846,101 @@ export const publicRoutes: FastifyPluginAsync = async (app) => {
 
     return paginatedResponse(sessionData, total, page, pageSize);
   });
+
+  /**
+   * GET /stats/today - Today's dashboard statistics with timezone support
+   *
+   * Query params:
+   *   - timezone: IANA timezone identifier (default: UTC)
+   *   - serverId: Optional UUID to filter stats to a specific server
+   */
+  app.get('/stats/today', { preHandler: [app.authenticatePublicApi] }, async (request, reply) => {
+    const querySchema = z.object({
+      timezone: timezoneSchema,
+      serverId: z.uuid().optional(),
+    });
+
+    const query = querySchema.safeParse(request.query);
+    if (!query.success) {
+      return reply.badRequest('Invalid query parameters');
+    }
+
+    const { timezone, serverId } = query.data;
+
+    return getDashboardStats({
+      serverIds: serverId ? [serverId] : undefined,
+      timezone,
+      redis: app.redis,
+    });
+  });
+
+  /**
+   * POST /streams/:id/terminate - Terminate an active stream
+   *
+   * Path params:
+   *   - id: Session UUID (database ID)
+   *
+   * Body:
+   *   - reason: Optional message to display to the user
+   */
+  app.post(
+    '/streams/:id/terminate',
+    { preHandler: [app.authenticatePublicApi] },
+    async (request, reply) => {
+      const params = sessionIdParamSchema.safeParse(request.params);
+      if (!params.success) {
+        return reply.badRequest('Invalid session ID');
+      }
+
+      const body = terminateSessionBodySchema.safeParse(request.body ?? {});
+      if (!body.success) {
+        return reply.badRequest('Invalid request body');
+      }
+
+      const { id: sessionId } = params.data;
+      const { reason } = body.data;
+
+      const cacheService = getCacheService();
+      if (!cacheService) {
+        return reply.serviceUnavailable('Cache service unavailable');
+      }
+
+      const activeSessions = await cacheService.getAllActiveSessions();
+      const activeSession = activeSessions.find((s) => s.id === sessionId);
+
+      if (!activeSession) {
+        const dbSession = await db
+          .select({ id: sessions.id, state: sessions.state })
+          .from(sessions)
+          .where(eq(sessions.id, sessionId))
+          .limit(1);
+
+        if (!dbSession[0]) {
+          return reply.notFound('Session not found');
+        }
+
+        if (dbSession[0].state === 'stopped') {
+          return reply.conflict('Session already stopped');
+        }
+
+        return reply.notFound('Session not currently active');
+      }
+
+      const result = await terminateSession({
+        sessionId,
+        trigger: 'manual',
+        reason,
+      });
+
+      if (!result.success) {
+        return reply.internalServerError(result.error ?? 'Failed to terminate session');
+      }
+
+      return {
+        success: true,
+        sessionId,
+        message: 'Session terminated successfully',
+      };
+    }
+  );
 };
