@@ -162,8 +162,6 @@ export const resources = {
 export const supportedLanguages = Object.keys(resources) as (keyof typeof resources)[];
 export type SupportedLanguage = keyof typeof resources;
 
-const isDev = typeof process !== 'undefined' && process.env?.NODE_ENV === 'development';
-
 export const defaultI18nConfig = {
   lng: 'en',
   fallbackLng: 'en',
@@ -173,12 +171,6 @@ export const defaultI18nConfig = {
   interpolation: {
     escapeValue: false, // React already escapes values
   },
-  saveMissing: isDev,
-  missingKeyHandler: isDev
-    ? (_lngs: readonly string[], ns: string, key: string) => {
-        console.warn(`[i18n] Missing translation: ${ns}:${key}`);
-      }
-    : undefined,
   // Returning the key is better than empty string for debugging
   returnNull: false,
   returnEmptyString: false,
