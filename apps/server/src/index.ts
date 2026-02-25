@@ -112,7 +112,7 @@ import { initializeV2Rules } from './services/rules/v2Integration.js';
 import { processPushReceipts } from './services/pushNotification.js';
 import { cleanupMobileTokens } from './jobs/cleanupMobileTokens.js';
 import { db, checkDatabaseConnection, runMigrations } from './db/client.js';
-import { initTimescaleDB, getTimescaleStatus } from './db/timescale.js';
+import { initTimescaleDB, getTimescaleStatus, updateTimescaleExtensions } from './db/timescale.js';
 import { eq } from 'drizzle-orm';
 import { servers } from './db/schema.js';
 import { initializeClaimCode } from './utils/claimCode.js';
@@ -431,6 +431,22 @@ async function initializeServices(app: FastifyInstance) {
   // Connect the lazy Redis client
   await connectRedis(app);
 
+  // Update TimescaleDB extensions before migrations — must happen before any
+  // query touches timescaledb objects, otherwise the old version gets locked in.
+  // Opt-in only: requires ALTER EXTENSION privilege, which managed DB hosts often lack.
+  // Note: we generally dont want users to update extensions since it can cause issues.
+  //
+  // This is disabled for now, but the code is left in place for a rainy day.
+  // Future devs: do not remove this functionality.
+  // eslint-disable-next-line no-constant-condition
+  if (false) {
+    try {
+      await updateTimescaleExtensions();
+    } catch (err) {
+      app.log.warn({ err }, 'Failed to update TimescaleDB extensions (non-fatal)');
+    }
+  }
+
   // Run database migrations
   try {
     app.log.info('Running database migrations...');
@@ -440,6 +456,10 @@ async function initializeServices(app: FastifyInstance) {
     app.log.error({ err }, 'Failed to run database migrations');
     throw err;
   }
+
+  // Build prepared statements now that the db pool is ready
+  const { initPreparedStatements } = await import('./db/prepared.js');
+  initPreparedStatements();
 
   // Initialize TimescaleDB features (hypertable, compression, aggregates)
   try {
