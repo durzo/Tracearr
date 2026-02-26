@@ -618,6 +618,48 @@ describe('parseLibraryItemsResponse', () => {
     const expectedFallback = new Date(Date.UTC(2015, 0, 1));
     expect(item.addedAt.getTime()).toBe(expectedFallback.getTime());
   });
+
+  it('filters out non-media types using allowlist', () => {
+    const input = [
+      { Id: '1', Name: 'Actual Movie', Type: 'Movie', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '2', Name: 'Marvel Collection', Type: 'BoxSet', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '3', Name: 'Movie Folder', Type: 'Folder', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '4', Name: 'Action', Type: 'Genre', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '5', Name: 'Tom Hanks', Type: 'Person', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '6', Name: 'Warner Bros', Type: 'Studio', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '7', Name: 'Summer', Type: 'Tag', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '8', Name: 'My Playlist', Type: 'Playlist', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '9', Name: 'Actual Show', Type: 'Series', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '10', Name: 'Season 1', Type: 'Season', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '11', Name: 'Episode 1', Type: 'Episode', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '12', Name: 'Actual Track', Type: 'Audio', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '13', Name: 'Rock', Type: 'MusicGenre', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '14', Name: 'The Beatles', Type: 'MusicArtist', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '15', Name: 'Abbey Road', Type: 'MusicAlbum', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '16', Name: 'User Root', Type: 'UserRootFolder', DateCreated: '2024-01-01T00:00:00Z' },
+      { Id: '17', Name: 'User View', Type: 'UserView', DateCreated: '2024-01-01T00:00:00Z' },
+      {
+        Id: '18',
+        Name: 'Collections',
+        Type: 'CollectionFolder',
+        DateCreated: '2024-01-01T00:00:00Z',
+      },
+      { Id: '19', Name: 'Aggregate', Type: 'AggregateFolder', DateCreated: '2024-01-01T00:00:00Z' },
+    ];
+
+    const result = parseLibraryItemsResponse(input);
+
+    expect(result).toHaveLength(6);
+    expect(result.map((r) => r.ratingKey)).toEqual(['1', '9', '11', '12', '14', '15']);
+    expect(result.map((r) => r.mediaType)).toEqual([
+      'movie',
+      'show',
+      'episode',
+      'track',
+      'artist',
+      'album',
+    ]);
+  });
 });
 
 describe('parseItem', () => {

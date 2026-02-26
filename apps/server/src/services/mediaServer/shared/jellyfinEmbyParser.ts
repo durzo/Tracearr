@@ -741,11 +741,20 @@ export function parseLibraryItem(item: Record<string, unknown>): MediaLibraryIte
 }
 
 /**
+ * Supported Jellyfin/Emby item types for library sync.
+ * Season excluded for Plex consistency (season info embedded in episodes).
+ */
+const ALLOWED_LIBRARY_ITEM_TYPES = new Set([
+  'movie',
+  'series',
+  'episode',
+  'musicartist',
+  'musicalbum',
+  'audio',
+]);
+
+/**
  * Parse library items from Jellyfin/Emby /Items API response
- *
- * Note: Filters out 'Season' items to normalize with Plex behavior.
- * Plex doesn't store seasons as separate items - season info is embedded
- * in episodes via parentIndex/parentTitle. This keeps both server types consistent.
  */
 export function parseLibraryItemsResponse(data: unknown[]): MediaLibraryItem[] {
   if (!Array.isArray(data)) return [];
@@ -753,10 +762,7 @@ export function parseLibraryItemsResponse(data: unknown[]): MediaLibraryItem[] {
     .filter((item) => {
       const record = item as Record<string, unknown>;
       const type = (typeof record.Type === 'string' ? record.Type : '').toLowerCase();
-      // Exclude containers and virtual items that aren't playable media
-      return (
-        type !== 'season' && type !== 'boxset' && type !== 'playlist' && type !== 'collectionfolder'
-      );
+      return ALLOWED_LIBRARY_ITEM_TYPES.has(type);
     })
     .map((item) => parseLibraryItem(item as Record<string, unknown>));
 }
