@@ -97,6 +97,9 @@ export function TailscaleSettings() {
           <CardTitle className="flex items-center gap-2">
             <TailscaleLogo className="h-5 w-5" />
             {t('tailscale.title')}
+            <span className="rounded bg-amber-500/10 px-2 py-1 text-sm leading-normal font-semibold tracking-wide text-amber-500">
+              BETA
+            </span>
           </CardTitle>
           <CardDescription>{t('tailscale.description')}</CardDescription>
         </CardHeader>
@@ -117,6 +120,9 @@ export function TailscaleSettings() {
           <CardTitle className="flex items-center gap-2">
             <TailscaleLogo className="h-5 w-5" />
             {t('tailscale.title')}
+            <span className="rounded bg-amber-500/10 px-2 py-1 text-sm leading-normal font-semibold tracking-wide text-amber-500">
+              BETA
+            </span>
             {status.status !== 'disabled' && (
               <Button
                 variant="ghost"
