@@ -55,6 +55,8 @@ describe('NotificationManager', () => {
     mobileEnabled: false,
     primaryAuthMethod: 'local',
     usePlexGeoip: false,
+    tailscaleEnabled: false,
+    tailscaleHostname: null,
     ...overrides,
   });
 

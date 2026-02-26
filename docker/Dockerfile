@@ -40,6 +40,9 @@ ARG APP_BUILD_DATE=
 
 RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 
+# Tailscale VPN binary (userspace networking, no root required)
+RUN apk add --no-cache tailscale
+
 WORKDIR /app
 
 # Set runtime environment variables

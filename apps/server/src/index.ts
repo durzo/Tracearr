@@ -62,10 +62,12 @@ import { versionRoutes } from './routes/version.js';
 import { maintenanceRoutes } from './routes/maintenance.js';
 import { publicRoutes } from './routes/public.js';
 import { libraryRoutes } from './routes/library.js';
+import { tailscaleRoutes } from './routes/tailscale.js';
 import { tasksRoutes } from './routes/tasks.js';
 import { getPollerSettings, getNetworkSettings } from './routes/settings.js';
 import { initializeEncryption, migrateToken, looksEncrypted } from './utils/crypto.js';
 import { geoipService } from './services/geoip.js';
+import { tailscaleService } from './services/tailscale.js';
 import { geoasnService } from './services/geoasn.js';
 import { createCacheService, createPubSubService } from './services/cache.js';
 import { initializePoller, startPoller, stopPoller } from './jobs/poller/index.js';
@@ -268,6 +270,7 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
         db: dbHealthy,
         redis: redisHealthy,
         geoip: geoipService.hasDatabase(),
+        tailscale: tailscaleService.getInfo().status,
         timescale: cachedTimescale,
       };
     }
@@ -299,6 +302,7 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
   await app.register(notificationPreferencesRoutes, { prefix: `${API_BASE_PATH}/notifications` });
   await app.register(versionRoutes, { prefix: `${API_BASE_PATH}/version` });
   await app.register(maintenanceRoutes, { prefix: `${API_BASE_PATH}/maintenance` });
+  await app.register(tailscaleRoutes, { prefix: `${API_BASE_PATH}/tailscale` });
   await app.register(tasksRoutes, { prefix: `${API_BASE_PATH}/tasks` });
   await app.register(publicRoutes, { prefix: `${API_BASE_PATH}/public` });
   await app.register(libraryRoutes, { prefix: `${API_BASE_PATH}/library` });
@@ -373,6 +377,7 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
     if (wsSubscriber) await wsSubscriber.quit();
     stopPoller();
     await sseManager.stop();
+    await tailscaleService.shutdown();
     stopSSEProcessor();
     await shutdownNotificationQueue();
     await shutdownImportQueue();
@@ -751,6 +756,14 @@ async function initializeServices(app: FastifyInstance) {
     intervalMs: DB_HEALTH_CHECK_MS,
   });
 
+  // Initialize Tailscale VPN service (starts daemon if previously enabled)
+  try {
+    await tailscaleService.initialize();
+  } catch (err) {
+    app.log.error({ err }, 'Failed to initialize Tailscale service');
+    // Don't throw — Tailscale is non-critical
+  }
+
   setDbHealthy(true);
   await refreshTimescaleCache();
   setServicesInitialized(true);
@@ -943,6 +956,7 @@ async function start() {
       process.once(signal, () => {
         app.log.info(`Received ${signal}, shutting down gracefully...`);
         stopPoller();
+        void tailscaleService.shutdown();
         void shutdownNotificationQueue();
         void shutdownImportQueue();
         void shutdownLibrarySyncQueue();
@@ -961,6 +975,7 @@ async function start() {
         stopPoller();
         stopSSEProcessor();
         void sseManager.stop();
+        void tailscaleService.shutdown();
 
         // Disconnect extra Redis clients to stop reconnection attempts
         if (pubSubRedis) {

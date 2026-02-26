@@ -690,6 +690,10 @@ export const settings = pgTable('settings', {
     .$type<'jellyfin' | 'local'>()
     .notNull()
     .default('local'), // Default to local auth
+  // Tailscale VPN integration
+  tailscaleEnabled: boolean('tailscale_enabled').notNull().default(false),
+  tailscaleState: text('tailscale_state'), // Persisted tailscaled state blob (base64)
+  tailscaleHostname: varchar('tailscale_hostname', { length: 255 }), // Custom machine name on tailnet
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

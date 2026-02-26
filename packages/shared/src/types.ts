@@ -892,6 +892,40 @@ export interface Settings {
   mobileEnabled: boolean;
   // Authentication settings
   primaryAuthMethod: 'jellyfin' | 'local';
+  // Tailscale VPN
+  tailscaleEnabled: boolean;
+  tailscaleHostname: string | null;
+}
+
+// Tailscale integration
+export type TailscaleStatus =
+  | 'disabled'
+  | 'starting'
+  | 'awaiting_auth'
+  | 'connected'
+  | 'error'
+  | 'stopping';
+
+export interface TailscaleExitNode {
+  id: string;
+  hostname: string;
+  dnsName: string;
+  ip: string;
+  online: boolean;
+  active: boolean;
+}
+
+export interface TailscaleInfo {
+  status: TailscaleStatus;
+  authUrl: string | null;
+  hostname: string | null;
+  dnsName: string | null;
+  tailnetName: string | null;
+  tailnetIp: string | null;
+  tailnetUrl: string | null;
+  exitNodes: TailscaleExitNode[];
+  error: string | null;
+  available: boolean;
 }
 
 // Heavy operations lock info (for "Waiting for X" display)

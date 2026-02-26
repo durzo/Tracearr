@@ -69,6 +69,13 @@ RUN curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmo
         timescaledb-toolkit-postgresql-15 \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Tailscale VPN binary (userspace networking, no root required)
+RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg -o /usr/share/keyrings/tailscale-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/tailscale-keyring.gpg] https://pkgs.tailscale.com/stable/debian bookworm main" > /etc/apt/sources.list.d/tailscale.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends tailscale \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install Redis 8 from official Redis repository
 RUN curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-keyring.gpg \
     && chmod 644 /usr/share/keyrings/redis-keyring.gpg \

@@ -10,6 +10,7 @@ import { GeneralSettings } from '@/components/settings/GeneralSettings';
 import { ServerSettings } from '@/components/settings/ServerSettings';
 import { AccessSettings } from '@/components/settings/AccessSettings';
 import { MobileSettings } from '@/components/settings/MobileSettings';
+import { TailscaleSettings } from '@/components/settings/TailscaleSettings';
 import { ImportSettings } from '@/components/settings/ImportSettings';
 import { JobsSettings } from '@/components/settings/JobsSettings';
 import { NotificationAgentsManager } from '@/components/settings/notification-agents';
@@ -23,6 +24,7 @@ function SettingsNav() {
     { href: '/settings/notifications', label: 'Notifications' },
     { href: '/settings/access', label: 'Access Control' },
     { href: '/settings/mobile', label: 'Mobile' },
+    { href: '/settings/tailscale', label: 'Tailscale' },
     { href: '/settings/import', label: 'Import' },
     { href: '/settings/jobs', label: 'Jobs' },
   ];
@@ -78,6 +80,7 @@ export function Settings() {
         <Route path="notifications" element={<NotificationSettings />} />
         <Route path="access" element={<AccessSettings />} />
         <Route path="mobile" element={<MobileSettings />} />
+        <Route path="tailscale" element={<TailscaleSettings />} />
         <Route path="import" element={<ImportSettings />} />
         <Route path="jobs" element={<JobsSettings />} />
       </Routes>
