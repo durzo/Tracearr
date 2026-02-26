@@ -66,6 +66,7 @@ import type {
   LibraryCodecsResponse,
   LibraryResolutionResponse,
   RunningTasksResponse,
+  TailscaleInfo,
   // Rules V2 types
   CreateRuleV2Input,
   UpdateRuleV2Input,
@@ -1548,6 +1549,25 @@ class ApiClient {
     get: () => this.request<VersionInfo>('/version'),
     check: () =>
       this.request<{ message: string }>('/version/check', { method: 'POST', body: '{}' }),
+  };
+
+  // Tailscale VPN
+  tailscale = {
+    getStatus: () => this.request<TailscaleInfo>('/tailscale/status'),
+    enable: (hostname?: string) =>
+      this.request<TailscaleInfo>('/tailscale/enable', {
+        method: 'POST',
+        body: JSON.stringify({ hostname }),
+      }),
+    disable: () =>
+      this.request<TailscaleInfo>('/tailscale/disable', { method: 'POST', body: '{}' }),
+    reset: () => this.request<TailscaleInfo>('/tailscale/reset', { method: 'POST', body: '{}' }),
+    setExitNode: (id: string | null) =>
+      this.request<TailscaleInfo>('/tailscale/exit-node', {
+        method: 'POST',
+        body: JSON.stringify({ id }),
+      }),
+    getLogs: () => this.request<{ logs: string }>('/tailscale/logs'),
   };
 
   // Running tasks

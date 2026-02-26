@@ -692,6 +692,29 @@ export const updateSettingsSchema = z.object({
   trustProxy: z.boolean().optional(),
   // Authentication settings
   primaryAuthMethod: z.enum(['jellyfin', 'local']).optional(),
+  // Tailscale VPN
+  tailscaleHostname: z
+    .string()
+    .max(255)
+    .regex(/^[a-zA-Z0-9-]*$/, 'Hostname may only contain letters, numbers, and hyphens')
+    .nullable()
+    .optional(),
+});
+
+// ============================================================================
+// Tailscale Schemas
+// ============================================================================
+
+export const tailscaleEnableSchema = z.object({
+  hostname: z
+    .string()
+    .max(63)
+    .regex(/^[a-zA-Z0-9-]*$/, 'Hostname may only contain letters, numbers, and hyphens')
+    .optional(),
+});
+
+export const tailscaleExitNodeSchema = z.object({
+  id: z.string().nullable().optional(),
 });
 
 // ============================================================================

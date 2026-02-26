@@ -116,6 +116,16 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
       usePlexGeoip = row.usePlexGeoip;
     }
 
+    // Handle case where tailscale columns might not exist yet (before migration)
+    let tailscaleEnabled = false;
+    let tailscaleHostname: string | null = null;
+    if ('tailscaleEnabled' in row && typeof row.tailscaleEnabled === 'boolean') {
+      tailscaleEnabled = row.tailscaleEnabled;
+    }
+    if ('tailscaleHostname' in row && typeof row.tailscaleHostname === 'string') {
+      tailscaleHostname = row.tailscaleHostname;
+    }
+
     const result: Settings = {
       allowGuestAccess: row.allowGuestAccess,
       unitSystem: row.unitSystem,
@@ -135,6 +145,8 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
       trustProxy: row.trustProxy,
       mobileEnabled: row.mobileEnabled,
       primaryAuthMethod,
+      tailscaleEnabled,
+      tailscaleHostname,
     };
 
     return result;
@@ -175,6 +187,7 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
       externalUrl: string | null;
       trustProxy: boolean;
       primaryAuthMethod: 'jellyfin' | 'local';
+      tailscaleHostname: string | null;
       updatedAt: Date;
     }> = {
       updatedAt: new Date(),
@@ -250,6 +263,10 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
       updateData.primaryAuthMethod = body.data.primaryAuthMethod;
     }
 
+    if (body.data.tailscaleHostname !== undefined) {
+      updateData.tailscaleHostname = body.data.tailscaleHostname;
+    }
+
     // Ensure settings row exists
     const existing = await db.select().from(settings).where(eq(settings.id, SETTINGS_ID)).limit(1);
 
@@ -298,6 +315,16 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
       usePlexGeoip = row.usePlexGeoip;
     }
 
+    // Handle case where tailscale columns might not exist yet (before migration)
+    let tailscaleEnabled = false;
+    let tailscaleHostname: string | null = null;
+    if ('tailscaleEnabled' in row && typeof row.tailscaleEnabled === 'boolean') {
+      tailscaleEnabled = row.tailscaleEnabled;
+    }
+    if ('tailscaleHostname' in row && typeof row.tailscaleHostname === 'string') {
+      tailscaleHostname = row.tailscaleHostname;
+    }
+
     const result: Settings = {
       allowGuestAccess: row.allowGuestAccess,
       unitSystem: row.unitSystem,
@@ -317,6 +344,8 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
       trustProxy: row.trustProxy,
       mobileEnabled: row.mobileEnabled,
       primaryAuthMethod,
+      tailscaleEnabled,
+      tailscaleHostname,
     };
 
     return result;

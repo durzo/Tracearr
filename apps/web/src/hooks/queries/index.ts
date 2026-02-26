@@ -116,6 +116,16 @@ export {
   useRevokeMobileSessions,
 } from './useMobile';
 
+// Tailscale hooks
+export {
+  useTailscaleStatus,
+  useTailscaleLogs,
+  useEnableTailscale,
+  useDisableTailscale,
+  useSetExitNode,
+  useResetTailscale,
+} from './useTailscale';
+
 // Version hooks
 export { useVersion, useForceVersionCheck } from './useVersion';
 

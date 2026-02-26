@@ -100,6 +100,10 @@ export type {
   Settings,
   WebhookFormat,
   UnitSystem,
+  // Tailscale
+  TailscaleStatus,
+  TailscaleExitNode,
+  TailscaleInfo,
   // Tautulli import
   TautulliImportProgress,
   TautulliImportResult,
@@ -305,6 +309,9 @@ export {
   locationStatsQuerySchema,
   // Settings
   updateSettingsSchema,
+  // Tailscale
+  tailscaleEnableSchema,
+  tailscaleExitNodeSchema,
   // Tautulli import
   tautulliImportSchema,
   // Jellystat import
