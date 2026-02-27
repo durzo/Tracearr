@@ -10,6 +10,7 @@ import { getRedisPrefix } from '@tracearr/shared';
 import type { Redis } from 'ioredis';
 import { isMaintenance } from '../serverState.js';
 import { REDIS_KEYS, CACHE_TTL, WS_EVENTS } from '@tracearr/shared';
+import { getCurrentVersion } from '../utils/buildInfo.js';
 
 // Queue name
 const QUEUE_NAME = 'version-check';
@@ -353,33 +354,12 @@ async function processVersionCheck(job: Job<VersionCheckJobData>): Promise<void>
   }
 }
 
-/**
- * Get the current running version from environment
- */
-export function getCurrentVersion(): string {
-  return process.env.APP_VERSION ?? '0.0.0';
-}
-
-/**
- * Get the current Docker tag from environment
- */
-export function getCurrentTag(): string | null {
-  return process.env.APP_TAG ?? null;
-}
-
-/**
- * Get the current git commit from environment
- */
-export function getCurrentCommit(): string | null {
-  return process.env.APP_COMMIT ?? null;
-}
-
-/**
- * Get the build date from environment
- */
-export function getBuildDate(): string | null {
-  return process.env.APP_BUILD_DATE ?? null;
-}
+export {
+  getCurrentVersion,
+  getCurrentTag,
+  getCurrentCommit,
+  getBuildDate,
+} from '../utils/buildInfo.js';
 
 /**
  * Get cached latest version from Redis

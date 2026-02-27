@@ -21,6 +21,12 @@ import { obliterateLibrarySyncQueue, getLibrarySyncQueueStats } from '../jobs/li
 import { forceReleaseHeavyOpsLock } from '../jobs/heavyOpsLock.js';
 import { getQueueStats as getNotificationQueueStats } from '../jobs/notificationQueue.js';
 import { getVersionCheckQueueStats } from '../jobs/versionCheckQueue.js';
+import {
+  getCurrentVersion,
+  getCurrentTag,
+  getCurrentCommit,
+  getBuildDate,
+} from '../utils/buildInfo.js';
 import { getInactivityCheckQueueStats } from '../jobs/inactivityCheckQueue.js';
 import { getAllServices } from '../services/serviceTracker.js';
 import {
@@ -42,8 +48,7 @@ import {
 } from '../db/schema.js';
 
 // Gate log explorer feature to supervised deployments only
-const SUPERVISED_TAG = (process.env.APP_TAG ?? '').toLowerCase();
-const IS_SUPERVISED = SUPERVISED_TAG.includes('supervised');
+const IS_SUPERVISED = (getCurrentTag() ?? '').toLowerCase().includes('supervised');
 
 // Specify accessible supervised log files
 const SUPERVISOR_LOG_DIR = '/var/log/supervisor';
@@ -528,10 +533,10 @@ export const debugRoutes: FastifyPluginAsync = async (app) => {
         REDIS_URL: process.env.REDIS_URL ? '[set]' : '[not set]',
         ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ? '[set]' : '[not set]',
         GEOIP_DB_PATH: process.env.GEOIP_DB_PATH ?? '[not set]',
-        APP_VERSION: process.env.APP_VERSION ?? '[not set]',
-        APP_TAG: process.env.APP_TAG ?? '[not set]',
-        APP_COMMIT: process.env.APP_COMMIT ?? '[not set]',
-        APP_BUILD_DATE: process.env.APP_BUILD_DATE ?? '[not set]',
+        APP_VERSION: getCurrentVersion(),
+        APP_TAG: getCurrentTag() ?? '[not set]',
+        APP_COMMIT: getCurrentCommit() ?? '[not set]',
+        APP_BUILD_DATE: getBuildDate() ?? '[not set]',
       },
     };
   });
