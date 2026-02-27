@@ -505,6 +505,8 @@ describe('parseLibraryItemsResponse', () => {
         Type: 'Audio',
         Album: 'Album Name',
         AlbumArtist: 'Artist Name',
+        AlbumArtists: [{ Name: 'Artist Name', Id: 'artist789' }],
+        AlbumId: 'album456',
         Artists: ['Artist Name', 'Featured Artist'],
         IndexNumber: 3,
         DateCreated: '2024-03-10T08:00:00Z',
@@ -517,8 +519,34 @@ describe('parseLibraryItemsResponse', () => {
     const item = result[0]!;
     expect(item.mediaType).toBe('track');
     expect(item.grandparentTitle).toBe('Artist Name'); // AlbumArtist preferred
+    expect(item.grandparentRatingKey).toBe('artist789'); // links to MusicArtist
     expect(item.parentTitle).toBe('Album Name');
+    expect(item.parentRatingKey).toBe('album456'); // links to MusicAlbum
     expect(item.itemIndex).toBe(3);
+  });
+
+  it('uses AlbumArtists ID for grandparentRatingKey on compilation albums', () => {
+    const input = [
+      {
+        Id: 'track-compilation',
+        Name: 'Where Are U Now',
+        Type: 'Audio',
+        Album: 'Purpose',
+        AlbumArtist: 'Justin Bieber',
+        AlbumArtists: [{ Name: 'Justin Bieber', Id: 'artist-bieber' }],
+        AlbumId: 'album-purpose',
+        Artists: ['Skrillex'],
+        ArtistItems: [{ Name: 'Skrillex', Id: 'artist-skrillex' }],
+        DateCreated: '2024-03-10T08:00:00Z',
+      },
+    ];
+
+    const result = parseLibraryItemsResponse(input);
+    const item = result[0]!;
+
+    expect(item.grandparentRatingKey).toBe('artist-bieber');
+    expect(item.parentRatingKey).toBe('album-purpose');
+    expect(item.grandparentTitle).toBe('Justin Bieber');
   });
 
   it('falls back to Artists array when no AlbumArtist', () => {
@@ -649,16 +677,9 @@ describe('parseLibraryItemsResponse', () => {
 
     const result = parseLibraryItemsResponse(input);
 
-    expect(result).toHaveLength(6);
-    expect(result.map((r) => r.ratingKey)).toEqual(['1', '9', '11', '12', '14', '15']);
-    expect(result.map((r) => r.mediaType)).toEqual([
-      'movie',
-      'show',
-      'episode',
-      'track',
-      'artist',
-      'album',
-    ]);
+    expect(result).toHaveLength(5);
+    expect(result.map((r) => r.ratingKey)).toEqual(['1', '9', '11', '12', '14']);
+    expect(result.map((r) => r.mediaType)).toEqual(['movie', 'show', 'episode', 'track', 'artist']);
   });
 });
 

@@ -254,7 +254,7 @@ export const libraryStaleRoute: FastifyPluginAsync = async (app) => {
             AND sess.rating_key = li.rating_key
             AND sess.server_id = li.server_id
             AND sess.duration_ms >= 120000
-          WHERE li.media_type NOT IN ('episode', 'track', 'season')  -- Exclude children/containers, only show content
+          WHERE li.media_type NOT IN ('episode', 'track', 'season', 'album')  -- Exclude children/containers, only show content
             ${serverFilter}
             ${libraryFilter}
             ${mediaTypeFilter}
@@ -416,7 +416,7 @@ export const libraryStaleRoute: FastifyPluginAsync = async (app) => {
             LEFT JOIN child_stats cs ON li.media_type IN ('show', 'artist') AND cs.grandparent_rating_key = li.rating_key AND cs.server_id = li.server_id
             LEFT JOIN child_watch_stats cws ON li.media_type IN ('show', 'artist') AND cws.grandparent_rating_key = li.rating_key AND cws.server_id = li.server_id
             LEFT JOIN sessions sess ON li.media_type NOT IN ('show', 'artist') AND sess.rating_key = li.rating_key AND sess.server_id = li.server_id AND sess.duration_ms >= 120000
-            WHERE li.media_type NOT IN ('episode', 'track', 'season') ${serverFilter} ${libraryFilter} ${mediaTypeFilter}
+            WHERE li.media_type NOT IN ('episode', 'track', 'season', 'album') ${serverFilter} ${libraryFilter} ${mediaTypeFilter}
             GROUP BY li.id, li.server_id, li.media_type, li.file_size, cs.total_size, cws.last_watched
           ),
           stale_items AS (

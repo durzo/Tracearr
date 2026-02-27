@@ -735,6 +735,13 @@ export function parseLibraryItem(item: Record<string, unknown>): MediaLibraryIte
     result.grandparentTitle = albumArtist ?? firstArtist; // artist
     result.parentTitle = parseOptionalString(item.Album); // album
     result.itemIndex = parseOptionalNumber(item.IndexNumber); // track number
+    const albumArtists = item.AlbumArtists;
+    if (Array.isArray(albumArtists) && albumArtists.length > 0) {
+      result.grandparentRatingKey = parseOptionalString(
+        (albumArtists[0] as Record<string, unknown>)?.Id
+      );
+    }
+    result.parentRatingKey = parseOptionalString(item.AlbumId);
   }
 
   return result;
@@ -744,14 +751,7 @@ export function parseLibraryItem(item: Record<string, unknown>): MediaLibraryIte
  * Supported Jellyfin/Emby item types for library sync.
  * Season excluded for Plex consistency (season info embedded in episodes).
  */
-const ALLOWED_LIBRARY_ITEM_TYPES = new Set([
-  'movie',
-  'series',
-  'episode',
-  'musicartist',
-  'musicalbum',
-  'audio',
-]);
+const ALLOWED_LIBRARY_ITEM_TYPES = new Set(['movie', 'series', 'episode', 'musicartist', 'audio']);
 
 /**
  * Parse library items from Jellyfin/Emby /Items API response

@@ -293,7 +293,7 @@ export const libraryRoiRoute: FastifyPluginAsync = async (app) => {
             AND sess.rating_key = li.rating_key
             AND sess.server_id = li.server_id
             AND sess.started_at >= NOW() - INTERVAL '1 day' * ${periodDays}
-          WHERE li.media_type NOT IN ('episode', 'track', 'season')  -- Exclude children/containers, only show content
+          WHERE li.media_type NOT IN ('episode', 'track', 'season', 'album')  -- Exclude children/containers, only show content
             AND (
               CASE
                 WHEN li.media_type IN ('show', 'artist') THEN COALESCE(cs.total_size, li.file_size)
