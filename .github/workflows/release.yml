@@ -262,6 +262,7 @@ jobs:
             APP_TAG=${{ github.ref_name }}
             APP_COMMIT=${{ github.sha }}
             APP_BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            CACHE_BUST=${{ github.sha }}
 
       - name: Export digest
         run: |
@@ -404,6 +405,7 @@ jobs:
             APP_TAG=supervised-${{ github.ref_name }}
             APP_COMMIT=${{ github.sha }}
             APP_BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            CACHE_BUST=${{ github.sha }}
 
       - name: Export digest
         run: |

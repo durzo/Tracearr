@@ -137,7 +137,8 @@ ARG APP_TAG=
 ARG APP_COMMIT=
 ARG APP_BUILD_DATE=
 
-RUN echo "Building version: ${APP_VERSION} (${APP_COMMIT})"
+ARG CACHE_BUST
+RUN echo "Build: ${APP_VERSION} (${APP_COMMIT}) - ${CACHE_BUST:-nocache}"
 
 # Environment defaults
 ENV NODE_ENV=production \

@@ -116,6 +116,7 @@ jobs:
             APP_TAG=nightly
             APP_COMMIT=${{ steps.sha.outputs.short }}
             APP_BUILD_DATE=${{ github.event.repository.pushed_at || github.event.head_commit.timestamp }}
+            CACHE_BUST=${{ github.sha }}
 
   build-and-push-supervised:
     name: Build & Push Supervised Image
@@ -183,3 +184,4 @@ jobs:
             APP_TAG=supervised-nightly
             APP_COMMIT=${{ steps.sha.outputs.short }}
             APP_BUILD_DATE=${{ github.event.repository.pushed_at || github.event.head_commit.timestamp }}
+            CACHE_BUST=${{ github.sha }}
