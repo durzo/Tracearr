@@ -106,7 +106,7 @@ EOF
     gosu postgres /usr/lib/postgresql/15/bin/pg_ctl -D /data/postgres -w start
 
     log "Creating tracearr database and user..."
-    gosu postgres psql -c "CREATE USER tracearr WITH PASSWORD 'tracearr';" 2>/dev/null || true
+    gosu postgres psql -c "CREATE USER tracearr WITH PASSWORD 'tracearr' SUPERUSER;" 2>/dev/null || true
     gosu postgres psql -c "CREATE DATABASE tracearr OWNER tracearr;" 2>/dev/null || true
     gosu postgres psql -d tracearr -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
     gosu postgres psql -d tracearr -c "CREATE EXTENSION IF NOT EXISTS timescaledb_toolkit;"

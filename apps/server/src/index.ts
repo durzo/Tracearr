@@ -64,6 +64,7 @@ import { publicRoutes } from './routes/public.js';
 import { libraryRoutes } from './routes/library.js';
 import { tailscaleRoutes } from './routes/tailscale.js';
 import { tasksRoutes } from './routes/tasks.js';
+import { backupRoutes } from './routes/backup.js';
 import { getPollerSettings, getNetworkSettings } from './routes/settings.js';
 import { initializeEncryption, migrateToken, looksEncrypted } from './utils/crypto.js';
 import { geoipService } from './services/geoip.js';
@@ -108,6 +109,12 @@ import {
   scheduleInactivityChecks,
   shutdownInactivityCheckQueue,
 } from './jobs/inactivityCheckQueue.js';
+import {
+  initBackupQueue,
+  startBackupWorker,
+  scheduleBackupJob,
+  shutdownBackupQueue,
+} from './jobs/backupQueue.js';
 import { initHeavyOpsLock } from './jobs/heavyOpsLock.js';
 import { initPushRateLimiter } from './services/pushRateLimiter.js';
 import { initializeV2Rules } from './services/rules/v2Integration.js';
@@ -116,7 +123,7 @@ import { cleanupMobileTokens } from './jobs/cleanupMobileTokens.js';
 import { db, checkDatabaseConnection, runMigrations } from './db/client.js';
 import { initTimescaleDB, getTimescaleStatus, updateTimescaleExtensions } from './db/timescale.js';
 import { eq } from 'drizzle-orm';
-import { servers } from './db/schema.js';
+import { servers, settings } from './db/schema.js';
 import { initializeClaimCode } from './utils/claimCode.js';
 import { registerService, unregisterService } from './services/serviceTracker.js';
 import {
@@ -131,6 +138,9 @@ import {
   setDbHealthy,
   isRedisHealthy,
   setRedisHealthy,
+  isRestoring,
+  getRestoreProgress,
+  setRestoreProgress,
 } from './serverState.js';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
@@ -212,7 +222,7 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
   // Maintenance gate hook — MUST be registered before rate limiter so it
   // short-circuits requests before the rate limiter tries to access Redis
   app.addHook('onRequest', async (request, reply) => {
-    // Always allow health endpoint
+    // Always allow health endpoint (includes restore progress when restoring)
     if (request.url === '/health') return;
 
     // Allow static files and SPA routes so frontend can load and show maintenance page
@@ -263,6 +273,20 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
     const redisHealthy = isRedisHealthy();
     const mode = getServerMode();
 
+    // A restore in progress is always reported as maintenance, even during
+    // the restore point phase before setServerMode('maintenance') is called.
+    const restoreProgress = getRestoreProgress();
+    if (restoreProgress) {
+      return {
+        status: 'maintenance',
+        mode: 'maintenance',
+        wasReady: wasEverReady(),
+        db: dbHealthy,
+        redis: redisHealthy,
+        restore: restoreProgress,
+      };
+    }
+
     if (mode === 'ready') {
       return {
         status: dbHealthy && redisHealthy ? 'ok' : 'degraded',
@@ -306,6 +330,7 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
   await app.register(tasksRoutes, { prefix: `${API_BASE_PATH}/tasks` });
   await app.register(publicRoutes, { prefix: `${API_BASE_PATH}/public` });
   await app.register(libraryRoutes, { prefix: `${API_BASE_PATH}/library` });
+  await app.register(backupRoutes, { prefix: `${API_BASE_PATH}/backup` });
 
   // Serve static frontend in production
   const webDistPath = resolve(PROJECT_ROOT, 'apps/web/dist');
@@ -385,6 +410,7 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
     await shutdownLibrarySyncQueue();
     await shutdownVersionCheckQueue();
     await shutdownInactivityCheckQueue();
+    await shutdownBackupQueue();
   });
 
   // Probe DB and Redis to decide if we can initialize services now
@@ -675,6 +701,33 @@ async function initializeServices(app: FastifyInstance) {
     // Don't throw - inactivity checks are non-critical
   }
 
+  // Initialize backup queue (scheduled backups)
+  try {
+    initBackupQueue(redisUrl);
+    startBackupWorker();
+
+    // Read backup schedule from settings and configure repeatable job
+    const backupSettings = await db
+      .select({
+        type: settings.backupScheduleType,
+        time: settings.backupScheduleTime,
+        dayOfWeek: settings.backupScheduleDayOfWeek,
+        dayOfMonth: settings.backupScheduleDayOfMonth,
+      })
+      .from(settings)
+      .where(eq(settings.id, 1))
+      .limit(1);
+
+    if (backupSettings[0]) {
+      await scheduleBackupJob(backupSettings[0]);
+    }
+
+    app.log.info('Backup queue initialized');
+  } catch (err) {
+    app.log.error({ err }, 'Failed to initialize backup queue');
+    // Don't throw - scheduled backups are non-critical
+  }
+
   // Initialize poller with cache services
   initializePoller(cacheService, pubSubService);
 
@@ -891,6 +944,11 @@ function startRecoveryLoop(app: FastifyInstance) {
   }
   recoveryInterval = setInterval(() => {
     void (async () => {
+      if (isRestoring()) {
+        app.log.info('Recovery check skipped — restore in progress');
+        return;
+      }
+
       app.log.info('Recovery check: probing database and Redis...');
 
       const dbOk = await checkDatabaseConnection();
@@ -926,6 +984,7 @@ function startRecoveryLoop(app: FastifyInstance) {
         try {
           await initializeServices(app);
           await initializePostListen(app);
+          setRestoreProgress(null);
           app.log.info('Server transitioned to READY mode');
         } catch (err) {
           app.log.error({ err }, 'Failed to initialize after recovery — restarting recovery loop');
@@ -962,6 +1021,7 @@ async function start() {
         void shutdownLibrarySyncQueue();
         void shutdownVersionCheckQueue();
         void shutdownInactivityCheckQueue();
+        void shutdownBackupQueue();
         void app.close().then(() => process.exit(0));
       });
     }
@@ -995,6 +1055,7 @@ async function start() {
           shutdownLibrarySyncQueue(),
           shutdownVersionCheckQueue(),
           shutdownInactivityCheckQueue(),
+          shutdownBackupQueue(),
         ]).catch((err) => {
           app.log.error({ err }, 'Error shutting down queues during maintenance');
         });

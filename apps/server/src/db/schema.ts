@@ -25,7 +25,7 @@ import {
   check,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
-import { MEDIA_TYPES, type WebhookFormat } from '@tracearr/shared';
+import { MEDIA_TYPES, type BackupScheduleType, type WebhookFormat } from '@tracearr/shared';
 
 // Server types enum
 export const serverTypeEnum = ['plex', 'jellyfin', 'emby'] as const;
@@ -694,6 +694,23 @@ export const settings = pgTable('settings', {
   tailscaleEnabled: boolean('tailscale_enabled').notNull().default(false),
   tailscaleState: text('tailscale_state'), // Persisted tailscaled state blob (base64)
   tailscaleHostname: varchar('tailscale_hostname', { length: 255 }), // Custom machine name on tailnet
+  // Backup settings
+  backupScheduleType: varchar('backup_schedule_type', { length: 20 })
+    .$type<BackupScheduleType>()
+    .notNull()
+    .default('disabled'),
+  backupScheduleTime: varchar('backup_schedule_time', { length: 5 }) // HH:MM 24h
+    .notNull()
+    .default('02:00'),
+  backupScheduleDayOfWeek: integer('backup_schedule_day_of_week') // 0=Sun..6=Sat
+    .notNull()
+    .default(0),
+  backupScheduleDayOfMonth: integer('backup_schedule_day_of_month') // 1-28
+    .notNull()
+    .default(1),
+  backupRetentionCount: integer('backup_retention_count') // How many scheduled backups to keep
+    .notNull()
+    .default(7),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
