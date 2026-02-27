@@ -45,6 +45,8 @@ RUN apk add --no-cache tailscale
 
 WORKDIR /app
 
+RUN echo "Building version: ${APP_VERSION} (${APP_COMMIT})"
+
 # Set runtime environment variables
 ENV NODE_ENV=production
 ENV APP_VERSION=${APP_VERSION}

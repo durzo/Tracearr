@@ -137,6 +137,8 @@ ARG APP_TAG=
 ARG APP_COMMIT=
 ARG APP_BUILD_DATE=
 
+RUN echo "Building version: ${APP_VERSION} (${APP_COMMIT})"
+
 # Environment defaults
 ENV NODE_ENV=production \
     LOG_LEVEL=info \
