@@ -927,9 +927,11 @@ class ApiClient {
       const params = this.buildStatsParams(timeRange ?? { period: 'month' }, serverId);
       return this.request<{
         directPlay: number;
+        directStream: number;
         transcode: number;
         total: number;
         directPlayPercent: number;
+        directStreamPercent: number;
         transcodePercent: number;
       }>(`/stats/quality?${params.toString()}`);
     },
@@ -970,7 +972,13 @@ class ApiClient {
     concurrent: async (timeRange?: StatsTimeRange, serverId?: string) => {
       const params = this.buildStatsParams(timeRange ?? { period: 'month' }, serverId);
       const response = await this.request<{
-        data: { hour: string; total: number; direct: number; transcode: number }[];
+        data: {
+          hour: string;
+          total: number;
+          direct: number;
+          directStream: number;
+          transcode: number;
+        }[];
       }>(`/stats/concurrent?${params.toString()}`);
       return response.data;
     },

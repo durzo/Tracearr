@@ -774,9 +774,11 @@ export interface HourOfDayStats {
 
 export interface QualityStats {
   directPlay: number;
+  directStream: number;
   transcode: number;
   total: number;
   directPlayPercent: number;
+  directStreamPercent: number;
   transcodePercent: number;
 }
 

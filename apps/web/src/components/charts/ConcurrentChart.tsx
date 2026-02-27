@@ -8,6 +8,7 @@ interface ConcurrentData {
   hour: string;
   total: number;
   direct: number;
+  directStream: number;
   transcode: number;
 }
 
@@ -181,6 +182,19 @@ export function ConcurrentChart({
             stops: [
               [0, 'hsl(var(--chart-2) / 0.4)'],
               [1, 'hsl(var(--chart-2) / 0.1)'],
+            ],
+          },
+        },
+        {
+          type: 'area',
+          name: 'Direct Stream',
+          data: data.map((d) => d.directStream),
+          color: 'hsl(210, 76%, 50%)',
+          fillColor: {
+            linearGradient: { x1: 0, y1: 0, x2: 0, y2: 1 },
+            stops: [
+              [0, 'hsl(210 76% 50% / 0.4)'],
+              [1, 'hsl(210 76% 50% / 0.1)'],
             ],
           },
         },

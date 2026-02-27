@@ -12,12 +12,11 @@ interface ResolutionDistributionSectionProps {
   serverId?: string | null;
 }
 
-// Colorblind-friendly, distinct colors for each quality tier
 const QUALITY_COLORS = {
-  '4K': 'hsl(262, 83%, 58%)', // Purple - highest quality stands out
-  '1080p': 'hsl(221, 83%, 53%)', // Blue
-  '720p': 'hsl(142, 76%, 36%)', // Green
-  SD: 'hsl(38, 92%, 50%)', // Orange - lowest quality warning
+  '4K': '#10b981',
+  '1080p': '#3b82f6',
+  '720p': '#f59e0b',
+  SD: '#ef4444',
 };
 
 interface ResolutionDonutProps {

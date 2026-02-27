@@ -5,9 +5,11 @@ import { ChartSkeleton } from '@/components/ui/skeleton';
 
 interface QualityData {
   directPlay: number;
+  directStream: number;
   transcode: number;
   total: number;
   directPlayPercent: number;
+  directStreamPercent: number;
   transcodePercent: number;
 }
 
@@ -19,6 +21,7 @@ interface QualityChartProps {
 
 const COLORS = {
   directPlay: 'hsl(142, 76%, 36%)', // Green
+  directStream: 'hsl(210, 76%, 50%)', // Blue
   transcode: 'hsl(38, 92%, 50%)', // Orange
 };
 
@@ -82,6 +85,11 @@ export function QualityChart({ data, isLoading, height = 250 }: QualityChartProp
               name: 'Direct Play',
               y: data.directPlay,
               color: COLORS.directPlay,
+            },
+            {
+              name: 'Direct Stream',
+              y: data.directStream,
+              color: COLORS.directStream,
             },
             {
               name: 'Transcode',

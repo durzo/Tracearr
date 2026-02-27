@@ -1,7 +1,7 @@
 /**
  * Quality Statistics Route
  *
- * GET /quality - Transcode vs direct play breakdown
+ * GET /quality - Direct play / direct stream / transcode breakdown
  * Uses prepared statement for 10-30% query plan reuse speedup (when no server filter)
  */
 
@@ -16,7 +16,7 @@ import { validateServerAccess, buildServerFilterFragment } from '../../utils/ser
 
 export const qualityRoutes: FastifyPluginAsync = async (app) => {
   /**
-   * GET /quality - Transcode vs direct play breakdown
+   * GET /quality - Direct play / direct stream / transcode breakdown
    * Uses prepared statement for better performance when no server filter
    */
   app.get('/quality', { preHandler: [app.authenticate] }, async (request, reply) => {
@@ -40,39 +40,47 @@ export const qualityRoutes: FastifyPluginAsync = async (app) => {
     const serverFilter = buildServerFilterFragment(serverId, authUser);
     const needsServerFilter = serverId || authUser.role !== 'owner';
 
-    let qualityStats: { isTranscode: boolean | null; count: number }[];
+    let qualityStats: { tier: string; count: number }[];
 
     // For 'all' period (no start date) OR when server filtering is needed, use raw query
     // Prepared statements don't support dynamic server filtering
     if (!dateRange.start || needsServerFilter) {
       const result = await db.execute(sql`
         SELECT
-          is_transcode,
+          CASE
+            WHEN is_transcode = true THEN 'transcode'
+            WHEN video_decision = 'copy' OR audio_decision = 'copy' THEN 'copy'
+            ELSE 'directplay'
+          END AS tier,
           COUNT(DISTINCT COALESCE(reference_id, id))::int as count
         FROM sessions
         WHERE true
         ${MEDIA_TYPE_SQL_FILTER}
         ${serverFilter}
         ${dateRange.start ? sql`AND started_at >= ${dateRange.start}` : sql``}
-        GROUP BY is_transcode
+        GROUP BY tier
       `);
-      qualityStats = (result.rows as { is_transcode: boolean | null; count: number }[]).map(
-        (r) => ({ isTranscode: r.is_transcode, count: r.count })
-      );
+      qualityStats = (result.rows as { tier: string; count: number }[]).map((r) => ({
+        tier: r.tier,
+        count: r.count,
+      }));
     } else {
       // No server filter needed and has date range - use prepared statement for performance
       qualityStats = await qualityStatsSince.execute({ since: dateRange.start });
     }
 
-    const directPlay = qualityStats.find((q) => !q.isTranscode)?.count ?? 0;
-    const transcode = qualityStats.find((q) => q.isTranscode)?.count ?? 0;
-    const total = directPlay + transcode;
+    const directPlay = qualityStats.find((q) => q.tier === 'directplay')?.count ?? 0;
+    const directStream = qualityStats.find((q) => q.tier === 'copy')?.count ?? 0;
+    const transcode = qualityStats.find((q) => q.tier === 'transcode')?.count ?? 0;
+    const total = directPlay + directStream + transcode;
 
     return {
       directPlay,
+      directStream,
       transcode,
       total,
       directPlayPercent: total > 0 ? Math.round((directPlay / total) * 100) : 0,
+      directStreamPercent: total > 0 ? Math.round((directStream / total) * 100) : 0,
       transcodePercent: total > 0 ? Math.round((transcode / total) * 100) : 0,
     };
   });

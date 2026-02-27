@@ -70,7 +70,7 @@ export const concurrentRoutes: FastifyPluginAsync = async (app) => {
     // 3. Find peak per bucket
     const result = await db.execute(sql`
       WITH filtered_sessions AS (
-        SELECT started_at, stopped_at, is_transcode
+        SELECT started_at, stopped_at, is_transcode, video_decision, audio_decision
         FROM sessions
         WHERE stopped_at IS NOT NULL
           ${MEDIA_TYPE_SQL_FILTER}
@@ -80,12 +80,14 @@ export const concurrentRoutes: FastifyPluginAsync = async (app) => {
       ),
       events AS (
         SELECT started_at AS event_time,
-               CASE WHEN is_transcode = true THEN 0 ELSE 1 END AS direct_delta,
+               CASE WHEN is_transcode = false AND COALESCE(video_decision, 'directplay') != 'copy' AND COALESCE(audio_decision, 'directplay') != 'copy' THEN 1 ELSE 0 END AS direct_delta,
+               CASE WHEN is_transcode = false AND (COALESCE(video_decision, 'directplay') = 'copy' OR COALESCE(audio_decision, 'directplay') = 'copy') THEN 1 ELSE 0 END AS copy_delta,
                CASE WHEN is_transcode = true THEN 1 ELSE 0 END AS transcode_delta
         FROM filtered_sessions
         UNION ALL
         SELECT stopped_at AS event_time,
-               CASE WHEN is_transcode = true THEN 0 ELSE -1 END AS direct_delta,
+               CASE WHEN is_transcode = false AND COALESCE(video_decision, 'directplay') != 'copy' AND COALESCE(audio_decision, 'directplay') != 'copy' THEN -1 ELSE 0 END AS direct_delta,
+               CASE WHEN is_transcode = false AND (COALESCE(video_decision, 'directplay') = 'copy' OR COALESCE(audio_decision, 'directplay') = 'copy') THEN -1 ELSE 0 END AS copy_delta,
                CASE WHEN is_transcode = true THEN -1 ELSE 0 END AS transcode_delta
         FROM filtered_sessions
       ),
@@ -93,6 +95,7 @@ export const concurrentRoutes: FastifyPluginAsync = async (app) => {
         SELECT
           event_time,
           SUM(direct_delta) OVER (ORDER BY event_time, direct_delta DESC) AS direct,
+          SUM(copy_delta) OVER (ORDER BY event_time, copy_delta DESC) AS copy,
           SUM(transcode_delta) OVER (ORDER BY event_time, transcode_delta DESC) AS transcode
         FROM events
       ),
@@ -100,8 +103,9 @@ export const concurrentRoutes: FastifyPluginAsync = async (app) => {
         SELECT
           event_time,
           direct,
+          copy,
           transcode,
-          (direct + transcode) AS total
+          (direct + copy + transcode) AS total
         FROM running
         ${rangeStart ? sql`WHERE event_time >= ${rangeStart}` : sql``}
       ),
@@ -109,6 +113,7 @@ export const concurrentRoutes: FastifyPluginAsync = async (app) => {
         SELECT
           time_bucket(${bucketInterval}::interval, event_time) AS bucket,
           direct,
+          copy,
           transcode,
           total,
           ROW_NUMBER() OVER (
@@ -121,6 +126,7 @@ export const concurrentRoutes: FastifyPluginAsync = async (app) => {
         bucket::text AS hour,
         total::int,
         direct::int,
+        copy::int AS direct_stream,
         transcode::int
       FROM ranked
       WHERE rn = 1
@@ -128,11 +134,18 @@ export const concurrentRoutes: FastifyPluginAsync = async (app) => {
     `);
 
     const hourlyData = (
-      result.rows as { hour: string; total: number; direct: number; transcode: number }[]
+      result.rows as {
+        hour: string;
+        total: number;
+        direct: number;
+        direct_stream: number;
+        transcode: number;
+      }[]
     ).map((r) => ({
       hour: r.hour,
       total: r.total,
       direct: r.direct,
+      directStream: r.direct_stream,
       transcode: r.transcode,
     }));
 

@@ -240,7 +240,11 @@ function createStatements() {
      */
     qualityStatsSince: db
       .select({
-        isTranscode: sessions.isTranscode,
+        tier: sql<string>`CASE
+          WHEN is_transcode = true THEN 'transcode'
+          WHEN video_decision = 'copy' OR audio_decision = 'copy' THEN 'copy'
+          ELSE 'directplay'
+        END`.as('tier'),
         count: sql<number>`count(DISTINCT COALESCE(reference_id, id))::int`,
       })
       .from(sessions)
@@ -250,7 +254,7 @@ function createStatements() {
           inArray(sessions.mediaType, PRIMARY_MEDIA_TYPES)
         )
       )
-      .groupBy(sessions.isTranscode)
+      .groupBy(sql`tier`)
       .prepare('quality_stats_since'),
 
     /**
