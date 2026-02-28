@@ -987,10 +987,6 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
       return sql`WHERE ${sql.join(allConditions, sql` AND `)}`;
     };
 
-    // For users query, no extra NOT NULL condition needed (uses JOIN)
-    const whereClause =
-      serverConditions.length > 0 ? sql`WHERE ${sql.join(serverConditions, sql` AND `)}` : sql``;
-
     // Query all filter options in parallel
     const [
       platformsResult,
@@ -1046,20 +1042,17 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
             ORDER BY count DESC
             LIMIT 100
           `),
-      // Users with their identity info
+      // Users - all synced users, sorted by display name
       db.execute(sql`
-            SELECT DISTINCT
+            SELECT
               su.id,
               su.username,
               su.thumb_url,
               su.server_id,
               u.name as identity_name
-            FROM sessions s
-            JOIN server_users su ON su.id = s.server_user_id
+            FROM server_users su
             LEFT JOIN users u ON u.id = su.user_id
-            ${whereClause}
-            ORDER BY su.username
-            LIMIT 200
+            ORDER BY LOWER(COALESCE(u.name, su.username))
           `),
       // Servers (for rules builder)
       db.select({ id: servers.id, name: servers.name, type: servers.type }).from(servers),
