@@ -165,6 +165,7 @@ const evaluateConcurrentStreams: ConditionEvaluator = (
 ): EvaluatorResult => {
   const { session, activeSessions, serverUser } = context;
   const excludeSameDevice = condition.params?.exclude_same_device ?? true;
+  const excludeSameIp = condition.params?.exclude_same_ip ?? false;
 
   // Count active sessions for this user (excluding current session by reference to avoid double-count)
   let userActiveSessions = activeSessions.filter(
@@ -177,6 +178,11 @@ const evaluateConcurrentStreams: ConditionEvaluator = (
     userActiveSessions = userActiveSessions.filter(
       (s) => !(session.deviceId && s.deviceId && session.deviceId === s.deviceId)
     );
+  }
+
+  // When exclude_same_ip is true, only count sessions from different IPs.
+  if (excludeSameIp) {
+    userActiveSessions = userActiveSessions.filter((s) => s.ipAddress !== session.ipAddress);
   }
 
   // Add 1 for the current session

@@ -53,9 +53,14 @@ export function ConditionRow({
   const handleFieldChange = (newField: ConditionField) => {
     const newFieldDef = FIELD_DEFINITIONS[newField];
     // Build params based on field capabilities
-    const params: { window_hours?: number; exclude_same_device?: boolean } = {};
+    const params: {
+      window_hours?: number;
+      exclude_same_device?: boolean;
+      exclude_same_ip?: boolean;
+    } = {};
     if (newFieldDef.hasWindowHours) params.window_hours = 24;
     if (newFieldDef.hasExcludeSameDevice) params.exclude_same_device = true;
+    if (newFieldDef.hasExcludeSameIp) params.exclude_same_ip = false; // Default to false (same household OK)
 
     onChange({
       field: newField,
@@ -106,6 +111,13 @@ export function ConditionRow({
     onChange({
       ...condition,
       params: { ...condition.params, exclude_same_device: exclude },
+    });
+  };
+
+  const handleExcludeSameIpChange = (exclude: boolean) => {
+    onChange({
+      ...condition,
+      params: { ...condition.params, exclude_same_ip: exclude },
     });
   };
 
@@ -190,6 +202,25 @@ export function ConditionRow({
           <TooltipContent side="top" className="max-w-[240px]">
             When checked, only compares sessions from different physical devices. Uncheck to include
             all sessions regardless of device.
+          </TooltipContent>
+        </Tooltip>
+      )}
+
+      {/* Exclude Same IP (for detecting account sharing vs same-household) */}
+      {fieldDef.hasExcludeSameIp && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <label className="flex h-10 cursor-pointer items-center gap-2 whitespace-nowrap">
+              <Checkbox
+                checked={condition.params?.exclude_same_ip ?? false}
+                onCheckedChange={handleExcludeSameIpChange}
+              />
+              <span className="text-muted-foreground text-sm">Unique IPs</span>
+            </label>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-[240px]">
+            When checked, only counts sessions from different IP addresses. Use this to detect
+            account sharing while allowing same-household usage.
           </TooltipContent>
         </Tooltip>
       )}

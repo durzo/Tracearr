@@ -527,6 +527,8 @@ export interface Condition {
     // Useful for: concurrent_streams (don't double-count same device),
     // travel_speed_kmh (VPN switch isn't travel), active_session_distance_km (same device = same location)
     exclude_same_device?: boolean;
+    // When true, only count sessions from different IPs.
+    exclude_same_ip?: boolean;
   };
 }
 

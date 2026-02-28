@@ -419,6 +419,7 @@ export const conditionSchema = z.object({
     .object({
       window_hours: z.number().int().positive().optional(),
       exclude_same_device: z.boolean().optional(),
+      exclude_same_ip: z.boolean().optional(),
     })
     .optional(),
 });

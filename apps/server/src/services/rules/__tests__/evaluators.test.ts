@@ -382,6 +382,74 @@ describe('Session Behavior Evaluators', () => {
       expect(result3.matched).toBe(false);
       expect(result3.actual).toBe(2);
     });
+
+    it('excludes sessions from same IP when exclude_same_ip is true', async () => {
+      const session1 = createMockSession({
+        id: 's1',
+        serverUserId: 'user-1',
+        deviceId: 'device-1',
+        ipAddress: '1.2.3.4',
+      });
+      const session2 = createMockSession({
+        id: 's2',
+        serverUserId: 'user-1',
+        deviceId: 'device-2',
+        ipAddress: '1.2.3.4', // Same IP as session1
+      });
+      const session3 = createMockSession({
+        id: 's3',
+        serverUserId: 'user-1',
+        deviceId: 'device-3',
+        ipAddress: '5.6.7.8', // Different IP
+      });
+
+      const ctx = createTestContext({
+        session: session1,
+        serverUser: createMockServerUser({ id: 'user-1' }),
+        activeSessions: [session1, session2, session3],
+      });
+
+      const evaluator = evaluatorRegistry.concurrent_streams;
+
+      // Without exclude_same_ip: counts all 3 sessions
+      const result1 = await evaluator(
+        ctx,
+        createCondition({
+          field: 'concurrent_streams',
+          operator: 'eq',
+          value: 3,
+          params: { exclude_same_ip: false },
+        })
+      );
+      expect(result1.matched).toBe(true);
+      expect(result1.actual).toBe(3);
+
+      // With exclude_same_ip: only counts sessions from different IPs (session1 + session3 = 2)
+      const result2 = await evaluator(
+        ctx,
+        createCondition({
+          field: 'concurrent_streams',
+          operator: 'eq',
+          value: 2,
+          params: { exclude_same_ip: true },
+        })
+      );
+      expect(result2.matched).toBe(true);
+      expect(result2.actual).toBe(2);
+
+      // With exclude_same_ip: rule for >1 unique IPs should match
+      const result3 = await evaluator(
+        ctx,
+        createCondition({
+          field: 'concurrent_streams',
+          operator: 'gt',
+          value: 1,
+          params: { exclude_same_ip: true },
+        })
+      );
+      expect(result3.matched).toBe(true);
+      expect(result3.actual).toBe(2);
+    });
   });
 
   describe('active_session_distance_km', () => {

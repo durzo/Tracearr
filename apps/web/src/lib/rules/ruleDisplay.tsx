@@ -175,7 +175,23 @@ export function formatCondition(
   }
 
   // Standard format: "Inactive > 180 days"
-  return `${label} ${operator} ${formattedValue}${unit}`;
+  let result = `${label} ${operator} ${formattedValue}${unit}`;
+
+  const paramIndicators: string[] = [];
+  // exclude_same_device defaults to true, so show when disabled
+  if (condition.params?.exclude_same_device === false) {
+    paramIndicators.push('includes same device');
+  }
+  // exclude_same_ip defaults to false, so show when enabled
+  if (condition.params?.exclude_same_ip === true) {
+    paramIndicators.push('unique IPs');
+  }
+
+  if (paramIndicators.length > 0) {
+    result += ` (${paramIndicators.join(', ')})`;
+  }
+
+  return result;
 }
 
 /**
