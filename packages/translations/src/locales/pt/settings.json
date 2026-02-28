@@ -40,7 +40,6 @@
     "connectionFailed": "Falha na ligação"
   },
   "mobile": {
-    "tailscale": "Tailscale",
     "title": "Aplicação móvel",
     "pairDevice": "Emparelhar dispositivo",
     "connectedDevices": "Dispositivos ligados",
