@@ -688,22 +688,37 @@ describe('Violation Routes', () => {
       const serverUserId = randomUUID();
       const serverId = ownerUser.serverIds[0];
 
-      // Violation exists check with serverUsers join - now includes severity and serverUserId
-      mockDb.select.mockReturnValue(
-        createViolationExistsCheckMock([
-          {
-            id: violationId,
-            severity: 'warning',
-            serverUserId,
-            serverId,
-          },
-        ])
-      );
+      // First select: violation exists check with serverUsers join
+      // Second select: get rule actions
+      let selectCallCount = 0;
+      mockDb.select.mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) {
+          // Violation exists check
+          return createViolationExistsCheckMock([
+            {
+              id: violationId,
+              ruleId: 'rule-1',
+              serverUserId,
+              serverId,
+            },
+          ]);
+        } else {
+          // Rule actions query - no trust actions
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue([{ id: 'rule-1', actions: [] }]),
+              }),
+            }),
+          };
+        }
+      });
 
-      // Mock transaction for delete + trust score restore
+      // Mock transaction for delete + trust reversal
       mockDb.transaction = vi
         .fn()
-        .mockImplementation(async (callback: (tx: any) => Promise<void>) => {
+        .mockImplementation(async (callback: (tx: unknown) => Promise<void>) => {
           const txMock = {
             delete: vi.fn().mockReturnValue({
               where: vi.fn().mockResolvedValue(undefined),
@@ -727,27 +742,49 @@ describe('Violation Routes', () => {
       expect(body.success).toBe(true);
     });
 
-    it('should restore trust score when deleting violation', async () => {
+    it('reverses trust score when dismissing violation with adjust_trust action', async () => {
+      // Dismiss reverses any trust changes made by explicit rule actions.
+      // This treats dismiss as "false positive, undo everything".
       const ownerUser = createOwnerUser();
       app = await buildTestApp(ownerUser);
 
       const violationId = randomUUID();
       const serverUserId = randomUUID();
+      const ruleId = randomUUID();
       const serverId = ownerUser.serverIds[0];
 
-      // Test with high severity (penalty: 20)
-      mockDb.select.mockReturnValue(
-        createViolationExistsCheckMock([
-          {
-            id: violationId,
-            severity: 'high',
-            serverUserId,
-            serverId,
-          },
-        ])
-      );
+      // First select: violation exists check
+      // Second select: rule actions with adjust_trust -20
+      let selectCallCount = 0;
+      mockDb.select.mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) {
+          return createViolationExistsCheckMock([
+            {
+              id: violationId,
+              ruleId,
+              serverUserId,
+              serverId,
+            },
+          ]);
+        } else {
+          // Rule with adjust_trust action
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue([
+                  {
+                    id: ruleId,
+                    actions: [{ type: 'adjust_trust', amount: -20 }],
+                  },
+                ]),
+              }),
+            }),
+          };
+        }
+      });
 
-      // Track transaction calls
+      // Track transaction calls to verify trust reversal
       const deleteMock = vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue(undefined),
       });
@@ -759,7 +796,7 @@ describe('Violation Routes', () => {
 
       mockDb.transaction = vi
         .fn()
-        .mockImplementation(async (callback: (tx: any) => Promise<void>) => {
+        .mockImplementation(async (callback: (tx: unknown) => Promise<void>) => {
           const txMock = {
             delete: deleteMock,
             update: updateMock,
@@ -775,8 +812,9 @@ describe('Violation Routes', () => {
       expect(response.statusCode).toBe(200);
       // Verify transaction was called
       expect(mockDb.transaction).toHaveBeenCalledTimes(1);
-      // Verify delete and update were called in transaction
+      // Verify delete was called
       expect(deleteMock).toHaveBeenCalled();
+      // Verify update was called (trust score reversal: -(-20) = +20)
       expect(updateMock).toHaveBeenCalled();
     });
 

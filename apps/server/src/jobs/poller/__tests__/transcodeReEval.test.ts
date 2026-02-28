@@ -423,8 +423,6 @@ describe('reEvaluateRulesOnTranscodeChange', () => {
 
       expect(results).toHaveLength(1);
       expect(results[0]?.violation.id).toBe('violation-1');
-      expect(results[0]?.trustPenalty).toBe(20); // high severity = 20
-
       // Verify DB insert was called
       expect(mockTxInsert).toHaveBeenCalled();
     });
@@ -523,25 +521,20 @@ describe('reEvaluateRulesOnTranscodeChange', () => {
       const input = createDefaultInput();
       await reEvaluateRulesOnTranscodeChange(input);
 
-      // All three operations should use the transaction context (tx), not bare db
       // 1. dedup select
       expect(mockTxSelect).toHaveBeenCalled();
       // 2. violation insert
       expect(mockTxInsert).toHaveBeenCalled();
-      // 3. trust score update
-      expect(mockTxUpdate).toHaveBeenCalled();
 
-      // Verify ordering: select (dedup) → insert → update (trust)
+      // Verify ordering: select (dedup) → insert
       const selectOrder = mockTxSelect.mock.invocationCallOrder[0]!;
       const insertOrder = mockTxInsert.mock.invocationCallOrder[0]!;
-      const updateOrder = mockTxUpdate.mock.invocationCallOrder[0]!;
       expect(selectOrder).toBeLessThan(insertOrder);
-      expect(insertOrder).toBeLessThan(updateOrder);
     });
   });
 
   describe('trust score penalty', () => {
-    it('decreases trust score on violation creation', async () => {
+    it('does NOT automatically decrease trust score on violation creation', async () => {
       const reEvaluateRulesOnTranscodeChange = await getFunction();
 
       mockEvaluateRulesAsync.mockResolvedValue([
@@ -557,8 +550,8 @@ describe('reEvaluateRulesOnTranscodeChange', () => {
       const input = createDefaultInput();
       await reEvaluateRulesOnTranscodeChange(input);
 
-      // Trust score update should have been called
-      expect(mockTxUpdate).toHaveBeenCalled();
+      // Trust score update should NOT be called for violation creation
+      expect(mockTxUpdate).not.toHaveBeenCalled();
     });
   });
 

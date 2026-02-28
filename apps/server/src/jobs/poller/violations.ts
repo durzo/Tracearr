@@ -344,41 +344,21 @@ export async function createViolation(
   rule: Rule,
   pubSubService: PubSubService | null
 ): Promise<void> {
-  // Calculate trust penalty based on severity
-  const trustPenalty = getTrustScorePenalty(result.severity);
-
-  // Use transaction to ensure violation creation and trust score update are atomic
-  const created = await db.transaction(async (tx) => {
-    // Use onConflictDoNothing to handle race conditions at DB level
-    // If the unique constraint is violated, the insert is silently skipped
-    const insertedRows = await tx
-      .insert(violations)
-      .values({
-        ruleId,
-        serverUserId,
-        sessionId,
-        severity: result.severity,
-        ruleType: rule.type,
-        data: result.data,
-      })
-      .onConflictDoNothing()
-      .returning();
-
-    const violation = insertedRows[0];
-
-    // Only update trust score if we actually inserted a violation
-    if (violation) {
-      await tx
-        .update(serverUsers)
-        .set({
-          trustScore: sql`GREATEST(0, ${serverUsers.trustScore} - ${trustPenalty})`,
-          updatedAt: new Date(),
-        })
-        .where(eq(serverUsers.id, serverUserId));
-    }
-
-    return violation;
-  });
+  // Use onConflictDoNothing to handle race conditions at DB level
+  // If the unique constraint is violated, the insert is silently skipped
+  const created = await db
+    .insert(violations)
+    .values({
+      ruleId,
+      serverUserId,
+      sessionId,
+      severity: result.severity,
+      ruleType: rule.type,
+      data: result.data,
+    })
+    .onConflictDoNothing()
+    .returning()
+    .then((rows) => rows[0]);
 
   // Get server user and server details for the violation broadcast (outside transaction - read only)
   const [details] = await db
@@ -457,7 +437,6 @@ export interface ViolationRuleInfo {
 export interface ViolationInsertResult {
   violation: typeof violations.$inferSelect;
   rule: Rule | ViolationRuleInfo;
-  trustPenalty: number;
 }
 
 /**
@@ -487,8 +466,6 @@ export async function createViolationInTransaction(
   result: RuleEvaluationResult,
   rule: Rule
 ): Promise<ViolationInsertResult | null> {
-  const trustPenalty = getTrustScorePenalty(result.severity);
-
   // Use onConflictDoNothing to handle race conditions at DB level
   // If the unique constraint is violated, the insert is silently skipped
   const insertedRows = await tx
@@ -514,16 +491,7 @@ export async function createViolationInTransaction(
     return null;
   }
 
-  // Decrease server user trust score based on severity
-  await tx
-    .update(serverUsers)
-    .set({
-      trustScore: sql`GREATEST(0, ${serverUsers.trustScore} - ${trustPenalty})`,
-      updatedAt: new Date(),
-    })
-    .where(eq(serverUsers.id, serverUserId));
-
-  return { violation, rule, trustPenalty };
+  return { violation, rule };
 }
 
 /**

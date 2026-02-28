@@ -22,7 +22,6 @@ import {
   ruleActionResults,
 } from '../db/schema.js';
 import { hasServerAccess } from '../utils/serverFiltering.js';
-import { getTrustScorePenalty } from '../jobs/poller/violations.js';
 
 /**
  * Build ORDER BY SQL clause for violations based on sort field and direction.
@@ -921,6 +920,13 @@ export const violationRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * DELETE /violations/:id - Dismiss (delete) a violation
+   *
+   * Dismissing a violation:
+   * 1. Reverses any trust score changes made by explicit rule actions (adjust_trust)
+   * 2. Deletes the violation record
+   *
+   * This treats dismiss as "false positive, undo everything".
+   * For just marking as seen, use PATCH (acknowledge) instead.
    */
   app.delete('/:id', { preHandler: [app.authenticate] }, async (request, reply) => {
     const params = violationIdParamSchema.safeParse(request.params);
@@ -936,11 +942,11 @@ export const violationRoutes: FastifyPluginAsync = async (app) => {
       return reply.forbidden('Only server owners can dismiss violations');
     }
 
-    // Check violation exists and get info needed for trust score restoration
+    // Check violation exists and get info needed for trust reversal
     const violationRows = await db
       .select({
         id: violations.id,
-        severity: violations.severity,
+        ruleId: violations.ruleId,
         serverUserId: violations.serverUserId,
         serverId: serverUsers.serverId,
       })
@@ -959,22 +965,40 @@ export const violationRoutes: FastifyPluginAsync = async (app) => {
       return reply.forbidden('You do not have access to this violation');
     }
 
-    // Calculate trust penalty to restore
-    const trustPenalty = getTrustScorePenalty(violation.severity);
+    // Calculate trust adjustment to reverse from rule's actions
+    let trustAdjustmentToReverse = 0;
+    const ruleRows = await db
+      .select({ actions: rules.actions })
+      .from(rules)
+      .where(eq(rules.id, violation.ruleId))
+      .limit(1);
 
-    // Delete violation and restore trust score atomically
+    const rule = ruleRows[0];
+    if (rule?.actions && Array.isArray(rule.actions)) {
+      for (const action of rule.actions) {
+        if (action.type === 'adjust_trust' && typeof action.amount === 'number') {
+          // Sum up all trust adjustments made by this rule
+          trustAdjustmentToReverse += Number(action.amount);
+        }
+      }
+    }
+
+    // Delete violation and reverse trust score atomically
     await db.transaction(async (tx) => {
       // Delete the violation
       await tx.delete(violations).where(eq(violations.id, id));
 
-      // Restore trust score (capped at 100)
-      await tx
-        .update(serverUsers)
-        .set({
-          trustScore: sql`LEAST(100, ${serverUsers.trustScore} + ${trustPenalty})`,
-          updatedAt: new Date(),
-        })
-        .where(eq(serverUsers.id, violation.serverUserId));
+      // Reverse trust score adjustment (if any was made)
+      if (trustAdjustmentToReverse !== 0) {
+        // Reverse by applying the opposite adjustment
+        await tx
+          .update(serverUsers)
+          .set({
+            trustScore: sql`LEAST(100, GREATEST(0, ${serverUsers.trustScore} - ${trustAdjustmentToReverse}))`,
+            updatedAt: new Date(),
+          })
+          .where(eq(serverUsers.id, violation.serverUserId));
+      }
     });
 
     return { success: true };
@@ -1148,11 +1172,11 @@ export const violationRoutes: FastifyPluginAsync = async (app) => {
       return { success: true, dismissed: 0 };
     }
 
-    // Get violation details for trust score restoration
+    // Get violation details including rule ID for trust reversal
     const violationDetails = await db
       .select({
         id: violations.id,
-        severity: violations.severity,
+        ruleId: violations.ruleId,
         serverUserId: violations.serverUserId,
         serverId: serverUsers.serverId,
       })
@@ -1169,29 +1193,53 @@ export const violationRoutes: FastifyPluginAsync = async (app) => {
       return { success: true, dismissed: 0 };
     }
 
-    // Group violations by serverUserId to aggregate trust score restoration
-    const trustRestoreByUser = new Map<string, number>();
+    // Get unique rule IDs to fetch their actions
+    const uniqueRuleIds = [...new Set(accessibleViolations.map((v) => v.ruleId))];
+    const ruleRows = await db
+      .select({ id: rules.id, actions: rules.actions })
+      .from(rules)
+      .where(inArray(rules.id, uniqueRuleIds));
+
+    // Build map of ruleId -> trust adjustment amount
+    const ruleAdjustments = new Map<string, number>();
+    for (const rule of ruleRows) {
+      let adjustment = 0;
+      if (rule.actions && Array.isArray(rule.actions)) {
+        for (const action of rule.actions) {
+          if (action.type === 'adjust_trust' && typeof action.amount === 'number') {
+            adjustment += Number(action.amount);
+          }
+        }
+      }
+      ruleAdjustments.set(rule.id, adjustment);
+    }
+
+    // Calculate trust adjustments to reverse per user
+    const trustReverseByUser = new Map<string, number>();
     for (const v of accessibleViolations) {
-      const penalty = getTrustScorePenalty(v.severity);
-      trustRestoreByUser.set(
-        v.serverUserId,
-        (trustRestoreByUser.get(v.serverUserId) ?? 0) + penalty
-      );
+      const adjustment = ruleAdjustments.get(v.ruleId) ?? 0;
+      if (adjustment !== 0) {
+        trustReverseByUser.set(
+          v.serverUserId,
+          (trustReverseByUser.get(v.serverUserId) ?? 0) + adjustment
+        );
+      }
     }
 
     const accessibleIds = accessibleViolations.map((v) => v.id);
 
-    // Delete violations and restore trust scores atomically
+    // Delete violations and reverse trust scores atomically
     await db.transaction(async (tx) => {
       // Delete all violations
       await tx.delete(violations).where(inArray(violations.id, accessibleIds));
 
-      // Restore trust scores for each affected user
-      for (const [serverUserId, totalPenalty] of trustRestoreByUser) {
+      // Reverse trust scores for each affected user
+      for (const [serverUserId, totalAdjustment] of trustReverseByUser) {
+        // Reverse by applying the opposite adjustment
         await tx
           .update(serverUsers)
           .set({
-            trustScore: sql`LEAST(100, ${serverUsers.trustScore} + ${totalPenalty})`,
+            trustScore: sql`LEAST(100, GREATEST(0, ${serverUsers.trustScore} - ${totalAdjustment}))`,
             updatedAt: new Date(),
           })
           .where(eq(serverUsers.id, serverUserId));

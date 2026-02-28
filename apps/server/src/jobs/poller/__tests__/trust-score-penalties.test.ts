@@ -1,12 +1,7 @@
 /**
  * Trust Score Penalty Tests
  *
- * Tests for trust score penalty calculation and stacking behavior
- * when multiple violations are created for the same session/user.
- *
- * Current behavior: Penalties stack (each violation deducts independently)
- * This test documents that behavior and provides a foundation for
- * future changes if penalty dampening is desired.
+ * Tests for trust score penalty calculation function.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -82,8 +77,8 @@ describe('Trust Score Penalties', () => {
 
   describe('trust score bounds', () => {
     /**
-     * Trust score is clamped to 0 minimum in the database update:
-     * GREATEST(0, ${serverUsers.trustScore} - ${trustPenalty})
+     * Trust score is clamped to 0 minimum when using rule actions:
+     * LEAST(100, GREATEST(0, trustScore + delta))
      */
 
     it('should document that trust score cannot go below 0', () => {

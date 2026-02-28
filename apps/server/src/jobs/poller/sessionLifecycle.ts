@@ -31,7 +31,7 @@ import {
   shouldRecordSession,
 } from './stateTracker.js';
 import { sql } from 'drizzle-orm';
-import { getTrustScorePenalty, type ViolationInsertResult } from './violations.js';
+import type { ViolationInsertResult } from './violations.js';
 import type {
   SessionCreationInput,
   SessionCreationResult,
@@ -749,7 +749,6 @@ export async function createSessionWithRulesAtomic(
             // Every rule match auto-creates a violation. Severity from rule.
             {
               const severity = rule.severity ?? 'warning';
-              const trustPenalty = getTrustScorePenalty(severity);
 
               // Collect related session IDs from evidence
               const allRelatedSessionIds = new Set<string>();
@@ -786,15 +785,6 @@ export async function createSessionWithRulesAtomic(
               const violation = insertedViolations[0];
 
               if (violation) {
-                // Decrease trust score
-                await tx
-                  .update(serverUsers)
-                  .set({
-                    trustScore: sql`GREATEST(0, ${serverUsers.trustScore} - ${trustPenalty})`,
-                    updatedAt: new Date(),
-                  })
-                  .where(eq(serverUsers.id, serverUser.id));
-
                 // Create rule info for ViolationInsertResult (V2 rules don't have type)
                 const ruleInfo = {
                   id: rule.id,
@@ -805,7 +795,6 @@ export async function createSessionWithRulesAtomic(
                 createdViolations.push({
                   violation,
                   rule: ruleInfo,
-                  trustPenalty,
                 });
               }
             }
@@ -1394,14 +1383,12 @@ export async function reEvaluateRulesOnTranscodeChange(
 
     // Every rule match auto-creates a violation. Severity from rule.
     const severity = rule.severity ?? 'warning';
-    const trustPenalty = getTrustScorePenalty(severity);
 
     // Use a transaction with advisory lock to prevent duplicate violations.
     // The DB unique index uses ruleType (NULL for V2), and NULL != NULL in PG,
     // so onConflictDoNothing can't catch V2 duplicates. The advisory lock
     // serializes concurrent SSE + reconciliation poll attempts for the same
-    // session+rule pair, and the transaction ensures atomicity of the
-    // dedup check + insert + trust penalty.
+    // session+rule pair, and the transaction ensures atomicity of the dedup check + insert.
     const violationResult = await db.transaction(async (tx) => {
       // Advisory lock scoped to this session+rule pair.
       // Released automatically when the transaction commits/rolls back.
@@ -1459,15 +1446,6 @@ export async function reEvaluateRulesOnTranscodeChange(
       const violation = insertedViolations[0];
       if (!violation) return null;
 
-      // Decrease trust score (atomic with the insert)
-      await tx
-        .update(serverUsers)
-        .set({
-          trustScore: sql`GREATEST(0, ${serverUsers.trustScore} - ${trustPenalty})`,
-          updatedAt: new Date(),
-        })
-        .where(eq(serverUsers.id, serverUser.id));
-
       return violation;
     });
 
@@ -1478,7 +1456,7 @@ export async function reEvaluateRulesOnTranscodeChange(
         type: null,
       };
 
-      createdViolations.push({ violation: violationResult, rule: ruleInfo, trustPenalty });
+      createdViolations.push({ violation: violationResult, rule: ruleInfo });
 
       console.log(
         `[rules] Transcode re-eval: rule "${rule.name}" matched session ${existingSession.id}`
