@@ -15,13 +15,33 @@ const LANGUAGE_STORAGE_KEY = 'tracearr_language';
  */
 export const languageNames = {
   en: 'English',
+  af: 'Afrikaans',
+  ar: 'العربية',
+  ca: 'Català',
+  cs: 'Čeština',
+  da: 'Dansk',
   de: 'Deutsch',
+  el: 'Ελληνικά',
   es: 'Español',
+  fi: 'Suomi',
   fr: 'Français',
+  he: 'עברית',
+  hu: 'Magyar',
+  it: 'Italiano',
+  ja: '日本語',
+  ko: '한국어',
   nl: 'Nederlands',
+  no: 'Norsk',
   pl: 'Polski',
   pt: 'Português',
+  ro: 'Română',
+  ru: 'Русский',
+  sr: 'Српски',
+  sv: 'Svenska',
+  tr: 'Türkçe',
   uk: 'Українська',
+  vi: 'Tiếng Việt',
+  zh: '中文',
 } as const;
 
 export type LanguageCode = keyof typeof languageNames;
