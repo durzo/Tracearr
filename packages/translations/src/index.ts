@@ -43,6 +43,7 @@
 export {
   i18n,
   initI18n,
+  loadLocale,
   defaultI18nConfig,
   defaultNS,
   namespaces,
