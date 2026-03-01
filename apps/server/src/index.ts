@@ -9,6 +9,7 @@ import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import { existsSync, readFileSync } from 'node:fs';
+import { gzipSync, createGzip } from 'node:zlib';
 import { Redis } from 'ioredis';
 import { API_BASE_PATH, REDIS_KEYS, WS_EVENTS } from '@tracearr/shared';
 
@@ -241,6 +242,49 @@ async function buildApp(options: { trustProxy?: boolean } = {}) {
   await app.register(rateLimit, {
     max: 1000,
     timeWindow: '1 minute',
+  });
+
+  // Gzip compression for all responses (global onSend hook).
+  // @fastify/compress uses per-route hooks via onRoute, which skips
+  // setNotFoundHandler — so static files served there wouldn't be compressed.
+  // A global onSend hook covers everything: API routes, static files, and SPA fallback.
+  app.addHook('onSend', (request, reply, payload, done) => {
+    if (payload == null) return done(null, payload);
+
+    // Skip if already compressed or client doesn't accept gzip
+    const existing = reply.getHeader('Content-Encoding');
+    if (existing && existing !== 'identity') return done(null, payload);
+    const accept = request.headers['accept-encoding'];
+    if (!accept?.includes('gzip')) return done(null, payload);
+
+    // Only compress text-like content types (not images, fonts, etc.)
+    const ct = (reply.getHeader('Content-Type') || 'application/json') as string;
+    if (!/text\/(?!event-stream)|json|xml|javascript|css/i.test(ct)) return done(null, payload);
+
+    // Streams (from reply.sendFile — JS, CSS, SVG, etc.)
+    if (
+      typeof payload === 'object' &&
+      typeof (payload as NodeJS.ReadableStream).pipe === 'function'
+    ) {
+      reply.header('Content-Encoding', 'gzip');
+      reply.header('Vary', 'Accept-Encoding');
+      reply.removeHeader('Content-Length');
+      const gz = createGzip();
+      (payload as NodeJS.ReadableStream).pipe(gz);
+      return done(null, gz);
+    }
+
+    // Strings and buffers (API JSON, SPA HTML)
+    if (typeof payload === 'string' || Buffer.isBuffer(payload)) {
+      const size = typeof payload === 'string' ? Buffer.byteLength(payload) : payload.length;
+      if (size < 1024) return done(null, payload);
+      reply.header('Content-Encoding', 'gzip');
+      reply.header('Vary', 'Accept-Encoding');
+      reply.removeHeader('Content-Length');
+      return done(null, gzipSync(typeof payload === 'string' ? Buffer.from(payload) : payload));
+    }
+
+    return done(null, payload);
   });
 
   // Utility plugins
