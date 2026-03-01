@@ -122,7 +122,7 @@ export {
   useTailscaleLogs,
   useEnableTailscale,
   useDisableTailscale,
-  useSetExitNode,
+  // useSetExitNode, // Exit node disabled — will come back with SOCKS proxy support
   useResetTailscale,
 } from './useTailscale';
 

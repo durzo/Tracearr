@@ -107,26 +107,22 @@ class TailscaleService {
     return this.getInfo();
   }
 
-  /**
-   * Set or clear the exit node
-   */
-  async setExitNode(id: string | null): Promise<TailscaleInfo> {
-    if (this.status !== 'connected') {
-      return this.getInfo();
-    }
-
-    const exitNodeArg = id ? (this.exitNodes.find((n) => n.id === id)?.hostname ?? id) : '';
-
-    await execFileAsync(
-      TAILSCALE_BIN,
-      [`--socket=${SOCKET_FILE}`, 'set', `--exit-node=${exitNodeArg}`],
-      { env: TAILSCALE_ENV }
-    );
-
-    await this.persistState();
-    await this.refreshStatus();
-    return this.getInfo();
-  }
+  // Exit node disabled — this will come back when we implement SOCKS proxy support
+  //
+  // async setExitNode(id: string | null): Promise<TailscaleInfo> {
+  //   if (this.status !== 'connected') {
+  //     return this.getInfo();
+  //   }
+  //   const exitNodeArg = id ? (this.exitNodes.find((n) => n.id === id)?.hostname ?? id) : '';
+  //   await execFileAsync(
+  //     TAILSCALE_BIN,
+  //     [`--socket=${SOCKET_FILE}`, 'set', `--exit-node=${exitNodeArg}`],
+  //     { env: TAILSCALE_ENV }
+  //   );
+  //   await this.persistState();
+  //   await this.refreshStatus();
+  //   return this.getInfo();
+  // }
 
   /**
    * Called on startup — reads DB settings, starts daemon if previously enabled
