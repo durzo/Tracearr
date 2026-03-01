@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Play, Clock, AlertTriangle, Tv, MapPin, Calendar, Users, Activity } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -6,9 +6,17 @@ import { StatCard } from '@/components/ui/stat-card';
 import { NowPlayingCard } from '@/components/sessions';
 import { StreamCard } from '@/components/map';
 import { SessionDetailSheet } from '@/components/history/SessionDetailSheet';
-import { ServerResourceCharts } from '@/components/charts/ServerResourceCharts';
-import { ServerBandwidthChart } from '@/components/charts/BandwidthChart';
 import { useDashboardStats, useActiveSessions } from '@/hooks/queries';
+
+// Lazy-load Highcharts components to keep them out of the initial bundle (~900 KB)
+const ServerResourceCharts = lazy(() =>
+  import('@/components/charts/ServerResourceCharts').then((m) => ({
+    default: m.ServerResourceCharts,
+  }))
+);
+const ServerBandwidthChart = lazy(() =>
+  import('@/components/charts/BandwidthChart').then((m) => ({ default: m.ServerBandwidthChart }))
+);
 import { useServerStatistics, useServerBandwidth } from '@/hooks/queries/useServers';
 import { useServer } from '@/hooks/useServer';
 import type { ActiveSession } from '@tracearr/shared';
@@ -170,20 +178,22 @@ export function Dashboard() {
             <Activity className="text-primary h-5 w-5" />
             <h2 className="text-lg font-semibold">{t('dashboard.serverResources')}</h2>
           </div>
-          <div className="grid gap-4 md:grid-cols-3">
-            <ServerResourceCharts
-              data={serverStats?.data}
-              isLoading={statsChartLoading}
-              averages={averages}
-            />
-            <ServerBandwidthChart
-              data={bandwidthStats?.data}
-              isLoading={bandwidthChartLoading}
-              averages={bandwidthAverages}
-              pollInterval={bandwidthPollInterval}
-              onPollIntervalChange={setBandwidthPollInterval}
-            />
-          </div>
+          <Suspense fallback={null}>
+            <div className="grid gap-4 md:grid-cols-3">
+              <ServerResourceCharts
+                data={serverStats?.data}
+                isLoading={statsChartLoading}
+                averages={averages}
+              />
+              <ServerBandwidthChart
+                data={bandwidthStats?.data}
+                isLoading={bandwidthChartLoading}
+                averages={bandwidthAverages}
+                pollInterval={bandwidthPollInterval}
+                onPollIntervalChange={setBandwidthPollInterval}
+              />
+            </div>
+          </Suspense>
         </section>
       )}
 

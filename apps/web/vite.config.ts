@@ -45,6 +45,26 @@ export default defineConfig(({ command }) => ({
   build: {
     outDir: 'dist',
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router'],
+          'vendor-query': ['@tanstack/react-query', '@tanstack/react-table'],
+          'vendor-highcharts': ['highcharts', 'highcharts-react-official'],
+          'vendor-leaflet': ['leaflet', 'react-leaflet'],
+          'vendor-i18n': ['i18next', 'react-i18next'],
+          'vendor-ui': [
+            '@radix-ui/react-alert-dialog',
+            '@radix-ui/react-dialog',
+            '@radix-ui/react-dropdown-menu',
+            '@radix-ui/react-popover',
+            '@radix-ui/react-select',
+            '@radix-ui/react-tabs',
+            '@radix-ui/react-tooltip',
+          ],
+        },
+      },
+    },
   },
   test: {
     passWithNoTests: true,
