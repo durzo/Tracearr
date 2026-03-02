@@ -3,7 +3,8 @@
  */
 
 import type { FastifyPluginAsync } from 'fastify';
-import { tailscaleEnableSchema, tailscaleExitNodeSchema } from '@tracearr/shared';
+// Exit node disabled — this will come back when we implement SOCKS proxy support
+import { tailscaleEnableSchema /* , tailscaleExitNodeSchema */ } from '@tracearr/shared';
 import { tailscaleService } from '../services/tailscale.js';
 
 export const tailscaleRoutes: FastifyPluginAsync = async (app) => {
@@ -40,17 +41,17 @@ export const tailscaleRoutes: FastifyPluginAsync = async (app) => {
     return { logs: tailscaleService.getLogs() };
   });
 
-  /**
-   * POST /tailscale/exit-node — Set or clear the exit node
-   */
-  app.post('/exit-node', { preHandler: [app.requireOwner] }, async (request, reply) => {
-    const body = tailscaleExitNodeSchema.safeParse(request.body);
-    if (!body.success) {
-      return reply.badRequest('Invalid request body');
-    }
-
-    return tailscaleService.setExitNode(body.data.id ?? null);
-  });
+  // Exit node disabled — this will come back when we implement SOCKS proxy support
+  // /**
+  //  * POST /tailscale/exit-node — Set or clear the exit node
+  //  */
+  // app.post('/exit-node', { preHandler: [app.requireOwner] }, async (request, reply) => {
+  //   const body = tailscaleExitNodeSchema.safeParse(request.body);
+  //   if (!body.success) {
+  //     return reply.badRequest('Invalid request body');
+  //   }
+  //   return tailscaleService.setExitNode(body.data.id ?? null);
+  // });
 
   /**
    * POST /tailscale/reset — Wipe all state (machine identity, auth) for a fresh start

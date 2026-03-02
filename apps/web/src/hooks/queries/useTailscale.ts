@@ -69,21 +69,22 @@ export function useDisableTailscale() {
   });
 }
 
-export function useSetExitNode() {
-  const { t } = useTranslation('settings');
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (id: string | null) => api.tailscale.setExitNode(id),
-    onSuccess: (data) => {
-      queryClient.setQueryData<TailscaleInfo>(['tailscale', 'status'], data);
-      toast.success(t('tailscale.toast.exitNodeSet'));
-    },
-    onError: (err) => {
-      toast.error(t('tailscale.toast.exitNodeFailed'), { description: err.message });
-    },
-  });
-}
+// Exit node disabled — this will come back when we implement SOCKS proxy support
+//
+// export function useSetExitNode() {
+//   const { t } = useTranslation('settings');
+//   const queryClient = useQueryClient();
+//   return useMutation({
+//     mutationFn: (id: string | null) => api.tailscale.setExitNode(id),
+//     onSuccess: (data) => {
+//       queryClient.setQueryData<TailscaleInfo>(['tailscale', 'status'], data);
+//       toast.success(t('tailscale.toast.exitNodeSet'));
+//     },
+//     onError: (err) => {
+//       toast.error(t('tailscale.toast.exitNodeFailed'), { description: err.message });
+//     },
+//   });
+// }
 
 export function useResetTailscale() {
   const { t } = useTranslation('settings');

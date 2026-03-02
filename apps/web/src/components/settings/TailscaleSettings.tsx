@@ -8,13 +8,14 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+// Exit node disabled — this will come back when we implement SOCKS proxy support
+// import {
+//   Select,
+//   SelectContent,
+//   SelectItem,
+//   SelectTrigger,
+//   SelectValue,
+// } from '@/components/ui/select';
 import {
   Loader2,
   ExternalLink,
@@ -30,7 +31,7 @@ import {
   useTailscaleLogs,
   useEnableTailscale,
   useDisableTailscale,
-  useSetExitNode,
+  // useSetExitNode, // Exit node disabled — will come back with SOCKS proxy support
   useResetTailscale,
 } from '@/hooks/queries';
 
@@ -58,7 +59,7 @@ export function TailscaleSettings() {
   const enableMutation = useEnableTailscale();
   const disableMutation = useDisableTailscale();
   const resetMutation = useResetTailscale();
-  const exitNodeMutation = useSetExitNode();
+  // const exitNodeMutation = useSetExitNode();
   const [hostname, setHostname] = useState('');
   const [showDisableConfirm, setShowDisableConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -269,7 +270,8 @@ export function TailscaleSettings() {
                       </td>
                     </tr>
                   )}
-                  {status.exitNodes.length > 0 && (
+                  {/* Exit node disabled — this will come back when we implement SOCKS proxy support */}
+                  {/* {status.exitNodes.length > 0 && (
                     <tr>
                       <td className="text-muted-foreground py-1.5 pr-4 align-top">Exit Node</td>
                       <td className="py-1.5">
@@ -299,7 +301,7 @@ export function TailscaleSettings() {
                         </Select>
                       </td>
                     </tr>
-                  )}
+                  )} */}
                 </tbody>
               </table>
 
