@@ -2,12 +2,17 @@
 **/node_modules
 .pnpm-store
 
-# Turbo cache - not needed in Docker build
-.turbo
+# Turbo cache - not needed in Docker build (root + per-package)
+**/.turbo
+
+# Build artifacts - must be rebuilt fresh in container
+**/dist
+**/*.tsbuildinfo
 
 # Git
 .git
 .gitignore
+.husky/
 
 # IDE and editor files
 .idea
@@ -16,8 +21,28 @@
 *.swo
 .DS_Store
 
+# Test files and directories
+apps/e2e/
+apps/server/test/
+**/__tests__/
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+
 # Testing artifacts
-coverage
+**/coverage
+
+# Dev tooling config
+.editorconfig
+.prettierrc
+.prettierignore
+.lintstagedrc.json
+.tool-versions
+eslint.config.js
+tsconfig.eslint.json
+codecov.yml
+crowdin.yml
 
 # Logs
 *.log
@@ -33,8 +58,9 @@ pnpm-debug.log*
 docker-compose*.yml
 .dockerignore
 
-# Documentation (not needed in image)
+# Documentation
 docs/
+*.md
 
 # CI/CD
 .github/
