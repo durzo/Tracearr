@@ -4,7 +4,7 @@
  * Works in both web (browser) and mobile (React Native/Expo) environments.
  */
 
-import { i18n } from './config.js';
+import { i18n, loadLocale } from './config.js';
 
 // Storage key for persisted language preference
 const LANGUAGE_STORAGE_KEY = 'tracearr_language';
@@ -205,6 +205,7 @@ export async function changeLanguage(
     );
   }
 
+  await loadLocale(sanitized);
   await i18n.changeLanguage(sanitized);
   await setStoredLanguage(sanitized, storage);
 }

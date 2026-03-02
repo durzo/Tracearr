@@ -9,7 +9,7 @@ import { MaintenanceProvider } from '@/hooks/useMaintenanceMode';
 import { ThemeProvider } from '@/components/theme-provider';
 import { BASE_URL } from '@/lib/basePath';
 import { App } from './App';
-import './i18n';
+import { i18nReady } from './i18n';
 import './styles/globals.css';
 
 const queryClient = new QueryClient({
@@ -32,22 +32,25 @@ if (!root) {
   throw new Error('Root element not found');
 }
 
-createRoot(root).render(
-  <StrictMode>
-    <ThemeProvider defaultTheme="dark" storageKey="tracearr-theme">
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter basename={BASE_URL}>
-          <MaintenanceProvider>
-            <AuthProvider>
-              <ServerProvider>
-                <SocketProvider>
-                  <App />
-                </SocketProvider>
-              </ServerProvider>
-            </AuthProvider>
-          </MaintenanceProvider>
-        </BrowserRouter>
-      </QueryClientProvider>
-    </ThemeProvider>
-  </StrictMode>
-);
+// Wait for i18n to load the active locale before first paint
+void i18nReady.then(() => {
+  createRoot(root).render(
+    <StrictMode>
+      <ThemeProvider defaultTheme="dark" storageKey="tracearr-theme">
+        <QueryClientProvider client={queryClient}>
+          <BrowserRouter basename={BASE_URL}>
+            <MaintenanceProvider>
+              <AuthProvider>
+                <ServerProvider>
+                  <SocketProvider>
+                    <App />
+                  </SocketProvider>
+                </ServerProvider>
+              </AuthProvider>
+            </MaintenanceProvider>
+          </BrowserRouter>
+        </QueryClientProvider>
+      </ThemeProvider>
+    </StrictMode>
+  );
+});

@@ -4,6 +4,8 @@ import { initI18n, type SupportedLanguage, supportedLanguages } from '@tracearr/
 const userLanguage = navigator.language.split('-')[0] as SupportedLanguage;
 const language: SupportedLanguage = supportedLanguages.includes(userLanguage) ? userLanguage : 'en';
 
-void initI18n({ lng: language });
+// Export the ready promise so main.tsx can await before rendering.
+// This ensures non-English locale data is loaded before the first paint.
+export const i18nReady = initI18n({ lng: language });
 
 export { i18n } from '@tracearr/translations';
