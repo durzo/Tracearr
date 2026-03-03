@@ -11,41 +11,41 @@
  * - Progress tracking via WebSocket
  */
 
-import { eq } from 'drizzle-orm';
-import { sanitizeCodec } from '../utils/codecNormalizer.js';
 import type {
-  JellystatPlaybackActivity,
   JellystatImportProgress,
   JellystatImportResult,
-  SourceVideoDetails,
+  JellystatPlaybackActivity,
   SourceAudioDetails,
-  StreamVideoDetails,
+  SourceVideoDetails,
   StreamAudioDetails,
-  TranscodeInfo,
+  StreamVideoDetails,
   SubtitleInfo,
+  TranscodeInfo,
 } from '@tracearr/shared';
 import { jellystatBackupSchema } from '@tracearr/shared';
+import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { servers, sessions } from '../db/schema.js';
-import { refreshAggregates, checkAggregateNeedsRebuild } from '../db/timescale.js';
+import { checkAggregateNeedsRebuild, refreshAggregates } from '../db/timescale.js';
 import { enqueueMaintenanceJob } from '../jobs/maintenanceQueue.js';
-import { geoipService } from './geoip.js';
-import { geoasnService } from './geoasn.js';
-import type { PubSubService } from './cache.js';
-import { JellyfinClient } from './mediaServer/jellyfin/client.js';
-import { EmbyClient } from './mediaServer/emby/client.js';
+import { sanitizeCodec } from '../utils/codecNormalizer.js';
+import { extractIpFromEndpoint } from '../utils/parsing.js';
 import { normalizeClient } from '../utils/platformNormalizer.js';
 import { parseJellystatPlayMethod } from '../utils/transcodeNormalizer.js';
-import { extractIpFromEndpoint } from '../utils/parsing.js';
-import { shouldFilterItem } from './mediaServer/shared/jellyfinEmbyUtils.js';
+import type { PubSubService } from './cache.js';
+import { geoasnService } from './geoasn.js';
+import { geoipService } from './geoip.js';
 import {
-  createUserMapping,
-  createSkippedUserTracker,
-  queryExistingByExternalIds,
-  flushInsertBatch,
   createSimpleProgressPublisher,
+  createSkippedUserTracker,
+  createUserMapping,
+  flushInsertBatch,
+  queryExistingByExternalIds,
   type TimeBounds,
 } from './import/index.js';
+import { EmbyClient } from './mediaServer/emby/client.js';
+import { JellyfinClient } from './mediaServer/jellyfin/client.js';
+import { parseMediaType, shouldFilterItem } from './mediaServer/shared/jellyfinEmbyUtils.js';
 
 const BATCH_SIZE = 500;
 const DEDUP_BATCH_SIZE = 5000;
@@ -71,6 +71,8 @@ interface MediaEnrichment {
   discNumber?: number;
   /** Item should be filtered (theme song, theme video, trailer, etc.) */
   filtered?: boolean;
+  /** Item type from media server API (Audio, Movie, Episode, etc.) */
+  itemType?: string;
 }
 
 /**
@@ -355,18 +357,23 @@ export function transformActivityToSession(
   }
   // If both are unavailable, totalDurationMs stays null
 
-  // Detect media type from SeriesName and MediaStreams
-  // Music tracks have no video stream but have audio stream
-  const activityForStreams = activity as Record<string, unknown>;
-  const streams = activityForStreams.MediaStreams as JellystatMediaStream[] | null;
-  const hasVideoStream = streams?.some((s) => s.Type === 'Video') ?? true; // default true if no streams
-  const hasAudioStream = streams?.some((s) => s.Type === 'Audio') ?? false;
+  // Detect media type - prefer enrichment data from media server API when available
+  // Uses shared parseMediaType for consistency with live session polling
+  let mediaType = enrichment?.itemType ? parseMediaType(enrichment.itemType) : 'unknown';
 
-  const mediaType: 'movie' | 'episode' | 'track' = activity.SeriesName
-    ? 'episode'
-    : !hasVideoStream && hasAudioStream
-      ? 'track'
-      : 'movie';
+  // Fallback: use SeriesName or MediaStreams heuristics for non-enriched imports
+  if (mediaType === 'unknown') {
+    if (activity.SeriesName) {
+      mediaType = 'episode';
+    } else {
+      const activityForStreams = activity as Record<string, unknown>;
+      const streams = activityForStreams.MediaStreams as JellystatMediaStream[] | null;
+      const hasVideoStream = streams?.some((s) => s.Type === 'Video') ?? true;
+      const hasAudioStream = streams?.some((s) => s.Type === 'Audio') ?? false;
+
+      mediaType = !hasVideoStream && hasAudioStream ? 'track' : 'movie';
+    }
+  }
 
   // Extract TranscodingInfo for DirectStream vs DirectPlay detection
   // Jellystat exports "DirectStream" for what Emby shows as "DirectPlay"
@@ -520,10 +527,14 @@ async function fetchMediaEnrichment(
       }
 
       // Music track metadata
-      // Prefer AlbumArtist, fall back to first artist in Artists array
-      const artistName = item.AlbumArtist || item.Artists?.[0];
+      // For compilations ("Various Artists"), prefer track artist; otherwise prefer album artist
+      // This matches the poller's extractMusicMetadata logic
+      const albumArtist = item.AlbumArtist?.slice(0, 255);
+      const trackArtist = item.Artists?.[0]?.slice(0, 255);
+      const isCompilation = albumArtist?.toLowerCase() === 'various artists';
+      const artistName = isCompilation ? trackArtist || albumArtist : albumArtist || trackArtist;
       if (artistName) {
-        enrichment.artistName = artistName.slice(0, 255);
+        enrichment.artistName = artistName;
       }
       if (item.Album) {
         enrichment.albumName = item.Album.slice(0, 255);
@@ -535,6 +546,11 @@ async function fetchMediaEnrichment(
       }
       if (item.ParentIndexNumber != null) {
         enrichment.discNumber = item.ParentIndexNumber;
+      }
+
+      // Store item type for accurate media type detection
+      if (item.Type) {
+        enrichment.itemType = item.Type;
       }
 
       if (Object.keys(enrichment).length > 0) {
