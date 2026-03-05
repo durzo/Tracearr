@@ -28,6 +28,7 @@ import {
   getBuildDate,
 } from '../utils/buildInfo.js';
 import { getInactivityCheckQueueStats } from '../jobs/inactivityCheckQueue.js';
+import { getBackupQueueStats } from '../jobs/backupQueue.js';
 import { getAllServices } from '../services/serviceTracker.js';
 import {
   sessions,
@@ -545,15 +546,23 @@ export const debugRoutes: FastifyPluginAsync = async (app) => {
    * GET /debug/tasks - Background task and queue status
    */
   app.get('/tasks', async () => {
-    const [notifications, imports, maintenance, librarySync, versionCheck, inactivityCheck] =
-      await Promise.all([
-        getNotificationQueueStats(),
-        getImportQueueStats(),
-        getMaintenanceQueueStats(),
-        getLibrarySyncQueueStats(),
-        getVersionCheckQueueStats(),
-        getInactivityCheckQueueStats(),
-      ]);
+    const [
+      notifications,
+      imports,
+      maintenance,
+      librarySync,
+      versionCheck,
+      inactivityCheck,
+      backup,
+    ] = await Promise.all([
+      getNotificationQueueStats(),
+      getImportQueueStats(),
+      getMaintenanceQueueStats(),
+      getLibrarySyncQueueStats(),
+      getVersionCheckQueueStats(),
+      getInactivityCheckQueueStats(),
+      getBackupQueueStats(),
+    ]);
 
     return {
       queues: {
@@ -563,6 +572,7 @@ export const debugRoutes: FastifyPluginAsync = async (app) => {
         librarySync,
         versionCheck,
         inactivityCheck,
+        backup,
       },
       services: getAllServices(),
       timestamp: new Date().toISOString(),

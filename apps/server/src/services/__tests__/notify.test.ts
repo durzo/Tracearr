@@ -57,6 +57,11 @@ describe('NotificationManager', () => {
     usePlexGeoip: false,
     tailscaleEnabled: false,
     tailscaleHostname: null,
+    backupScheduleType: 'disabled',
+    backupScheduleTime: '02:00',
+    backupScheduleDayOfWeek: 0,
+    backupScheduleDayOfMonth: 1,
+    backupRetentionCount: 7,
     ...overrides,
   });
 

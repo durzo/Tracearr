@@ -71,6 +71,11 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
           externalUrl: settings.externalUrl,
           trustProxy: settings.trustProxy,
           mobileEnabled: settings.mobileEnabled,
+          backupScheduleType: settings.backupScheduleType,
+          backupScheduleTime: settings.backupScheduleTime,
+          backupScheduleDayOfWeek: settings.backupScheduleDayOfWeek,
+          backupScheduleDayOfMonth: settings.backupScheduleDayOfMonth,
+          backupRetentionCount: settings.backupRetentionCount,
           updatedAt: settings.updatedAt,
         })
         .from(settings)
@@ -147,6 +152,11 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
       primaryAuthMethod,
       tailscaleEnabled,
       tailscaleHostname,
+      backupScheduleType: row.backupScheduleType,
+      backupScheduleTime: row.backupScheduleTime,
+      backupScheduleDayOfWeek: row.backupScheduleDayOfWeek,
+      backupScheduleDayOfMonth: row.backupScheduleDayOfMonth,
+      backupRetentionCount: row.backupRetentionCount,
     };
 
     return result;
@@ -346,6 +356,11 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
       primaryAuthMethod,
       tailscaleEnabled,
       tailscaleHostname,
+      backupScheduleType: row.backupScheduleType,
+      backupScheduleTime: row.backupScheduleTime,
+      backupScheduleDayOfWeek: row.backupScheduleDayOfWeek,
+      backupScheduleDayOfMonth: row.backupScheduleDayOfMonth,
+      backupRetentionCount: row.backupRetentionCount,
     };
 
     return result;
