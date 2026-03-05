@@ -2455,6 +2455,7 @@ export interface BackupMetadata {
     tag: string;
   };
   database: {
+    pgVersion: string;
     migrationCount: number;
     latestMigration: string;
     tableCount: number;
