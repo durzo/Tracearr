@@ -2500,6 +2500,8 @@ export interface RestoreProgress {
   message: string;
   startedAt: string;
   error?: string;
+  /** When phase is 'failed', indicates which phase the failure occurred in. */
+  failedAtPhase?: Exclude<RestorePhase, 'failed'>;
 }
 
 export type BackupType = 'manual' | 'scheduled' | 'uploaded';
