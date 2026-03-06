@@ -162,29 +162,35 @@ export function shouldRecordSession(
 /**
  * Check if a session should be marked as "watched" based on watch time threshold.
  *
- * Uses durationMs (actual watch time) rather than progressMs (playback position)
- * because some media servers report incorrect position data (e.g., Emby iOS
- * transcoded sessions can report 96% position when user only watched 35%).
- * Watch time is calculated from elapsed time minus paused time, which is reliable.
+ * Uses a hybrid approach: checks both progressMs (playback position) and
+ * durationMs (actual watch time). Either metric passing the threshold counts
+ * as completion. This handles both skip-forward users (progress passes but
+ * duration doesn't) and servers with incorrect position data like Emby iOS
+ * transcoded sessions (duration passes but progress doesn't).
  *
  * @param durationMs - Actual watch time in milliseconds (elapsed - paused)
+ * @param progressMs - Playback position reached in milliseconds
  * @param totalDurationMs - Total media duration in milliseconds
  * @param threshold - Optional custom threshold (0-1), defaults to 85%
- * @returns true if watched at least the threshold percentage of the content
+ * @returns true if either metric meets the threshold percentage
  *
  * @example
- * checkWatchCompletion(8500, 10000);         // true (85% with default threshold)
- * checkWatchCompletion(8000, 10000);         // false (80% < 85% default)
- * checkWatchCompletion(9000, 10000, 0.90);   // true (90% with custom threshold)
- * checkWatchCompletion(null, 6000000);       // false (no duration)
+ * checkWatchCompletion(8500, 9000, 10000);      // true (both pass)
+ * checkWatchCompletion(5000, 9000, 10000);      // true (progress passes)
+ * checkWatchCompletion(8500, null, 10000);      // true (duration passes, no progress)
+ * checkWatchCompletion(5000, 5000, 10000);      // false (neither passes)
+ * checkWatchCompletion(null, null, 10000);      // false (no data)
  */
 export function checkWatchCompletion(
   durationMs: number | null,
+  progressMs: number | null,
   totalDurationMs: number | null,
   threshold: number = SESSION_LIMITS.WATCH_COMPLETION_THRESHOLD
 ): boolean {
-  if (!durationMs || !totalDurationMs) return false;
-  return durationMs / totalDurationMs >= threshold;
+  if (!totalDurationMs) return false;
+  if (progressMs && progressMs / totalDurationMs >= threshold) return true;
+  if (durationMs && durationMs / totalDurationMs >= threshold) return true;
+  return false;
 }
 
 // ============================================================================

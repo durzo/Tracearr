@@ -182,7 +182,7 @@ describe('stopSessionAtomic idempotency', () => {
     const progressMs = 50000;
     const totalDurationMs = 100000;
 
-    const normalWatched = checkWatchCompletion(progressMs, totalDurationMs);
+    const normalWatched = checkWatchCompletion(null, progressMs, totalDurationMs);
     expect(normalWatched).toBe(false);
 
     // With preserveWatched=true, the existing session.watched value is kept

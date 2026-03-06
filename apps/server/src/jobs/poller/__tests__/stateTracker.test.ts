@@ -4,7 +4,7 @@
  * Tests session state tracking functions from poller/stateTracker.ts:
  * - calculatePauseAccumulation: Track pause duration across state transitions
  * - calculateStopDuration: Calculate final watch time when session stops
- * - checkWatchCompletion: Determine if content was "watched" (80% threshold)
+ * - checkWatchCompletion: Determine if content was "watched" (85% threshold, hybrid progress/duration)
  * - shouldGroupWithPreviousSession: Link resumed sessions together
  */
 
@@ -286,31 +286,59 @@ describe('calculateStopDuration', () => {
 });
 
 describe('checkWatchCompletion', () => {
-  describe('85% threshold (industry standard)', () => {
-    it('should return true when progress >= 85%', () => {
-      expect(checkWatchCompletion(8500, 10000)).toBe(true); // Exactly 85%
-      expect(checkWatchCompletion(9000, 10000)).toBe(true); // 90%
-      expect(checkWatchCompletion(10000, 10000)).toBe(true); // 100%
+  describe('duration-based completion (fallback)', () => {
+    it('should return true when duration >= 85%', () => {
+      expect(checkWatchCompletion(8500, null, 10000)).toBe(true); // Exactly 85%
+      expect(checkWatchCompletion(9000, null, 10000)).toBe(true); // 90%
+      expect(checkWatchCompletion(10000, null, 10000)).toBe(true); // 100%
     });
 
-    it('should return false when progress < 85%', () => {
-      expect(checkWatchCompletion(8499, 10000)).toBe(false); // Just under 85%
-      expect(checkWatchCompletion(8000, 10000)).toBe(false); // 80%
-      expect(checkWatchCompletion(5000, 10000)).toBe(false); // 50%
+    it('should return false when duration < 85%', () => {
+      expect(checkWatchCompletion(8499, null, 10000)).toBe(false); // Just under 85%
+      expect(checkWatchCompletion(8000, null, 10000)).toBe(false); // 80%
+      expect(checkWatchCompletion(5000, null, 10000)).toBe(false); // 50%
+    });
+  });
+
+  describe('progress-based completion', () => {
+    it('should return true when progress >= 85% even if duration is low', () => {
+      expect(checkWatchCompletion(5000, 8500, 10000)).toBe(true); // skip-forward user
+      expect(checkWatchCompletion(3000, 9500, 10000)).toBe(true); // heavy skipper
+    });
+
+    it('should return false when progress < 85% and no duration', () => {
+      expect(checkWatchCompletion(null, 8000, 10000)).toBe(false);
+    });
+  });
+
+  describe('hybrid behavior', () => {
+    it('should pass if either metric meets threshold', () => {
+      expect(checkWatchCompletion(8500, 5000, 10000)).toBe(true); // duration passes
+      expect(checkWatchCompletion(5000, 8500, 10000)).toBe(true); // progress passes
+      expect(checkWatchCompletion(8500, 8500, 10000)).toBe(true); // both pass
+    });
+
+    it('should fail if neither metric meets threshold', () => {
+      expect(checkWatchCompletion(5000, 5000, 10000)).toBe(false);
+      expect(checkWatchCompletion(8000, 8000, 10000)).toBe(false);
     });
   });
 
   describe('null handling', () => {
-    it('should return false when progressMs is null', () => {
-      expect(checkWatchCompletion(null, 10000)).toBe(false);
+    it('should return false when both duration and progress are null', () => {
+      expect(checkWatchCompletion(null, null, 10000)).toBe(false);
     });
 
     it('should return false when totalDurationMs is null', () => {
-      expect(checkWatchCompletion(8000, null)).toBe(false);
+      expect(checkWatchCompletion(8000, 8000, null)).toBe(false);
     });
 
-    it('should return false when both are null', () => {
-      expect(checkWatchCompletion(null, null)).toBe(false);
+    it('should handle null progress with valid duration', () => {
+      expect(checkWatchCompletion(8500, null, 10000)).toBe(true);
+    });
+
+    it('should handle null duration with valid progress', () => {
+      expect(checkWatchCompletion(null, 8500, 10000)).toBe(true);
     });
   });
 });

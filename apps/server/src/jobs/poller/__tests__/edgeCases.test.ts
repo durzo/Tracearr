@@ -22,13 +22,10 @@ import { checkWatchCompletion, shouldGroupWithPreviousSession } from '../stateTr
 describe('Watch Completion Detection', () => {
   describe('85% threshold (industry standard)', () => {
     it('should mark as watched at 85% progress', () => {
-      // Default: MOVIE_WATCHED_PERCENT = 85, TV_WATCHED_PERCENT = 85
-      // Currently fails because implementation uses 80%
       const progressMs = 85000; // 85%
       const totalMs = 100000;
 
-      const result = checkWatchCompletion(progressMs, totalMs);
-      // This should pass at 85% but current implementation requires only 80%
+      const result = checkWatchCompletion(null, progressMs, totalMs);
       expect(result).toBe(true);
     });
 
@@ -36,9 +33,7 @@ describe('Watch Completion Detection', () => {
       const progressMs = 84000; // 84%
       const totalMs = 100000;
 
-      const result = checkWatchCompletion(progressMs, totalMs);
-      // With 85% threshold, 84% should NOT be watched
-      // Current implementation incorrectly marks this as watched (80% threshold)
+      const result = checkWatchCompletion(null, progressMs, totalMs);
       expect(result).toBe(false);
     });
 
@@ -46,9 +41,7 @@ describe('Watch Completion Detection', () => {
       const progressMs = 80000; // 80%
       const totalMs = 100000;
 
-      const result = checkWatchCompletion(progressMs, totalMs);
-      // With 85% threshold, 80% is NOT watched
-      // Current implementation incorrectly marks this as watched
+      const result = checkWatchCompletion(null, progressMs, totalMs);
       expect(result).toBe(false);
     });
   });
@@ -59,13 +52,11 @@ describe('Watch Completion Detection', () => {
       const totalMs = 100000;
       const customThreshold = 0.9; // 90% for some users
 
-      // checkWatchCompletion should accept optional threshold parameter
-      // Currently it doesn't - this test should fail
-      const result = checkWatchCompletion(progressMs, totalMs, customThreshold);
+      const result = checkWatchCompletion(null, progressMs, totalMs, customThreshold);
       expect(result).toBe(true);
 
       // 89% should not pass with 90% threshold
-      const result2 = checkWatchCompletion(89000, 100000, customThreshold);
+      const result2 = checkWatchCompletion(null, 89000, 100000, customThreshold);
       expect(result2).toBe(false);
     });
 
@@ -74,7 +65,7 @@ describe('Watch Completion Detection', () => {
       const totalMs = 100000;
       const tvThreshold = 0.85;
 
-      const result = checkWatchCompletion(progressMs, totalMs, tvThreshold);
+      const result = checkWatchCompletion(null, progressMs, totalMs, tvThreshold);
       expect(result).toBe(true);
     });
   });
@@ -308,7 +299,7 @@ describe('Integration: Full Session Lifecycle', () => {
     const totalMs = 2 * 60 * 60 * 1000; // 2 hours
     const progressMs = 1.7 * 60 * 60 * 1000; // 1h42m = 85%
 
-    const watched = checkWatchCompletion(progressMs, totalMs);
+    const watched = checkWatchCompletion(null, progressMs, totalMs);
     expect(watched).toBe(true);
   });
 
@@ -317,8 +308,17 @@ describe('Integration: Full Session Lifecycle', () => {
     const totalMs = 2 * 60 * 60 * 1000;
     const progressMs = 1.6 * 60 * 60 * 1000; // 1h36m = 80%
 
-    const watched = checkWatchCompletion(progressMs, totalMs);
+    const watched = checkWatchCompletion(null, progressMs, totalMs);
     // With 85% threshold, 80% is NOT watched
     expect(watched).toBe(false);
+  });
+
+  it('should handle skip-forward user reaching 95% by position but 50% by duration', () => {
+    const totalMs = 60 * 60 * 1000; // 1 hour
+    const durationMs = 30 * 60 * 1000; // 30 minutes (50% by clock time)
+    const progressMs = 57 * 60 * 1000; // 57 minutes (95% by position)
+
+    const watched = checkWatchCompletion(durationMs, progressMs, totalMs);
+    expect(watched).toBe(true); // progress passes threshold
   });
 });

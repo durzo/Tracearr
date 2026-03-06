@@ -772,7 +772,6 @@ async function processServerSessions(
         updatePayload.pausedDurationMs = pauseResult.pausedDurationMs;
 
         // Check for watch completion using actual watch time (not playback position)
-        // Some servers report incorrect position (e.g., Emby iOS transcoded sessions)
         if (!existingSession.watched && processed.totalDurationMs) {
           const elapsedMs = now.getTime() - existingSession.startedAt.getTime();
           // Account for accumulated pauses and any ongoing pause
@@ -783,7 +782,13 @@ async function processServerSessions(
             0,
             elapsedMs - pauseResult.pausedDurationMs - ongoingPauseMs
           );
-          if (checkWatchCompletion(currentWatchTimeMs, processed.totalDurationMs)) {
+          if (
+            checkWatchCompletion(
+              currentWatchTimeMs,
+              processed.progressMs,
+              processed.totalDurationMs
+            )
+          ) {
             updatePayload.watched = true;
           }
         }

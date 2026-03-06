@@ -92,25 +92,32 @@ export const engagementRoutes: FastifyPluginAsync = async (app) => {
               MAX(server_id::text)::uuid AS server_id,
               MAX(year) AS year,
               SUM(watched_ms) AS cumulative_watched_ms,
+              MAX(max_progress_ms) AS max_progress_ms,
               SUM(valid_session_count) AS valid_sessions,
               SUM(total_session_count) AS total_sessions,
               CASE
                 WHEN MAX(content_duration_ms) > 0 THEN
-                  GREATEST(0, FLOOR(SUM(watched_ms)::float / MAX(content_duration_ms)))::int
+                  GREATEST(
+                    CASE WHEN COALESCE(MAX(max_progress_ms), 0) >= MAX(content_duration_ms) * 0.85 THEN 1
+                         WHEN SUM(watched_ms) >= MAX(content_duration_ms) * 0.85 THEN 1
+                         ELSE 0 END,
+                    FLOOR(SUM(watched_ms)::float / MAX(content_duration_ms))
+                  )::int
                 ELSE 0
               END AS plays,
               CASE
                 WHEN MAX(content_duration_ms) > 0 THEN
-                  ROUND(100.0 * SUM(watched_ms) / MAX(content_duration_ms), 1)
+                  ROUND(100.0 * GREATEST(COALESCE(MAX(max_progress_ms), 0), SUM(watched_ms)) / MAX(content_duration_ms), 1)
                 ELSE 0
               END AS completion_pct,
               CASE
                 WHEN MAX(content_duration_ms) > 0 THEN
                   CASE
                     WHEN SUM(watched_ms) >= MAX(content_duration_ms) * 2.0 THEN 'rewatched'
+                    WHEN COALESCE(MAX(max_progress_ms), 0) >= MAX(content_duration_ms) * 0.85 THEN 'watched'
                     WHEN SUM(watched_ms) >= MAX(content_duration_ms) * 0.85 THEN 'watched'
-                    WHEN SUM(watched_ms) >= MAX(content_duration_ms) * 0.5 THEN 'engaged'
-                    WHEN SUM(watched_ms) >= MAX(content_duration_ms) * 0.2 THEN 'sampled'
+                    WHEN GREATEST(COALESCE(MAX(max_progress_ms), 0), SUM(watched_ms)) >= MAX(content_duration_ms) * 0.5 THEN 'engaged'
+                    WHEN GREATEST(COALESCE(MAX(max_progress_ms), 0), SUM(watched_ms)) >= MAX(content_duration_ms) * 0.2 THEN 'sampled'
                     ELSE 'abandoned'
                   END
                 ELSE 'unknown'
@@ -260,22 +267,29 @@ export const engagementRoutes: FastifyPluginAsync = async (app) => {
               MAX(episode_number) AS episode_number,
               MAX(content_duration_ms) AS content_duration_ms,
               SUM(watched_ms) AS cumulative_watched_ms,
+              MAX(max_progress_ms) AS max_progress_ms,
               SUM(valid_session_count) AS valid_sessions,
               SUM(total_session_count) AS total_sessions,
               MIN(day) AS first_day,
               MAX(day) AS last_day,
               CASE
                 WHEN MAX(content_duration_ms) > 0 THEN
-                  GREATEST(0, FLOOR(SUM(watched_ms)::float / MAX(content_duration_ms)))::int
+                  GREATEST(
+                    CASE WHEN COALESCE(MAX(max_progress_ms), 0) >= MAX(content_duration_ms) * 0.85 THEN 1
+                         WHEN SUM(watched_ms) >= MAX(content_duration_ms) * 0.85 THEN 1
+                         ELSE 0 END,
+                    FLOOR(SUM(watched_ms)::float / MAX(content_duration_ms))
+                  )::int
                 ELSE 0
               END AS plays,
               CASE
                 WHEN MAX(content_duration_ms) > 0 THEN
                   CASE
                     WHEN SUM(watched_ms) >= MAX(content_duration_ms) * 2.0 THEN 'rewatched'
+                    WHEN COALESCE(MAX(max_progress_ms), 0) >= MAX(content_duration_ms) * 0.85 THEN 'watched'
                     WHEN SUM(watched_ms) >= MAX(content_duration_ms) * 0.85 THEN 'watched'
-                    WHEN SUM(watched_ms) >= MAX(content_duration_ms) * 0.5 THEN 'engaged'
-                    WHEN SUM(watched_ms) >= MAX(content_duration_ms) * 0.2 THEN 'sampled'
+                    WHEN GREATEST(COALESCE(MAX(max_progress_ms), 0), SUM(watched_ms)) >= MAX(content_duration_ms) * 0.5 THEN 'engaged'
+                    WHEN GREATEST(COALESCE(MAX(max_progress_ms), 0), SUM(watched_ms)) >= MAX(content_duration_ms) * 0.2 THEN 'sampled'
                     ELSE 'abandoned'
                   END
                 ELSE 'unknown'

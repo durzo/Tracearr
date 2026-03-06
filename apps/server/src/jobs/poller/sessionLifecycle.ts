@@ -949,12 +949,16 @@ export async function confirmAndPersistSession(
   // Only update if there's meaningful drift (> 1 second)
   // This accounts for the time between session start and confirmation
   if (timeDriftMs > 1000) {
+    // Use latest progress from confirmation state (may have advanced during pending phase)
+    const latestProgressMs = pendingData.confirmation.maxViewOffset;
+
     await db
       .update(sessions)
       .set({
         startedAt: actualStartedAt,
         pausedDurationMs: pendingData.pausedDurationMs,
         lastPausedAt: pendingData.lastPausedAt ? new Date(pendingData.lastPausedAt) : null,
+        ...(latestProgressMs > 0 && { progressMs: latestProgressMs }),
       })
       .where(eq(sessions.id, result.insertedSession.id));
 
@@ -964,6 +968,9 @@ export async function confirmAndPersistSession(
     result.insertedSession.lastPausedAt = pendingData.lastPausedAt
       ? new Date(pendingData.lastPausedAt)
       : null;
+    if (latestProgressMs > 0) {
+      result.insertedSession.progressMs = latestProgressMs;
+    }
 
     console.log(
       `[SessionLifecycle] Confirmed pending session ${result.insertedSession.id} ` +
@@ -997,11 +1004,10 @@ export async function stopSessionAtomic(input: SessionStopInput): Promise<Sessio
 
   // For quality changes (preserveWatched=true), keep the existing watched status
   // since playback is continuing in a new session
-  // Use durationMs (actual watch time) for completion check, not progressMs (playback position)
-  // because some servers report incorrect position (e.g., Emby iOS transcoded sessions)
   const watched = preserveWatched
     ? session.watched
-    : session.watched || checkWatchCompletion(durationMs, session.totalDurationMs);
+    : session.watched ||
+      checkWatchCompletion(durationMs, session.progressMs, session.totalDurationMs);
 
   const shortSession = !shouldRecordSession(durationMs);
 

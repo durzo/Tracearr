@@ -440,8 +440,6 @@ async function handleProgress(event: {
       return;
     }
 
-    // Calculate current watch time for completion check (not playback position)
-    // Some servers report incorrect position (e.g., Emby iOS transcoded sessions)
     const now = new Date();
     let watched = existingSession.watched;
     if (!watched && existingSession.totalDurationMs) {
@@ -452,7 +450,11 @@ async function handleProgress(event: {
         ? now.getTime() - existingSession.lastPausedAt.getTime()
         : 0;
       const currentWatchTimeMs = Math.max(0, elapsedMs - pausedMs - ongoingPauseMs);
-      watched = checkWatchCompletion(currentWatchTimeMs, existingSession.totalDurationMs);
+      watched = checkWatchCompletion(
+        currentWatchTimeMs,
+        notification.viewOffset,
+        existingSession.totalDurationMs
+      );
     }
 
     await db
@@ -982,8 +984,6 @@ async function updateExistingSession(
     now
   );
 
-  // Check watch completion using actual watch time (not playback position)
-  // Some servers report incorrect position (e.g., Emby iOS transcoded sessions)
   let watched = existingSession.watched;
   if (!watched && processed.totalDurationMs) {
     const elapsedMs = now.getTime() - existingSession.startedAt.getTime();
@@ -995,7 +995,11 @@ async function updateExistingSession(
       0,
       elapsedMs - pauseResult.pausedDurationMs - ongoingPauseMs
     );
-    watched = checkWatchCompletion(currentWatchTimeMs, processed.totalDurationMs);
+    watched = checkWatchCompletion(
+      currentWatchTimeMs,
+      processed.progressMs,
+      processed.totalDurationMs
+    );
   }
 
   // Check if transcode state changed before updating
