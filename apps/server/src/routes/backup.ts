@@ -294,11 +294,15 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
 
   /** GET /backup/info — Backup directory info, database size, free space */
   app.get('/info', { preHandler: [app.requireOwner] }, async () => {
-    const [sizeResult, fs, superuserResult] = await Promise.all([
+    const [sizeResult, fs, superuserResult, pgVersionResult, tsVersionResult] = await Promise.all([
       db.execute<{ size: string }>(sql`SELECT pg_database_size(current_database()) AS size`),
       statfs(BACKUP_DIR),
       db.execute<{ usesuper: boolean }>(
         sql`SELECT usesuper FROM pg_user WHERE usename = current_user`
+      ),
+      db.execute<{ server_version: string }>(sql`SHOW server_version`),
+      db.execute<{ max_version: string }>(
+        sql`SELECT version AS max_version FROM pg_available_extension_versions WHERE name = 'timescaledb' ORDER BY string_to_array(version, '.')::int[] DESC LIMIT 1`
       ),
     ]);
     return {
@@ -306,6 +310,8 @@ export const backupRoutes: FastifyPluginAsync = async (app) => {
       databaseSize: Number(sizeResult.rows[0]?.size ?? 0),
       freeSpace: fs.bfree * fs.bsize,
       canRestore: superuserResult.rows[0]?.usesuper ?? false,
+      pgVersion: pgVersionResult.rows[0]?.server_version ?? '',
+      timescaleVersion: tsVersionResult.rows[0]?.max_version ?? '',
     };
   });
 

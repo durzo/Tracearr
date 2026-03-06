@@ -1623,6 +1623,8 @@ class ApiClient {
         databaseSize: number;
         freeSpace: number;
         canRestore: boolean;
+        pgVersion: string;
+        timescaleVersion: string;
       }>('/backup/info'),
     getSchedule: () =>
       this.request<{

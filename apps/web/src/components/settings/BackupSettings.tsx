@@ -292,6 +292,22 @@ function RestoreCard({ backup, onClose }: { backup: BackupListItem; onClose: () 
   });
   const canRestore = info?.canRestore ?? true;
 
+  // Client-side version compatibility checks
+  const backupPgMajor = parseInt(
+    backup.metadata.database.pgVersion.match(/^(\d+)/)?.[1] ?? '0',
+    10
+  );
+  const serverPgMajor = parseInt(info?.pgVersion?.match(/^(\d+)/)?.[1] ?? '0', 10);
+  const pgVersionMismatch = serverPgMajor > 0 && backupPgMajor > serverPgMajor;
+
+  const backupTsVersion = backup.metadata.database.timescaleVersion;
+  const serverTsVersion = info?.timescaleVersion ?? '';
+  const tsVersionMismatch =
+    serverTsVersion !== '' &&
+    backupTsVersion.localeCompare(serverTsVersion, undefined, { numeric: true }) > 0;
+
+  const canStartRestore = canRestore && !pgVersionMismatch && !tsVersionMismatch;
+
   const restoreMutation = useMutation({
     mutationFn: () => api.backup.restore(backup.filename),
     onSuccess: () => {
@@ -350,18 +366,36 @@ function RestoreCard({ backup, onClose }: { backup: BackupListItem; onClose: () 
           <dd>{backup.metadata.database.timescaleVersion}</dd>
         </dl>
 
-        {/* Cannot restore warning */}
-        {!canRestore && !isRestoring && (
+        {/* Cannot restore warnings */}
+        {!canStartRestore && !isRestoring && (
           <div className="border-destructive/50 bg-destructive/10 rounded-md border p-3">
             <div className="flex items-start gap-2">
               <XCircle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />
-              <p className="text-destructive text-sm">{t('backup.restore.cannotRestore')}</p>
+              <div className="text-destructive space-y-1 text-sm">
+                {!canRestore && <p>{t('backup.restore.cannotRestore')}</p>}
+                {pgVersionMismatch && (
+                  <p>
+                    {t('backup.restore.pgVersionMismatch', {
+                      backupVersion: backupPgMajor,
+                      serverVersion: serverPgMajor,
+                    })}
+                  </p>
+                )}
+                {tsVersionMismatch && (
+                  <p>
+                    {t('backup.restore.tsVersionMismatch', {
+                      backupVersion: backupTsVersion,
+                      serverVersion: serverTsVersion,
+                    })}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         )}
 
         {/* Warning */}
-        {!isRestoring && canRestore && (
+        {!isRestoring && canStartRestore && (
           <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3">
             <div className="flex items-start gap-2">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
@@ -442,7 +476,7 @@ function RestoreCard({ backup, onClose }: { backup: BackupListItem; onClose: () 
             <div className="flex gap-2">
               <Button
                 onClick={() => restoreMutation.mutate()}
-                disabled={!confirmed || !canRestore || restoreMutation.isPending}
+                disabled={!confirmed || !canStartRestore || restoreMutation.isPending}
                 variant="destructive"
               >
                 {restoreMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
