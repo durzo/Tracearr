@@ -725,12 +725,13 @@ async function processServerSessions(
           audioDecision: processed.audioDecision,
         };
 
-        // If transcode state changed, update stream details to get correct output dimensions
-        // This fixes issue #291 where mid-stream quality changes left stale dimensions
-        if (transcodeStateChanged) {
-          const streamDetails = pickStreamDetailFields(processed);
-          Object.assign(updatePayload, streamDetails);
+        // Update stream details when valid (skip if API returned incomplete data)
+        if (processed.sourceAudioCodec || processed.sourceVideoCodec) {
+          Object.assign(updatePayload, pickStreamDetailFields(processed));
+        }
 
+        // If transcode state changed, re-evaluate rules that have transcode-related conditions
+        if (transcodeStateChanged) {
           // Re-evaluate V2 rules that have transcode-related conditions.
           // At session creation, transcode state might not be known yet (especially Plex SSE),
           // so rules like "block 4K transcoding" need a second chance when transcode starts.
@@ -771,7 +772,7 @@ async function processServerSessions(
         updatePayload.lastPausedAt = pauseResult.lastPausedAt;
         updatePayload.pausedDurationMs = pauseResult.pausedDurationMs;
 
-        // Check for watch completion using actual watch time (not playback position)
+        // Check for watch completion
         if (!existingSession.watched && processed.totalDurationMs) {
           const elapsedMs = now.getTime() - existingSession.startedAt.getTime();
           // Account for accumulated pauses and any ongoing pause
