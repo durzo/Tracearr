@@ -17,15 +17,9 @@ import { eq } from 'drizzle-orm';
 import type { Redis } from 'ioredis';
 import type { AuthUser } from '@tracearr/shared';
 import { db } from '../../src/db/client.js';
-import {
-  users,
-  servers,
-  serverUsers,
-  settings,
-  mobileTokens,
-  mobileSessions,
-} from '../../src/db/schema.js';
+import { users, servers, serverUsers, mobileTokens, mobileSessions } from '../../src/db/schema.js';
 import { mobileRoutes } from '../../src/routes/mobile.js';
+import { setSetting, getSetting } from '../../src/services/settings.js';
 
 // Constants (matching mobile.ts)
 const TOKEN_EXPIRY_MINUTES = 15;
@@ -184,14 +178,8 @@ async function seedTestData(): Promise<TestData> {
     })
     .returning();
 
-  // Ensure settings row exists with mobile enabled
-  await db
-    .insert(settings)
-    .values({ id: 1, mobileEnabled: true })
-    .onConflictDoUpdate({
-      target: settings.id,
-      set: { mobileEnabled: true },
-    });
+  // Ensure mobile is enabled in settings
+  await setSetting('mobileEnabled', true);
 
   return {
     ownerId: user.id,
@@ -303,7 +291,7 @@ describe('Mobile Authentication Integration Tests', () => {
 
     it('should reject when mobile is disabled', async () => {
       // Disable mobile
-      await db.update(settings).set({ mobileEnabled: false }).where(eq(settings.id, 1));
+      await setSetting('mobileEnabled', false);
 
       const ownerToken = generateOwnerToken(app, testData);
 
@@ -487,7 +475,7 @@ describe('Mobile Authentication Integration Tests', () => {
     it('should allow pairing even when mobile is disabled (token was pre-generated)', async () => {
       // Note: /pair doesn't check mobileEnabled - tokens can be used if they were
       // generated before mobile was disabled. Disabling mobile only prevents NEW tokens.
-      await db.update(settings).set({ mobileEnabled: false }).where(eq(settings.id, 1));
+      await setSetting('mobileEnabled', false);
 
       const res = await app.inject({
         method: 'POST',
@@ -633,7 +621,7 @@ describe('Mobile Authentication Integration Tests', () => {
     it('should allow refresh even when mobile is disabled', async () => {
       // Note: /refresh doesn't check mobileEnabled - existing sessions continue working.
       // Disabling mobile only prevents NEW tokens and revokes sessions when explicitly disabled.
-      await db.update(settings).set({ mobileEnabled: false }).where(eq(settings.id, 1));
+      await setSetting('mobileEnabled', false);
 
       const res = await app.inject({
         method: 'POST',
@@ -885,7 +873,7 @@ describe('Mobile Authentication Integration Tests', () => {
   describe('POST /api/v1/mobile/enable - Enable Mobile Access', () => {
     beforeEach(async () => {
       // Ensure mobile is disabled
-      await db.update(settings).set({ mobileEnabled: false }).where(eq(settings.id, 1));
+      await setSetting('mobileEnabled', false);
     });
 
     it('should enable mobile access as owner', async () => {
@@ -901,8 +889,8 @@ describe('Mobile Authentication Integration Tests', () => {
       expect(res.json().isEnabled).toBe(true);
 
       // Verify in database
-      const [settingsRow] = await db.select().from(settings).where(eq(settings.id, 1));
-      expect(settingsRow.mobileEnabled).toBe(true);
+      const mobileEnabled = await getSetting('mobileEnabled');
+      expect(mobileEnabled).toBe(true);
     });
 
     it('should reject non-owner users', async () => {
@@ -951,8 +939,8 @@ describe('Mobile Authentication Integration Tests', () => {
       expect(res.json().success).toBe(true);
 
       // Verify mobile is disabled
-      const [settingsRow] = await db.select().from(settings).where(eq(settings.id, 1));
-      expect(settingsRow.mobileEnabled).toBe(false);
+      const mobileEnabled = await getSetting('mobileEnabled');
+      expect(mobileEnabled).toBe(false);
 
       // Verify all sessions were revoked
       const sessions = await db.select().from(mobileSessions);

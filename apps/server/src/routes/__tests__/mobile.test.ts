@@ -42,10 +42,17 @@ vi.mock('../../services/termination.js', () => ({
   terminateSession: vi.fn(),
 }));
 
+// Mock settings service (mobile.ts uses getSetting/setSetting)
+vi.mock('../../services/settings.js', () => ({
+  getSetting: vi.fn(),
+  setSetting: vi.fn(),
+}));
+
 // Import mocked db, routes, and termination service
 import { db } from '../../db/client.js';
 import { mobileRoutes } from '../mobile.js';
 import { terminateSession } from '../../services/termination.js';
+import { getSetting, setSetting } from '../../services/settings.js';
 
 // Mock Redis
 const mockRedis = {
@@ -230,6 +237,8 @@ describe('Mobile Routes', () => {
     vi.mocked(db.delete).mockReset();
     vi.mocked(db.transaction).mockReset();
     vi.mocked(terminateSession).mockReset();
+    vi.mocked(getSetting).mockReset();
+    vi.mocked(setSetting).mockReset();
     mockRedis.get.mockReset();
     mockRedis.set.mockReset();
     mockRedis.setex.mockReset();
@@ -258,23 +267,19 @@ describe('Mobile Routes', () => {
         createMockSession({ id: randomUUID(), deviceName: 'Pixel 8', platform: 'android' }),
       ];
 
+      // Mock getSetting for mobileEnabled
+      vi.mocked(getSetting).mockResolvedValue(true);
+
       // Mock db.select chains
       let selectCallCount = 0;
       vi.mocked(db.select).mockImplementation(() => {
         selectCallCount++;
         if (selectCallCount === 1) {
-          // Settings query
-          return {
-            from: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue([{ mobileEnabled: true }]),
-            }),
-          } as never;
-        } else if (selectCallCount === 2) {
           // Sessions query
           return {
             from: vi.fn().mockResolvedValue(mockSessions),
           } as never;
-        } else if (selectCallCount === 3) {
+        } else if (selectCallCount === 2) {
           // Pending tokens count
           return {
             from: vi.fn().mockReturnValue({
@@ -321,18 +326,15 @@ describe('Mobile Routes', () => {
     it('returns empty sessions when none exist', async () => {
       app = await buildTestApp(ownerUser);
 
+      // Mock getSetting for mobileEnabled
+      vi.mocked(getSetting).mockResolvedValue(false);
+
       let selectCallCount = 0;
       vi.mocked(db.select).mockImplementation(() => {
         selectCallCount++;
         if (selectCallCount === 1) {
-          return {
-            from: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue([{ mobileEnabled: false }]),
-            }),
-          } as never;
-        } else if (selectCallCount === 2) {
           return { from: vi.fn().mockResolvedValue([]) } as never;
-        } else if (selectCallCount === 3) {
+        } else if (selectCallCount === 2) {
           return {
             from: vi.fn().mockReturnValue({
               where: vi.fn().mockResolvedValue([{ count: 0 }]),
@@ -363,11 +365,7 @@ describe('Mobile Routes', () => {
     it('enables mobile access for owner', async () => {
       app = await buildTestApp(ownerUser);
 
-      vi.mocked(db.update).mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue(undefined),
-        }),
-      } as never);
+      vi.mocked(setSetting).mockResolvedValue(undefined);
 
       let selectCallCount = 0;
       vi.mocked(db.select).mockImplementation(() => {
@@ -391,7 +389,7 @@ describe('Mobile Routes', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.isEnabled).toBe(true);
-      expect(db.update).toHaveBeenCalled();
+      expect(setSetting).toHaveBeenCalledWith('mobileEnabled', true);
     });
 
     it('rejects non-owner access with 403', async () => {
@@ -413,11 +411,7 @@ describe('Mobile Routes', () => {
       app = await buildTestApp(ownerUser);
 
       // Mock settings check
-      vi.mocked(db.select).mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue([{ mobileEnabled: true }]),
-        }),
-      } as never);
+      vi.mocked(getSetting).mockResolvedValue(true);
 
       // Mock rate limit check (Redis eval)
       mockRedis.eval.mockResolvedValue(1);
@@ -452,11 +446,7 @@ describe('Mobile Routes', () => {
     it('rejects when mobile not enabled', async () => {
       app = await buildTestApp(ownerUser);
 
-      vi.mocked(db.select).mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue([{ mobileEnabled: false }]),
-        }),
-      } as never);
+      vi.mocked(getSetting).mockResolvedValue(false);
 
       const response = await app.inject({
         method: 'POST',
@@ -471,11 +461,7 @@ describe('Mobile Routes', () => {
     it('rejects when rate limited', async () => {
       app = await buildTestApp(ownerUser);
 
-      vi.mocked(db.select).mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue([{ mobileEnabled: true }]),
-        }),
-      } as never);
+      vi.mocked(getSetting).mockResolvedValue(true);
 
       mockRedis.eval.mockResolvedValue(4); // Exceeds limit of 3
       mockRedis.ttl.mockResolvedValue(120);
@@ -505,11 +491,7 @@ describe('Mobile Routes', () => {
     it('rejects when max pending tokens reached', async () => {
       app = await buildTestApp(ownerUser);
 
-      vi.mocked(db.select).mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue([{ mobileEnabled: true }]),
-        }),
-      } as never);
+      vi.mocked(getSetting).mockResolvedValue(true);
 
       mockRedis.eval.mockResolvedValue(1);
 
@@ -542,11 +524,7 @@ describe('Mobile Routes', () => {
 
       const mockSessions = [createMockSession()];
 
-      vi.mocked(db.update).mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue(undefined),
-        }),
-      } as never);
+      vi.mocked(setSetting).mockResolvedValue(undefined);
 
       vi.mocked(db.select).mockReturnValue({
         from: vi.fn().mockResolvedValue(mockSessions),
@@ -564,7 +542,7 @@ describe('Mobile Routes', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.success).toBe(true);
-      expect(db.update).toHaveBeenCalled();
+      expect(setSetting).toHaveBeenCalledWith('mobileEnabled', false);
       expect(db.delete).toHaveBeenCalled();
       expect(mockRedis.del).toHaveBeenCalled();
     });
@@ -1762,11 +1740,7 @@ describe('Mobile Routes', () => {
       it('token generation uses 15 minute expiry', async () => {
         app = await buildTestApp(ownerUser);
 
-        vi.mocked(db.select).mockReturnValue({
-          from: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([{ mobileEnabled: true }]),
-          }),
-        } as never);
+        vi.mocked(getSetting).mockResolvedValue(true);
 
         mockRedis.eval.mockResolvedValue(1);
 
