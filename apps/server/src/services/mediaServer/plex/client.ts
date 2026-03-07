@@ -416,13 +416,18 @@ export class PlexClient implements IMediaServerClient, IMediaServerClientWithHis
   async getServerStatistics(timespan: number = 6): Promise<PlexStatisticsDataPoint[]> {
     const url = `${this.baseUrl}/statistics/resources?timespan=${timespan}`;
 
-    const data = await fetchJson<unknown>(url, {
-      headers: this.buildHeaders(),
-      service: 'plex',
-      timeout: 10000,
-    });
+    try {
+      const data = await fetchJson<unknown>(url, {
+        headers: this.buildHeaders(),
+        service: 'plex',
+        timeout: 10000,
+      });
 
-    return parseStatisticsResourcesResponse(data);
+      return parseStatisticsResourcesResponse(data);
+    } catch {
+      // Requires Plex Pass — silently return empty when unavailable
+      return [];
+    }
   }
 
   /**
@@ -437,13 +442,18 @@ export class PlexClient implements IMediaServerClient, IMediaServerClientWithHis
   async getServerBandwidth(timespan: number = 6): Promise<PlexBandwidthDataPoint[]> {
     const url = `${this.baseUrl}/statistics/bandwidth?timespan=${timespan}`;
 
-    const data = await fetchJson<unknown>(url, {
-      headers: this.buildHeaders(),
-      service: 'plex',
-      timeout: 10000,
-    });
+    try {
+      const data = await fetchJson<unknown>(url, {
+        headers: this.buildHeaders(),
+        service: 'plex',
+        timeout: 10000,
+      });
 
-    return parseStatisticsBandwidthResponse(data);
+      return parseStatisticsBandwidthResponse(data);
+    } catch {
+      // Requires Plex Pass — silently return empty when unavailable
+      return [];
+    }
   }
 
   // ==========================================================================

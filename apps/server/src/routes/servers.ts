@@ -495,29 +495,18 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('Server statistics are only available for Plex servers');
     }
 
-    try {
-      const client = new PlexClient({
-        url: server.url,
-        token: server.token,
-      });
+    const client = new PlexClient({
+      url: server.url,
+      token: server.token,
+    });
 
-      const data = await client.getServerStatistics(SERVER_STATS_CONFIG.TIMESPAN_SECONDS);
+    const data = await client.getServerStatistics(SERVER_STATS_CONFIG.TIMESPAN_SECONDS);
 
-      // DEBUG: Log what we got back
-      app.log.info(
-        { serverId: id, dataLength: data.length, firstItem: data[0] },
-        'Server statistics fetched'
-      );
-
-      return {
-        serverId: id,
-        data,
-        fetchedAt: new Date().toISOString(),
-      };
-    } catch (error) {
-      app.log.error({ error, serverId: id }, 'Failed to fetch server statistics');
-      return reply.internalServerError('Failed to fetch server statistics');
-    }
+    return {
+      serverId: id,
+      data,
+      fetchedAt: new Date().toISOString(),
+    };
   });
 
   /**
@@ -544,23 +533,18 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
       return reply.badRequest('Bandwidth statistics are only available for Plex servers');
     }
 
-    try {
-      const client = new PlexClient({
-        url: server.url,
-        token: server.token,
-      });
+    const client = new PlexClient({
+      url: server.url,
+      token: server.token,
+    });
 
-      const data = await client.getServerBandwidth(BANDWIDTH_STATS_CONFIG.TIMESPAN_SECONDS);
+    const data = await client.getServerBandwidth(BANDWIDTH_STATS_CONFIG.TIMESPAN_SECONDS);
 
-      return {
-        serverId: id,
-        data,
-        fetchedAt: new Date().toISOString(),
-      };
-    } catch (error) {
-      app.log.error({ error, serverId: id }, 'Failed to fetch bandwidth statistics');
-      return reply.internalServerError('Failed to fetch bandwidth statistics');
-    }
+    return {
+      serverId: id,
+      data,
+      fetchedAt: new Date().toISOString(),
+    };
   });
 
   /**
