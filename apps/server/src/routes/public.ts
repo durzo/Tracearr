@@ -17,41 +17,41 @@
  * - GET /history - Session history with filtering
  */
 
-import type { FastifyPluginAsync } from 'fastify';
-import { eq, desc, sql, and, gte, isNull, isNotNull } from 'drizzle-orm';
-import { z } from 'zod';
 import {
-  formatBitrate,
   booleanStringSchema,
-  isValidTimezone,
-  getResolutionLabel,
   formatAudioChannels,
+  formatBitrate,
   formatMediaTech,
+  getResolutionLabel,
+  isValidTimezone,
   sessionIdParamSchema,
   terminateSessionBodySchema,
-  type SourceVideoDetails,
   type SourceAudioDetails,
-  type StreamVideoDetails,
+  type SourceVideoDetails,
   type StreamAudioDetails,
-  type TranscodeInfo,
+  type StreamVideoDetails,
   type SubtitleInfo,
+  type TranscodeInfo,
 } from '@tracearr/shared';
+import { and, desc, eq, gte, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import type { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
+import { PLAY_COUNT } from '../constants/index.js';
 import { db } from '../db/client.js';
-import { users, serverUsers, servers, sessions, violations, rules } from '../db/schema.js';
+import { rules, serverUsers, servers, sessions, users, violations } from '../db/schema.js';
 import { getCacheService } from '../services/cache.js';
+import { getDashboardStats } from '../services/dashboardStats.js';
+import { buildAvatarUrl, buildPosterUrl } from '../services/imageProxy.js';
+import { terminateSession } from '../services/termination.js';
 import { generateOpenAPIDocument } from './public.openapi.js';
 import {
-  queryPlaysOverTime,
-  queryPlaysByDayOfWeek,
-  queryPlaysByHourOfDay,
   queryConcurrentStreams,
   queryPlatforms,
+  queryPlaysByDayOfWeek,
+  queryPlaysByHourOfDay,
+  queryPlaysOverTime,
   queryQualityBreakdown,
 } from './stats/queries.js';
-import { PLAY_COUNT } from '../constants/index.js';
-import { buildPosterUrl, buildAvatarUrl } from '../services/imageProxy.js';
-import { terminateSession } from '../services/termination.js';
-import { getDashboardStats } from '../services/dashboardStats.js';
 
 interface StreamCodecData {
   sourceVideoCodec: string | null;
@@ -481,7 +481,7 @@ export const publicRoutes: FastifyPluginAsync = async (app) => {
       .innerJoin(serverUsers, eq(users.id, serverUsers.userId))
       .where(whereClause);
 
-    // Get paginated users with server info joined directly (avoiding N+1)
+    // Get paginated users with server info
     const userRows = await db
       .select({
         id: users.id,
@@ -493,10 +493,10 @@ export const publicRoutes: FastifyPluginAsync = async (app) => {
         createdAt: users.createdAt,
         // Server-specific data
         serverId: serverUsers.serverId,
+        serverUserId: serverUsers.id,
         serverUsername: serverUsers.username,
         thumbUrl: serverUsers.thumbUrl,
         lastActivityAt: serverUsers.lastActivityAt,
-        sessionCount: serverUsers.sessionCount,
         // Server name joined directly
         serverName: servers.name,
       })
@@ -507,6 +507,20 @@ export const publicRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(desc(serverUsers.lastActivityAt))
       .limit(pageSize)
       .offset(offset);
+
+    const serverUserIds = userRows.map((r) => r.serverUserId);
+    const playCounts =
+      serverUserIds.length > 0
+        ? await db
+            .select({
+              serverUserId: sessions.serverUserId,
+              playCount: PLAY_COUNT,
+            })
+            .from(sessions)
+            .where(inArray(sessions.serverUserId, serverUserIds))
+            .groupBy(sessions.serverUserId)
+        : [];
+    const playCountMap = new Map(playCounts.map((r) => [r.serverUserId, r.playCount]));
 
     const userData = userRows.map((row) => ({
       id: row.id,
@@ -520,7 +534,7 @@ export const publicRoutes: FastifyPluginAsync = async (app) => {
       serverId: row.serverId,
       serverName: row.serverName,
       lastActivityAt: row.lastActivityAt?.toISOString() ?? null,
-      sessionCount: row.sessionCount,
+      sessionCount: playCountMap.get(row.serverUserId) ?? 0,
       createdAt: row.createdAt.toISOString(),
     }));
 
