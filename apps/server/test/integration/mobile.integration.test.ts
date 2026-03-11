@@ -74,6 +74,24 @@ function createMockRedis() {
       return Array.from(store.keys()).filter((k) => k.startsWith(prefix));
     }),
     eval: vi.fn(async () => 1), // Default: first attempt (not rate limited)
+    multi: vi.fn(function () {
+      const ops: Array<() => void> = [];
+      const pipeline = {
+        del: vi.fn(function (key: string) {
+          ops.push(() => store.delete(key));
+          return pipeline;
+        }),
+        setex: vi.fn(function (key: string, _seconds: number, value: string) {
+          ops.push(() => store.set(key, value));
+          return pipeline;
+        }),
+        exec: vi.fn(async function () {
+          for (const op of ops) op();
+          return [];
+        }),
+      };
+      return pipeline;
+    }),
     _store: store,
     _counters: counters,
     _reset: () => {
