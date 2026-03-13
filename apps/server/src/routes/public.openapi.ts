@@ -221,6 +221,7 @@ const ServerStatus = z
 const HealthResponse = z
   .object({
     status: z.literal('ok'),
+    version: z.string().openapi({ description: 'Tracearr server version', example: '1.4.22' }),
     timestamp: z.iso.datetime().openapi({ example: '2024-01-15T12:00:00.000Z' }),
     servers: z.array(ServerStatus),
   })

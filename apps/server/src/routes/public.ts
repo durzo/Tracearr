@@ -43,6 +43,7 @@ import { getCacheService } from '../services/cache.js';
 import { getDashboardStats } from '../services/dashboardStats.js';
 import { buildAvatarUrl, buildPosterUrl } from '../services/imageProxy.js';
 import { terminateSession } from '../services/termination.js';
+import { getCurrentVersion } from '../utils/buildInfo.js';
 import { generateOpenAPIDocument } from './public.openapi.js';
 import {
   queryConcurrentStreams,
@@ -252,6 +253,7 @@ export const publicRoutes: FastifyPluginAsync = async (app) => {
 
     return {
       status: 'ok',
+      version: getCurrentVersion(),
       timestamp: new Date().toISOString(),
       servers: serverStatus,
     };
