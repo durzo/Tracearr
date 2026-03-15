@@ -47,6 +47,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - tracearr_backups:/data/backup
     restart: unless-stopped
     networks:
       - tracearr-network
@@ -98,5 +100,6 @@ networks:
     driver: bridge
 
 volumes:
+  tracearr_backups:
   timescale_data:
   redis_data:
