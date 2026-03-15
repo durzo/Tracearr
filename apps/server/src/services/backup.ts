@@ -659,6 +659,12 @@ export async function restoreDatabase(
   if (postRestore.exitCode !== 0) {
     throw new Error(`TimescaleDB post-restore failed: ${postRestore.stderr}`);
   }
+
+  // Step 6: Rebuild planner statistics so queries use indexes effectively
+  // pg_dump does not include pg_statistic data, so without this the planner
+  // has no row-count or distribution info and falls back to sequential scans.
+  // Non-fatal: if ANALYZE fails the DB still works, just with suboptimal plans
+  await execCommand('psql', ['-c', 'ANALYZE;'], pgEnv);
 }
 
 // ---------------------------------------------------------------------------
