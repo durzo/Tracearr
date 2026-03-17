@@ -26,6 +26,8 @@ import {
 } from './backup.js';
 
 import { closeDatabase, recreatePool, runMigrations } from '../db/client.js';
+import { setSetting } from './settings.js';
+import { loadJwtRevokeSettings } from '../plugins/auth.js';
 import { initTimescaleDB } from '../db/timescale.js';
 
 import { resolve, dirname } from 'node:path';
@@ -117,6 +119,10 @@ export async function orchestrateRestore(
     await recreatePool();
     await runMigrations(MIGRATIONS_PATH);
     app.log.info('Migrations complete on restored database');
+
+    // Invalidate all existing JWTs — forces re-login after restore completes
+    await setSetting('jwtRevokedBefore', new Date().toISOString());
+    await loadJwtRevokeSettings();
 
     // Phase 5: Rebuild TimescaleDB aggregates
     setPhase('rebuilding_aggregates', 'Rebuilding TimescaleDB hypertables and aggregates...');

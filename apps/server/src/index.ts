@@ -41,7 +41,7 @@ import type {
   LibrarySyncProgress,
 } from '@tracearr/shared';
 
-import authPlugin from './plugins/auth.js';
+import authPlugin, { loadJwtRevokeSettings } from './plugins/auth.js';
 import redisPlugin, { connectRedis } from './plugins/redis.js';
 import { authRoutes } from './routes/auth/index.js';
 import { setupRoutes } from './routes/setup.js';
@@ -541,6 +541,9 @@ async function initializeServices(app: FastifyInstance) {
   // Build prepared statements now that the db pool is ready
   const { initPreparedStatements } = await import('./db/prepared.js');
   initPreparedStatements();
+
+  // Load JWT revoke settings — ensures tokens issued before a prior restore are rejected
+  await loadJwtRevokeSettings();
 
   // Initialize TimescaleDB features (hypertable, compression, aggregates)
   try {
