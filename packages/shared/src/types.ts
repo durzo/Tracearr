@@ -335,6 +335,13 @@ export interface ActiveSession extends Session {
   canTerminate: boolean;
 }
 
+export interface SessionSegment {
+  startedAt: string;
+  stoppedAt: string | null;
+  durationMs: number | null;
+  pausedDurationMs: number;
+}
+
 // Session with user/server details (from paginated API)
 // When returned from history queries, sessions are grouped by reference_id
 // Note: The single session endpoint (GET /sessions/:id) returns totalDurationMs,
@@ -344,6 +351,8 @@ export interface SessionWithDetails extends Omit<Session, 'ratingKey' | 'externa
   server: Pick<Server, 'id' | 'name' | 'type'>;
   // Number of pause/resume segments in this grouped play (1 = no pauses)
   segmentCount?: number;
+  // Individual segment details (up to 20), only present when segmentCount > 1
+  segments?: SessionSegment[];
 }
 
 // Rule types

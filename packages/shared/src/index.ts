@@ -22,6 +22,7 @@ export type {
   SessionState,
   MediaType,
   Session,
+  SessionSegment,
   SessionWithDetails,
   ActiveSession,
   SourceVideoDetails,
