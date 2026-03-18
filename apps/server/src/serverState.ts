@@ -5,7 +5,7 @@
  * (DB/Redis unavailable), or fully ready.
  */
 
-export type ServerMode = 'starting' | 'maintenance' | 'ready';
+type ServerMode = 'starting' | 'maintenance' | 'ready';
 
 type ModeChangeListener = (newMode: ServerMode, prevMode: ServerMode) => void;
 
@@ -69,4 +69,26 @@ export function isRedisHealthy(): boolean {
 
 export function setRedisHealthy(v: boolean): void {
   _redisHealthy = v;
+}
+
+// Restore state — tracks whether a database restore is in progress
+import type { RestoreProgress } from '@tracearr/shared';
+
+let _restoring = false;
+let _restoreProgress: RestoreProgress | null = null;
+
+export function isRestoring(): boolean {
+  return _restoring;
+}
+
+export function setRestoring(v: boolean): void {
+  _restoring = v;
+}
+
+export function getRestoreProgress(): RestoreProgress | null {
+  return _restoreProgress;
+}
+
+export function setRestoreProgress(p: RestoreProgress | null): void {
+  _restoreProgress = p;
 }
