@@ -12,8 +12,8 @@ import type {
   ConcurrentStreamsParams,
   GeoRestrictionParams,
   AccountInactivityParams,
-  AccountInactivityUnit,
   ServerUser,
+  Operator,
 } from '@tracearr/shared';
 import { GEOIP_CONFIG, TIME_MS } from '@tracearr/shared';
 import { geoipService } from './geoip.js';
@@ -474,23 +474,6 @@ export class RuleEngine {
   // ============================================================================
 
   /**
-   * Convert inactivity threshold to milliseconds
-   */
-  private calculateInactivityThresholdMs(value: number, unit: AccountInactivityUnit): number {
-    switch (unit) {
-      case 'days':
-        return value * TIME_MS.DAY;
-      case 'weeks':
-        return value * TIME_MS.WEEK;
-      case 'months':
-        // Approximate: 30 days per month
-        return value * 30 * TIME_MS.DAY;
-      default:
-        return value * TIME_MS.DAY;
-    }
-  }
-
-  /**
    * Convert inactivity threshold to days for display
    */
   private convertToThresholdDays(params: AccountInactivityParams): number {
@@ -516,27 +499,26 @@ export class RuleEngine {
    */
   evaluateAccountInactivity(
     serverUser: Pick<ServerUser, 'id' | 'username' | 'lastActivityAt'>,
-    params: AccountInactivityParams
+    params: AccountInactivityParams,
+    operator: Operator = 'gte'
   ): RuleEvaluationResult {
-    // Calculate inactivity threshold in milliseconds
-    const thresholdMs = this.calculateInactivityThresholdMs(
-      params.inactivityValue,
-      params.inactivityUnit
-    );
-
     const now = Date.now();
+    const thresholdDays = this.convertToThresholdDays(params);
 
     // Check if account has never had activity
     if (!serverUser.lastActivityAt) {
-      // User has never watched anything - this is a special case
-      // We'll consider them inactive but provide a clear message
+      // "Never active" users have infinite inactivity — matches gte/gt/neq but NOT eq/lt/lte
+      const neverActiveMatches = operator === 'gte' || operator === 'gt' || operator === 'neq';
+      if (!neverActiveMatches) {
+        return { violated: false, severity: 'low', data: {} };
+      }
       return {
         violated: true,
         severity: 'low',
         data: {
           lastActivityAt: null,
           inactiveDays: null,
-          thresholdDays: this.convertToThresholdDays(params),
+          thresholdDays,
           username: serverUser.username,
           neverActive: true,
         },
@@ -546,18 +528,19 @@ export class RuleEngine {
     // Calculate how long the user has been inactive
     const lastActivityTime = serverUser.lastActivityAt.getTime();
     const inactiveDurationMs = now - lastActivityTime;
+    const inactiveDays = Math.floor(inactiveDurationMs / TIME_MS.DAY);
 
-    // Check if inactive duration exceeds threshold
-    if (inactiveDurationMs >= thresholdMs) {
-      const inactiveDays = Math.floor(inactiveDurationMs / TIME_MS.DAY);
+    // Compare using the rule's operator
+    const violated = this.compareNumeric(inactiveDays, operator, thresholdDays);
 
+    if (violated) {
       return {
         violated: true,
-        severity: 'low', // Inactivity is informational, not a security concern
+        severity: 'low',
         data: {
           lastActivityAt: serverUser.lastActivityAt.toISOString(),
           inactiveDays,
-          thresholdDays: this.convertToThresholdDays(params),
+          thresholdDays,
           username: serverUser.username,
           neverActive: false,
         },
@@ -565,6 +548,25 @@ export class RuleEngine {
     }
 
     return { violated: false, severity: 'low', data: {} };
+  }
+
+  private compareNumeric(actual: number, operator: Operator, expected: number): boolean {
+    switch (operator) {
+      case 'eq':
+        return actual === expected;
+      case 'neq':
+        return actual !== expected;
+      case 'gt':
+        return actual > expected;
+      case 'gte':
+        return actual >= expected;
+      case 'lt':
+        return actual < expected;
+      case 'lte':
+        return actual <= expected;
+      default:
+        return actual >= expected;
+    }
   }
 
   /**

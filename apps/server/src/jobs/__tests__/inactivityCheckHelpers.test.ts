@@ -89,7 +89,7 @@ describe('extractInactiveDaysFromConditions', () => {
     expect(extractInactiveDaysFromConditions(conditions)).toBeNull();
   });
 
-  it('extracts value from single inactive_days condition', () => {
+  it('extracts value and operator from single inactive_days condition', () => {
     const conditions: RuleConditions = {
       groups: [
         {
@@ -97,10 +97,10 @@ describe('extractInactiveDaysFromConditions', () => {
         },
       ],
     };
-    expect(extractInactiveDaysFromConditions(conditions)).toBe(30);
+    expect(extractInactiveDaysFromConditions(conditions)).toEqual({ value: 30, operator: 'gt' });
   });
 
-  it('returns first inactive_days value when multiple exist', () => {
+  it('returns first inactive_days value and operator when multiple exist', () => {
     const conditions: RuleConditions = {
       groups: [
         {
@@ -111,7 +111,7 @@ describe('extractInactiveDaysFromConditions', () => {
         },
       ],
     };
-    expect(extractInactiveDaysFromConditions(conditions)).toBe(10);
+    expect(extractInactiveDaysFromConditions(conditions)).toEqual({ value: 10, operator: 'gt' });
   });
 
   it('finds inactive_days in a later group', () => {
@@ -125,7 +125,18 @@ describe('extractInactiveDaysFromConditions', () => {
         },
       ],
     };
-    expect(extractInactiveDaysFromConditions(conditions)).toBe(7);
+    expect(extractInactiveDaysFromConditions(conditions)).toEqual({ value: 7, operator: 'gte' });
+  });
+
+  it('preserves eq operator for exact day matching', () => {
+    const conditions: RuleConditions = {
+      groups: [
+        {
+          conditions: [{ field: 'inactive_days', operator: 'eq', value: 30 }],
+        },
+      ],
+    };
+    expect(extractInactiveDaysFromConditions(conditions)).toEqual({ value: 30, operator: 'eq' });
   });
 
   it('returns null when inactive_days value is not a number', () => {

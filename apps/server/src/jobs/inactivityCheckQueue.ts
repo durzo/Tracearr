@@ -15,6 +15,7 @@ import type {
   AccountInactivityParams,
   ViolationWithDetails,
   RuleConditions,
+  Operator,
 } from '@tracearr/shared';
 import { WS_EVENTS, TIME_MS } from '@tracearr/shared';
 import { db } from '../db/client.js';
@@ -48,17 +49,17 @@ export function hasInactivityCondition(conditions: RuleConditions | null): boole
 }
 
 /**
- * Extract the inactive_days threshold from V2 conditions.
- * Returns the value of the first inactive_days condition found, or null.
+ * Extract the inactive_days threshold and operator from V2 conditions.
+ * Returns the value and operator of the first inactive_days condition found, or null.
  */
 export function extractInactiveDaysFromConditions(
   conditions: RuleConditions | null
-): number | null {
+): { value: number; operator: Operator } | null {
   if (!conditions?.groups) return null;
   for (const group of conditions.groups) {
     for (const c of group.conditions) {
       if (c.field === 'inactive_days' && typeof c.value === 'number') {
-        return c.value;
+        return { value: c.value, operator: c.operator };
       }
     }
   }
@@ -264,14 +265,18 @@ async function processInactivityCheck(job: Job<InactivityCheckJobData>): Promise
   let totalViolations = 0;
 
   for (const rule of activeRules) {
-    const days = extractInactiveDaysFromConditions(rule.conditions);
-    if (days === null) {
+    const inactivityCondition = extractInactiveDaysFromConditions(rule.conditions);
+    if (inactivityCondition === null) {
       console.warn(
         `[Inactivity] Could not extract inactive_days from rule ${rule.name} (${rule.id}), skipping`
       );
       continue;
     }
-    const params: AccountInactivityParams = { inactivityValue: days, inactivityUnit: 'days' };
+    const params: AccountInactivityParams = {
+      inactivityValue: inactivityCondition.value,
+      inactivityUnit: 'days',
+    };
+    const { operator } = inactivityCondition;
 
     console.log(`[Inactivity] Checking rule: ${rule.name} (${rule.id})`);
 
@@ -304,7 +309,7 @@ async function processInactivityCheck(job: Job<InactivityCheckJobData>): Promise
 
     for (const user of usersToCheck) {
       // Evaluate inactivity for this user
-      const result = ruleEngine.evaluateAccountInactivity(user, params);
+      const result = ruleEngine.evaluateAccountInactivity(user, params, operator);
 
       if (result.violated) {
         // Only create violation if no existing unacknowledged violation exists

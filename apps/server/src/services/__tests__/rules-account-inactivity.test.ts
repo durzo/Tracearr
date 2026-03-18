@@ -203,6 +203,105 @@ describe('RuleEngine - Account Inactivity', () => {
       });
     });
 
+    describe('operator handling', () => {
+      const thirtyDaysAgo = () => new Date(Date.now() - 30 * 24 * 60 * 60 * 1000 - 60000); // 30 days + 1 min
+      const twentyNineDaysAgo = () => new Date(Date.now() - 29 * 24 * 60 * 60 * 1000);
+      const sixtyDaysAgo = () => new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+      const params30 = createInactivityParams({ inactivityValue: 30, inactivityUnit: 'days' });
+
+      it('eq operator triggers only on the exact day', () => {
+        // 30 days inactive — should match eq 30
+        const user30 = createMockServerUser({ lastActivityAt: thirtyDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user30, params30, 'eq').violated).toBe(true);
+
+        // 29 days inactive — should NOT match eq 30
+        const user29 = createMockServerUser({ lastActivityAt: twentyNineDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user29, params30, 'eq').violated).toBe(false);
+
+        // 60 days inactive — should NOT match eq 30
+        const user60 = createMockServerUser({ lastActivityAt: sixtyDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user60, params30, 'eq').violated).toBe(false);
+      });
+
+      it('gt operator triggers only after the threshold day', () => {
+        const user30 = createMockServerUser({ lastActivityAt: thirtyDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user30, params30, 'gt').violated).toBe(false);
+
+        const user60 = createMockServerUser({ lastActivityAt: sixtyDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user60, params30, 'gt').violated).toBe(true);
+      });
+
+      it('gte operator triggers on and after the threshold day', () => {
+        const user29 = createMockServerUser({ lastActivityAt: twentyNineDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user29, params30, 'gte').violated).toBe(false);
+
+        const user30 = createMockServerUser({ lastActivityAt: thirtyDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user30, params30, 'gte').violated).toBe(true);
+
+        const user60 = createMockServerUser({ lastActivityAt: sixtyDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user60, params30, 'gte').violated).toBe(true);
+      });
+
+      it('lt operator triggers only before the threshold day', () => {
+        const user29 = createMockServerUser({ lastActivityAt: twentyNineDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user29, params30, 'lt').violated).toBe(true);
+
+        const user30 = createMockServerUser({ lastActivityAt: thirtyDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user30, params30, 'lt').violated).toBe(false);
+      });
+
+      it('lte operator triggers on and before the threshold day', () => {
+        const user30 = createMockServerUser({ lastActivityAt: thirtyDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user30, params30, 'lte').violated).toBe(true);
+
+        const user60 = createMockServerUser({ lastActivityAt: sixtyDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user60, params30, 'lte').violated).toBe(false);
+      });
+
+      it('neq operator triggers on every day except the threshold', () => {
+        const user29 = createMockServerUser({ lastActivityAt: twentyNineDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user29, params30, 'neq').violated).toBe(true);
+
+        const user30 = createMockServerUser({ lastActivityAt: thirtyDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user30, params30, 'neq').violated).toBe(false);
+
+        const user60 = createMockServerUser({ lastActivityAt: sixtyDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user60, params30, 'neq').violated).toBe(true);
+      });
+
+      it('never-active users match gte/gt/neq but not eq/lt/lte', () => {
+        const neverActive = createMockServerUser({ lastActivityAt: null });
+
+        expect(ruleEngine.evaluateAccountInactivity(neverActive, params30, 'gte').violated).toBe(
+          true
+        );
+        expect(ruleEngine.evaluateAccountInactivity(neverActive, params30, 'gt').violated).toBe(
+          true
+        );
+        expect(ruleEngine.evaluateAccountInactivity(neverActive, params30, 'neq').violated).toBe(
+          true
+        );
+        expect(ruleEngine.evaluateAccountInactivity(neverActive, params30, 'eq').violated).toBe(
+          false
+        );
+        expect(ruleEngine.evaluateAccountInactivity(neverActive, params30, 'lt').violated).toBe(
+          false
+        );
+        expect(ruleEngine.evaluateAccountInactivity(neverActive, params30, 'lte').violated).toBe(
+          false
+        );
+      });
+
+      it('defaults to gte when no operator is provided', () => {
+        const user30 = createMockServerUser({ lastActivityAt: thirtyDaysAgo() });
+        // No operator arg — should default to gte
+        expect(ruleEngine.evaluateAccountInactivity(user30, params30).violated).toBe(true);
+
+        const user29 = createMockServerUser({ lastActivityAt: twentyNineDaysAgo() });
+        expect(ruleEngine.evaluateAccountInactivity(user29, params30).violated).toBe(false);
+      });
+    });
+
     describe('boundary conditions', () => {
       it('should handle very small inactivity values', () => {
         const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
