@@ -105,20 +105,17 @@ function formatReason(reason: string): string {
     .trim();
 }
 
-// Get watch time - for active sessions (durationMs is null), calculate from elapsed time
 function getWatchTime(session: SessionWithDetails | ActiveSession): number | null {
-  // If we have a recorded duration, use it
-  if (session.durationMs !== null) {
+  if (session.durationMs) {
     return session.durationMs;
   }
 
-  // For active sessions, calculate elapsed time minus paused time
-  const startTime = new Date(session.startedAt).getTime();
-  const now = Date.now();
-  const elapsedMs = now - startTime;
-  const pausedMs = session.pausedDurationMs ?? 0;
+  if (session.startedAt && !session.stoppedAt) {
+    const elapsedMs = Date.now() - new Date(session.startedAt).getTime();
+    return Math.max(0, elapsedMs - (session.pausedDurationMs ?? 0));
+  }
 
-  return Math.max(0, elapsedMs - pausedMs);
+  return null;
 }
 
 // Get progress percentage (playback position)
