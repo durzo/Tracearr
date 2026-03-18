@@ -610,7 +610,7 @@ export const sessionRoutes: FastifyPluginAsync = async (app) => {
             (SELECT json_agg(sub) FROM (
               SELECT s2.started_at, s2.stopped_at, s2.duration_ms, s2.paused_duration_ms
               FROM sessions s2
-              WHERE COALESCE(s2.reference_id, s2.id) = gs.play_id
+              WHERE s2.reference_id = gs.play_id OR s2.id = gs.play_id
               ORDER BY s2.started_at
               LIMIT 20
             ) sub)
