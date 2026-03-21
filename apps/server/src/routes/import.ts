@@ -60,7 +60,7 @@ export const importRoutes: FastifyPluginAsync = async (app) => {
       await syncServer(serverId, { syncUsers: true, syncLibraries: false });
       app.log.info({ serverId }, 'Server sync completed, enqueueing import');
     } catch (error) {
-      app.log.error({ error, serverId }, 'Failed to sync server before import');
+      app.log.error({ err: error, serverId }, 'Failed to sync server before import');
       return reply.internalServerError('Failed to sync server users before import');
     }
 
@@ -85,7 +85,7 @@ export const importRoutes: FastifyPluginAsync = async (app) => {
       }
 
       // Fallback to direct execution if queue is not available
-      app.log.warn({ error }, 'Import queue unavailable, falling back to direct execution');
+      app.log.warn({ err: error }, 'Import queue unavailable, falling back to direct execution');
 
       const pubSubService = getPubSubService();
 
@@ -329,7 +329,7 @@ export const importRoutes: FastifyPluginAsync = async (app) => {
       await syncServer(parsed.data.serverId, { syncUsers: true, syncLibraries: false });
       app.log.info({ serverId }, 'Server sync completed');
     } catch (error) {
-      app.log.error({ error, serverId }, 'Failed to sync server before import');
+      app.log.error({ err: error, serverId }, 'Failed to sync server before import');
       return reply.internalServerError('Failed to sync server users before import');
     }
 
@@ -355,7 +355,7 @@ export const importRoutes: FastifyPluginAsync = async (app) => {
       }
 
       // Fallback to direct execution if queue is not available
-      app.log.warn({ error }, 'Import queue unavailable, falling back to direct execution');
+      app.log.warn({ err: error }, 'Import queue unavailable, falling back to direct execution');
 
       const pubSubService = getPubSubService();
 

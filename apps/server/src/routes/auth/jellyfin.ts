@@ -99,7 +99,7 @@ export const jellyfinRoutes: FastifyPluginAsync = async (app) => {
         'Invalid username or password, or user is not an administrator on any configured Jellyfin server'
       );
     } catch (error) {
-      app.log.error({ error, username }, 'Jellyfin login error');
+      app.log.error({ err: error, username }, 'Jellyfin login error');
       return await reply.internalServerError('Failed to authenticate with Jellyfin servers');
     }
   });
@@ -183,13 +183,13 @@ export const jellyfinRoutes: FastifyPluginAsync = async (app) => {
             );
           })
           .catch((error) => {
-            app.log.error({ error, serverId }, 'Auto-sync failed for Jellyfin server');
+            app.log.error({ err: error, serverId }, 'Auto-sync failed for Jellyfin server');
           });
 
         // Return updated tokens with new server access
         return generateTokens(app, authUser.userId, authUser.username, authUser.role);
       } catch (error) {
-        app.log.error({ error }, 'Jellyfin connect-api-key failed');
+        app.log.error({ err: error }, 'Jellyfin connect-api-key failed');
         return reply.internalServerError('Failed to connect Jellyfin server');
       }
     }

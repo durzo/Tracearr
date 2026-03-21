@@ -91,13 +91,13 @@ export const embyRoutes: FastifyPluginAsync = async (app) => {
           );
         })
         .catch((error) => {
-          app.log.error({ error, serverId }, 'Auto-sync failed for Emby server');
+          app.log.error({ err: error, serverId }, 'Auto-sync failed for Emby server');
         });
 
       // Return updated tokens with new server access
       return generateTokens(app, authUser.userId, authUser.username, authUser.role);
     } catch (error) {
-      app.log.error({ error }, 'Emby connect-api-key failed');
+      app.log.error({ err: error }, 'Emby connect-api-key failed');
       return reply.internalServerError('Failed to connect Emby server');
     }
   });

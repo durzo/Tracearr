@@ -149,7 +149,7 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
         }
       }
     } catch (error) {
-      app.log.error({ error }, 'Failed to verify server connection');
+      app.log.error({ err: error }, 'Failed to verify server connection');
       return reply.badRequest('Failed to connect to server. Please verify URL and token.');
     }
 
@@ -199,7 +199,7 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
         );
       })
       .catch((error) => {
-        app.log.error({ error, serverId: server.id }, 'Auto-sync failed for new server');
+        app.log.error({ err: error, serverId: server.id }, 'Auto-sync failed for new server');
       });
 
     return reply.status(201).send(server);
@@ -294,7 +294,7 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
             }
           }
         } catch (error) {
-          app.log.error({ error, serverId: id, newUrl }, 'Failed to verify new server URL');
+          app.log.error({ err: error, serverId: id, newUrl }, 'Failed to verify new server URL');
           return reply.badRequest(
             'Failed to connect to server at new URL. Please verify the URL is correct.'
           );
@@ -403,7 +403,7 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
 
       return { success: true };
     } catch (error) {
-      app.log.error({ error }, 'Failed to update server display order');
+      app.log.error({ err: error }, 'Failed to update server display order');
       return reply.internalServerError('Failed to update server order');
     }
   });
@@ -492,7 +492,7 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
         syncedAt: new Date().toISOString(),
       };
     } catch (error) {
-      app.log.error({ error, serverId: id }, 'Failed to sync server');
+      app.log.error({ err: error, serverId: id }, 'Failed to sync server');
       return reply.internalServerError('Failed to sync server');
     }
   });
@@ -648,7 +648,7 @@ export const serverRoutes: FastifyPluginAsync = async (app) => {
       reply.header('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
       return reply.send(Buffer.from(buffer));
     } catch (error) {
-      app.log.error({ error, serverId: id, imagePath }, 'Failed to fetch image from server');
+      app.log.error({ err: error, serverId: id, imagePath }, 'Failed to fetch image from server');
       return reply.internalServerError('Failed to fetch image');
     }
   });

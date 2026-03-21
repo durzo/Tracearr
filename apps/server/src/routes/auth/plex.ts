@@ -391,7 +391,7 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
         ...(await generateTokens(app, newUser.id, newUser.username, newUser.role)),
       };
     } catch (error) {
-      app.log.error({ error }, 'Plex check-pin failed');
+      app.log.error({ err: error }, 'Plex check-pin failed');
       return reply.internalServerError('Failed to check Plex authorization');
     }
   });
@@ -562,12 +562,12 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
           );
         })
         .catch((error) => {
-          app.log.error({ error, serverId }, 'Auto-sync failed for Plex server');
+          app.log.error({ err: error, serverId }, 'Auto-sync failed for Plex server');
         });
 
       return generateTokens(app, newUser.id, newUser.username, newUser.role);
     } catch (error) {
-      app.log.error({ error }, 'Plex connect failed');
+      app.log.error({ err: error }, 'Plex connect failed');
       return reply.internalServerError('Failed to connect to Plex server');
     }
   });
@@ -645,7 +645,7 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
       try {
         allServers = await PlexClient.getServers(plexToken);
       } catch (error) {
-        app.log.error({ error }, 'Failed to fetch servers from plex.tv');
+        app.log.error({ err: error }, 'Failed to fetch servers from plex.tv');
         return reply.internalServerError('Failed to fetch servers from Plex');
       }
 
@@ -732,7 +732,7 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
       try {
         plexServers = await PlexClient.getServers(existingServer.token);
       } catch (error) {
-        app.log.error({ error }, 'Failed to fetch servers from plex.tv');
+        app.log.error({ err: error }, 'Failed to fetch servers from plex.tv');
         return reply.internalServerError('Failed to fetch servers from Plex');
       }
 
@@ -957,7 +957,10 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
           );
         })
         .catch((error) => {
-          app.log.error({ error, serverId: newServer.id }, 'Auto-sync failed for new Plex server');
+          app.log.error(
+            { err: error, serverId: newServer.id },
+            'Auto-sync failed for new Plex server'
+          );
         });
 
       return {
@@ -970,7 +973,7 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
         },
       };
     } catch (error) {
-      app.log.error({ error }, 'Failed to add Plex server');
+      app.log.error({ err: error }, 'Failed to add Plex server');
       return reply.internalServerError('Failed to add Plex server');
     }
   });
@@ -1167,7 +1170,7 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
           },
         };
       } catch (error) {
-        app.log.error({ error }, 'Failed to link Plex account');
+        app.log.error({ err: error }, 'Failed to link Plex account');
         return reply.internalServerError('Failed to link Plex account');
       }
     }

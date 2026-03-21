@@ -171,7 +171,7 @@ export const localRoutes: FastifyPluginAsync = async (app) => {
         const { pinId, authUrl } = await PlexClient.initiateOAuth(forwardUrl);
         return { pinId, authUrl };
       } catch (error) {
-        app.log.error({ error }, 'Failed to initiate Plex OAuth');
+        app.log.error({ err: error }, 'Failed to initiate Plex OAuth');
         return reply.internalServerError('Failed to initiate Plex authentication');
       }
     }
