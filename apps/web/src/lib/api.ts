@@ -477,6 +477,14 @@ class ApiClient {
         `/auth/plex/server-connections/${serverId}`
       ),
 
+    // Test reachability of a custom Plex URL before save. Accepts either an
+    // authenticated owner session or a Plex signup tempToken (for Login.tsx).
+    testPlexConnection: (data: { uri: string; accountId?: string; tempToken?: string }) =>
+      this.request<{ connection: PlexDiscoveredConnection }>('/auth/plex/test-connection', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+
     // Jellyfin server connection with API key (requires auth)
     connectJellyfinWithApiKey: (data: { serverUrl: string; serverName: string; apiKey: string }) =>
       this.request<{

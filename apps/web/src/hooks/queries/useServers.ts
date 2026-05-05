@@ -76,6 +76,7 @@ export function useUpdateServer() {
     }) => api.servers.update(id, { name, url, clientIdentifier, color }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['servers', 'list'] });
+      void queryClient.invalidateQueries({ queryKey: ['plex', 'server-connections'] });
       toast.success(t('toast.success.serverUpdated.title'), {
         description: t('toast.success.serverUpdated.message'),
       });
@@ -102,6 +103,7 @@ export function useUpdateServerUrl() {
     }) => api.servers.update(id, { url, clientIdentifier }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['servers', 'list'] });
+      void queryClient.invalidateQueries({ queryKey: ['plex', 'server-connections'] });
       toast.success(t('toast.success.serverUrlUpdated.title'), {
         description: t('toast.success.serverUrlUpdated.message'),
       });

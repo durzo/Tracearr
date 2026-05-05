@@ -17,7 +17,11 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import type { PlexDiscoveredServer, PlexDiscoveredConnection } from '@tracearr/shared';
+import type {
+  PlexDiscoveredServer,
+  PlexDiscoveredConnection,
+  PlexConnectionError,
+} from '@tracearr/shared';
 import type { PlexServerInfo, PlexServerConnection } from '@/lib/api';
 
 /**
@@ -65,6 +69,14 @@ export interface PlexServerSelectorProps {
    * Additional className for the container
    */
   className?: string;
+
+  /**
+   * Optional pre-save verification for custom URLs. If provided, the Connect
+   * button on the custom URL input runs this check first and only calls
+   * onSelect if the URL is reachable. If omitted, the custom URL is passed
+   * straight to onSelect (signup/login flow).
+   */
+  onTestCustomUrl?: (uri: string) => Promise<PlexDiscoveredConnection>;
 }
 
 /**
@@ -109,6 +121,7 @@ export function PlexServerSelector({
   onCancel,
   showCancel = true,
   className,
+  onTestCustomUrl,
 }: PlexServerSelectorProps) {
   const { t } = useTranslation(['notifications', 'pages', 'common']);
   // Track which servers have expanded connection lists
@@ -118,6 +131,8 @@ export function PlexServerSelector({
   // Custom URL input state
   const [customUrlServer, setCustomUrlServer] = useState<string | null>(null);
   const [customUrl, setCustomUrl] = useState('');
+  const [testingCustomUrl, setTestingCustomUrl] = useState(false);
+  const [customUrlError, setCustomUrlError] = useState<PlexConnectionError | null>(null);
 
   const toggleExpanded = (clientIdentifier: string) => {
     setExpandedServers((prev) => {
@@ -143,7 +158,39 @@ export function PlexServerSelector({
     });
   };
 
-  const handleCustomUrlSubmit = (server: PlexDiscoveredServer | PlexServerInfo) => {
+  // Translate a server-side connection error code into a localized label.
+  // The error.message carries server-side detail and is appended for context.
+  const formatConnectionError = (err: PlexConnectionError): string => {
+    let base: string;
+    switch (err.code) {
+      case 'timeout':
+        base = t('pages:settings.plex.connectionError.timeout');
+        break;
+      case 'dns':
+        base = t('pages:settings.plex.connectionError.dns');
+        break;
+      case 'refused':
+        base = t('pages:settings.plex.connectionError.refused');
+        break;
+      case 'unreachable':
+        base = t('pages:settings.plex.connectionError.unreachable');
+        break;
+      case 'reset':
+        base = t('pages:settings.plex.connectionError.reset');
+        break;
+      case 'tls':
+        base = t('pages:settings.plex.connectionError.tls');
+        break;
+      case 'http':
+        base = t('pages:settings.plex.connectionError.http', { status: err.status ?? '?' });
+        break;
+      default:
+        base = t('pages:settings.plex.connectionError.unknown');
+    }
+    return err.message ? `${base}: ${err.message}` : base;
+  };
+
+  const handleCustomUrlSubmit = async (server: PlexDiscoveredServer | PlexServerInfo) => {
     if (!customUrl.trim()) return;
     let url = customUrl.trim();
     // Add protocol if missing
@@ -158,9 +205,28 @@ export function PlexServerSelector({
       return;
     }
 
+    // If parent supplied a pre-save verification hook, test before saving
+    if (onTestCustomUrl) {
+      setTestingCustomUrl(true);
+      setCustomUrlError(null);
+      try {
+        const result = await onTestCustomUrl(url);
+        if (!result.reachable) {
+          setCustomUrlError(result.error ?? { code: 'unknown', message: 'Connection failed' });
+          return;
+        }
+      } catch {
+        setCustomUrlError({ code: 'unknown', message: 'Failed to test connection' });
+        return;
+      } finally {
+        setTestingCustomUrl(false);
+      }
+    }
+
     onSelect(url, server.name, server.clientIdentifier);
     setCustomUrl('');
     setCustomUrlServer(null);
+    setCustomUrlError(null);
   };
 
   const handleQuickConnect = (server: PlexDiscoveredServer | PlexServerInfo) => {
@@ -251,12 +317,14 @@ export function PlexServerSelector({
             {/* Recommended Connection Preview (for discovered servers) */}
             {recommendedConn && isDiscoveredConnection(recommendedConn) && (
               <div className="mt-3 flex items-center gap-2 text-sm">
-                <Check className="h-4 w-4 text-green-500" />
-                <span className="text-muted-foreground">
-                  {recommendedConn.local
-                    ? t('pages:settings.plex.local')
-                    : t('pages:settings.plex.remote')}
-                  : {recommendedConn.address}:{recommendedConn.port}
+                <Check className="h-4 w-4 flex-shrink-0 text-green-500" />
+                <span className="text-muted-foreground whitespace-nowrap">
+                  {recommendedConn.custom
+                    ? t('pages:settings.plex.custom')
+                    : recommendedConn.local
+                      ? t('pages:settings.plex.local')
+                      : t('pages:settings.plex.remote')}
+                  : {recommendedConn.uri}
                 </span>
                 {recommendedConn.latencyMs !== null && (
                   <span className="text-muted-foreground text-xs">
@@ -320,6 +388,7 @@ export function PlexServerSelector({
                   if (showingCustomUrl) {
                     setCustomUrlServer(null);
                     setCustomUrl('');
+                    setCustomUrlError(null);
                   } else {
                     setCustomUrlServer(clientId);
                   }
@@ -338,31 +407,49 @@ export function PlexServerSelector({
 
             {/* Custom URL Input */}
             {showingCustomUrl && (
-              <div className="mt-3 flex gap-2">
-                <Input
-                  type="text"
-                  placeholder="https://plex.example.com:32400"
-                  value={customUrl}
-                  onChange={(e) => setCustomUrl(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleCustomUrlSubmit(server);
-                    }
-                    if (e.key === 'Escape') {
-                      setCustomUrlServer(null);
-                      setCustomUrl('');
-                    }
-                  }}
-                  disabled={connecting}
-                  className="h-8 flex-1 text-sm"
-                />
-                <Button
-                  size="sm"
-                  onClick={() => handleCustomUrlSubmit(server)}
-                  disabled={connecting || !customUrl.trim()}
-                >
-                  {t('common:actions.connect')}
-                </Button>
+              <div className="mt-3 space-y-2">
+                <div className="flex gap-2">
+                  <Input
+                    type="text"
+                    placeholder="https://plex.example.com:32400"
+                    value={customUrl}
+                    onChange={(e) => {
+                      setCustomUrl(e.target.value);
+                      if (customUrlError) setCustomUrlError(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        void handleCustomUrlSubmit(server);
+                      }
+                      if (e.key === 'Escape') {
+                        setCustomUrlServer(null);
+                        setCustomUrl('');
+                        setCustomUrlError(null);
+                      }
+                    }}
+                    disabled={connecting || testingCustomUrl}
+                    className="h-8 flex-1 text-sm"
+                  />
+                  <Button
+                    size="sm"
+                    onClick={() => void handleCustomUrlSubmit(server)}
+                    disabled={connecting || testingCustomUrl || !customUrl.trim()}
+                  >
+                    {testingCustomUrl ? (
+                      <>
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                        {t('common:states.connecting')}
+                      </>
+                    ) : (
+                      t('common:actions.connect')
+                    )}
+                  </Button>
+                </div>
+                {customUrlError && (
+                  <p className="text-destructive text-sm">
+                    {formatConnectionError(customUrlError)}
+                  </p>
+                )}
               </div>
             )}
 
@@ -375,6 +462,11 @@ export function PlexServerSelector({
                   // Allow clicking unreachable connections when showingAll is enabled
                   const canClick = isReachable || showingAll;
                   const isRecommended = isDiscovered && conn.uri === server.recommendedUri;
+                  const isCustom = isDiscoveredConn && conn.custom === true;
+                  const errorLabel =
+                    isDiscoveredConn && !conn.reachable && conn.error
+                      ? formatConnectionError(conn.error)
+                      : null;
 
                   return (
                     <button
@@ -383,63 +475,71 @@ export function PlexServerSelector({
                       onClick={() => canClick && handleConnectionSelect(server, conn)}
                       disabled={connecting || !canClick}
                       className={cn(
-                        'flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors',
+                        'flex w-full items-start justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors',
                         canClick
                           ? 'hover:bg-muted cursor-pointer'
-                          : 'cursor-not-allowed opacity-50',
-                        !isReachable && canClick && 'opacity-70',
+                          : 'cursor-not-allowed opacity-70',
                         isRecommended && 'bg-muted/50 ring-primary/20 ring-1'
                       )}
                     >
-                      <div className="flex min-w-0 items-center gap-2">
-                        {/* Reachability indicator */}
-                        {isDiscoveredConn ? (
-                          conn.reachable ? (
-                            <Check className="h-3.5 w-3.5 flex-shrink-0 text-green-500" />
+                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <div className="flex items-center gap-2">
+                          {/* Reachability indicator */}
+                          {isDiscoveredConn ? (
+                            conn.reachable ? (
+                              <Check className="h-3.5 w-3.5 flex-shrink-0 text-green-500" />
+                            ) : (
+                              <X className="h-3.5 w-3.5 flex-shrink-0 text-red-500" />
+                            )
+                          ) : conn.local ? (
+                            <Wifi className="h-3.5 w-3.5 flex-shrink-0 text-green-500" />
                           ) : (
-                            <X className="h-3.5 w-3.5 flex-shrink-0 text-red-500" />
-                          )
-                        ) : conn.local ? (
-                          <Wifi className="h-3.5 w-3.5 flex-shrink-0 text-green-500" />
-                        ) : (
-                          <Globe className="h-3.5 w-3.5 flex-shrink-0 text-blue-500" />
-                        )}
+                            <Globe className="h-3.5 w-3.5 flex-shrink-0 text-blue-500" />
+                          )}
 
-                        {/* Connection details */}
-                        <span className="truncate">
-                          {conn.local
-                            ? t('pages:settings.plex.local')
-                            : t('pages:settings.plex.remote')}
-                          : {conn.address}:{conn.port}
-                        </span>
-
-                        {/* Secure badge for HTTPS */}
-                        {conn.uri.startsWith('https://') && (
-                          <span className="inline-flex flex-shrink-0 items-center gap-0.5 text-xs font-medium text-green-600 dark:text-green-500">
-                            <Lock className="h-3 w-3" />
-                            {t('pages:settings.plex.secure')}
+                          {/* Connection details — show full URI, no wrapping */}
+                          <span className="whitespace-nowrap">
+                            {isCustom
+                              ? t('pages:settings.plex.custom')
+                              : conn.local
+                                ? t('pages:settings.plex.local')
+                                : t('pages:settings.plex.remote')}
+                            : {conn.uri}
                           </span>
-                        )}
 
-                        {/* Unreachable warning when shown via "Show all" */}
-                        {!isReachable && showingAll && (
-                          <span className="inline-flex flex-shrink-0 items-center gap-0.5 text-xs font-medium text-amber-600 dark:text-amber-500">
-                            <AlertTriangle className="h-3 w-3" />
-                            {t('pages:settings.plex.mayNotConnect')}
-                          </span>
-                        )}
+                          {/* Secure badge for HTTPS */}
+                          {conn.uri.startsWith('https://') && (
+                            <span className="inline-flex flex-shrink-0 items-center gap-0.5 text-xs font-medium text-green-600 dark:text-green-500">
+                              <Lock className="h-3 w-3" />
+                              {t('pages:settings.plex.secure')}
+                            </span>
+                          )}
 
-                        {/* Recommended badge */}
-                        {isRecommended && (
-                          <span className="text-primary flex-shrink-0 text-xs font-medium">
-                            {t('pages:settings.plex.recommended')}
-                          </span>
+                          {/* Unreachable warning when shown via "Show all" */}
+                          {!isReachable && showingAll && !errorLabel && (
+                            <span className="inline-flex flex-shrink-0 items-center gap-0.5 text-xs font-medium text-amber-600 dark:text-amber-500">
+                              <AlertTriangle className="h-3 w-3" />
+                              {t('pages:settings.plex.mayNotConnect')}
+                            </span>
+                          )}
+
+                          {/* Recommended badge */}
+                          {isRecommended && (
+                            <span className="text-primary flex-shrink-0 text-xs font-medium">
+                              {t('pages:settings.plex.recommended')}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Inline error detail under the URI for failed reachability */}
+                        {errorLabel && (
+                          <span className="text-destructive pl-[22px] text-xs">{errorLabel}</span>
                         )}
                       </div>
 
                       {/* Latency */}
                       {isDiscoveredConn && conn.reachable && conn.latencyMs !== null && (
-                        <span className="text-muted-foreground flex-shrink-0 text-xs">
+                        <span className="text-muted-foreground flex-shrink-0 self-center text-xs">
                           {formatLatency(conn.latencyMs)}
                         </span>
                       )}
@@ -467,11 +567,11 @@ export function PlexServerSelector({
                       ) : (
                         <Globe className="h-3 w-3 text-blue-500" />
                       )}
-                      <span className="text-xs">
+                      <span className="text-xs whitespace-nowrap">
                         {conn.local
                           ? t('pages:settings.plex.local')
                           : t('pages:settings.plex.remote')}
-                        : {conn.address}:{conn.port}
+                        : {conn.uri}
                       </span>
                       {conn.uri.startsWith('https://') && (
                         <span className="inline-flex items-center gap-0.5 text-xs font-medium text-green-600 dark:text-green-500">

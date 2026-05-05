@@ -1536,6 +1536,23 @@ export interface TerminationLogWithDetails {
 // Plex Server Discovery Types
 // =============================================================================
 
+// Reachability error categorization for a tested Plex connection
+export type PlexConnectionErrorCode =
+  | 'timeout'
+  | 'dns'
+  | 'refused'
+  | 'unreachable'
+  | 'reset'
+  | 'tls'
+  | 'http'
+  | 'unknown';
+
+export interface PlexConnectionError {
+  code: PlexConnectionErrorCode;
+  message: string; // Server-side detail (hostname, TLS reason, etc.)
+  status?: number; // Set when code === 'http'
+}
+
 // Connection details for a discovered Plex server
 export interface PlexDiscoveredConnection {
   uri: string;
@@ -1544,6 +1561,8 @@ export interface PlexDiscoveredConnection {
   port: number;
   reachable: boolean; // Tested from Tracearr server
   latencyMs: number | null; // Response time if reachable
+  custom?: boolean; // True for user-supplied URLs (not from plex.tv resources)
+  error?: PlexConnectionError; // Set when reachable === false
 }
 
 // Discovered Plex server from plex.tv resources API

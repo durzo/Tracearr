@@ -431,7 +431,7 @@ export function ServerSettings() {
           setShowAddDialog(open);
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent className="w-fit max-w-[calc(100vw-2rem)] min-w-[28rem] sm:max-w-[calc(100vw-2rem)]">
           <DialogHeader>
             <DialogTitle>{t('servers.addServer')}</DialogTitle>
             <DialogDescription>
@@ -603,6 +603,13 @@ export function ServerSettings() {
                       connecting={connectingPlexServer !== null}
                       connectingToServer={connectingPlexServer}
                       showCancel={false}
+                      onTestCustomUrl={async (uri) => {
+                        const result = await api.auth.testPlexConnection({
+                          uri,
+                          accountId: selectedPlexAccountId ?? undefined,
+                        });
+                        return result.connection;
+                      }}
                     />
                   </div>
                 )}
@@ -795,7 +802,7 @@ function EditServerDialog({
 
   return (
     <Dialog open={!!server} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className={cn('max-w-md', isPlexServer && 'max-w-lg')}>
+      <DialogContent className="w-fit max-w-[calc(100vw-2rem)] min-w-[28rem] sm:max-w-[calc(100vw-2rem)]">
         <DialogHeader>
           <DialogTitle>{t('servers.editServer')}</DialogTitle>
           <DialogDescription>{t('servers.editServerDesc')}</DialogDescription>
@@ -833,6 +840,10 @@ function EditServerDialog({
                     connectingToServer={isUpdating ? server.name : null}
                     onCancel={onClose}
                     showCancel={true}
+                    onTestCustomUrl={async (uri) => {
+                      const result = await api.auth.testPlexConnection({ uri });
+                      return result.connection;
+                    }}
                   />
                   {hasNameChange && (
                     <p className="text-muted-foreground text-sm">{t('servers.updateHint')}</p>

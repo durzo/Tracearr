@@ -170,6 +170,8 @@ export type {
   PlexDiscoveredConnection,
   PlexDiscoveredServer,
   PlexAvailableServersResponse,
+  PlexConnectionError,
+  PlexConnectionErrorCode,
   // Plex account management
   PlexAccount,
   PlexAccountsResponse,

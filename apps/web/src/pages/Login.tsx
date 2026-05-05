@@ -424,7 +424,7 @@ export function Login() {
           <p className="text-muted-foreground mt-2">{t('pages:login.selectPlexServer')}</p>
         </div>
 
-        <Card className="w-full max-w-md">
+        <Card className="w-fit max-w-[calc(100vw-2rem)] min-w-[28rem]">
           <CardHeader>
             <CardTitle>{t('settings:plex.selectServer')}</CardTitle>
             <CardDescription>{t('settings:plex.chooseServer')}</CardDescription>
@@ -436,6 +436,17 @@ export function Login() {
               connecting={connectingToServer !== null}
               connectingToServer={connectingToServer}
               onCancel={resetPlexAuth}
+              onTestCustomUrl={
+                plexTempToken
+                  ? async (uri) => {
+                      const result = await api.auth.testPlexConnection({
+                        uri,
+                        tempToken: plexTempToken,
+                      });
+                      return result.connection;
+                    }
+                  : undefined
+              }
             />
           </CardContent>
         </Card>

@@ -18,6 +18,7 @@ import {
   type PlexAvailableServersResponse,
   type PlexDiscoveredServer,
   type PlexDiscoveredConnection,
+  type PlexConnectionError,
   type PlexAccountsResponse,
   type LinkPlexAccountResponse,
   type UnlinkPlexAccountResponse,
@@ -61,8 +62,105 @@ const plexUnlinkAccountSchema = z.object({
   id: z.uuid(),
 });
 
+const plexTestConnectionSchema = z.object({
+  uri: z.url(),
+  accountId: z.uuid().optional(),
+  tempToken: z.string().optional(), // Set during signup before the user has a Tracearr account
+});
+
 // Connection testing timeout in milliseconds
 const CONNECTION_TEST_TIMEOUT = 3000;
+
+/**
+ * Categorize a fetch failure into a stable error code + human-readable detail.
+ *
+ * Maps undici/Node errors (`err.cause.code`) to a small enum the frontend can
+ * render with translated labels. The `message` field carries the specifics
+ * (hostname, TLS reason, etc.) so the UI can show them inline.
+ */
+function categorizeConnectionError(err: unknown): PlexConnectionError {
+  if (err instanceof Error) {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      return { code: 'timeout', message: `Timed out after ${CONNECTION_TEST_TIMEOUT}ms` };
+    }
+    const cause = (err as { cause?: { code?: string; message?: string } }).cause;
+    const code = cause?.code;
+    const detail = cause?.message ?? err.message;
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+      return { code: 'dns', message: detail };
+    }
+    if (code === 'ECONNREFUSED') {
+      return { code: 'refused', message: detail };
+    }
+    if (code === 'EHOSTUNREACH' || code === 'ENETUNREACH') {
+      return { code: 'unreachable', message: detail };
+    }
+    if (code === 'ECONNRESET' || code === 'UND_ERR_SOCKET') {
+      return { code: 'reset', message: detail };
+    }
+    if (
+      code &&
+      (code.startsWith('CERT_') || code.startsWith('ERR_TLS_') || code.includes('SELF_SIGNED'))
+    ) {
+      return { code: 'tls', message: detail };
+    }
+    return { code: 'unknown', message: detail };
+  }
+  return { code: 'unknown', message: 'Connection failed' };
+}
+
+/**
+ * Test a single connection URI. Shared by bulk discovery and the
+ * single-URL test endpoint used to verify custom URLs before save.
+ */
+async function testSingleConnection(
+  conn: { uri: string; local: boolean; address: string; port: number; custom?: boolean },
+  token: string
+): Promise<PlexDiscoveredConnection> {
+  const start = Date.now();
+  try {
+    const response = await fetch(`${conn.uri}/`, {
+      headers: plexHeaders(token),
+      signal: AbortSignal.timeout(CONNECTION_TEST_TIMEOUT),
+    });
+    if (response.ok) {
+      return {
+        uri: conn.uri,
+        local: conn.local,
+        address: conn.address,
+        port: conn.port,
+        reachable: true,
+        latencyMs: Date.now() - start,
+        ...(conn.custom ? { custom: true } : {}),
+      };
+    }
+    return {
+      uri: conn.uri,
+      local: conn.local,
+      address: conn.address,
+      port: conn.port,
+      reachable: false,
+      latencyMs: null,
+      error: {
+        code: 'http',
+        message: `HTTP ${response.status} ${response.statusText}`.trim(),
+        status: response.status,
+      },
+      ...(conn.custom ? { custom: true } : {}),
+    };
+  } catch (err) {
+    return {
+      uri: conn.uri,
+      local: conn.local,
+      address: conn.address,
+      port: conn.port,
+      reachable: false,
+      latencyMs: null,
+      error: categorizeConnectionError(err),
+      ...(conn.custom ? { custom: true } : {}),
+    };
+  }
+}
 
 /**
  * Test connections to a Plex server and return results with reachability info
@@ -77,37 +175,7 @@ async function testServerConnections(
   }>,
   token: string
 ): Promise<PlexDiscoveredConnection[]> {
-  const results = await Promise.all(
-    connections.map(async (conn): Promise<PlexDiscoveredConnection> => {
-      const start = Date.now();
-      try {
-        const response = await fetch(`${conn.uri}/`, {
-          headers: plexHeaders(token),
-          signal: AbortSignal.timeout(CONNECTION_TEST_TIMEOUT),
-        });
-        if (response.ok) {
-          return {
-            uri: conn.uri,
-            local: conn.local,
-            address: conn.address,
-            port: conn.port,
-            reachable: true,
-            latencyMs: Date.now() - start,
-          };
-        }
-      } catch {
-        // Connection failed or timed out
-      }
-      return {
-        uri: conn.uri,
-        local: conn.local,
-        address: conn.address,
-        port: conn.port,
-        reachable: false,
-        latencyMs: null,
-      };
-    })
-  );
+  const results = await Promise.all(connections.map((conn) => testSingleConnection(conn, token)));
 
   // Sort: reachable first, then HTTPS, then local preference, then by latency
   return results.sort((a, b) => {
@@ -407,14 +475,13 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
 
     const { tempToken, serverUri, serverName, clientIdentifier, claimCode } = body.data;
 
-    // Get stored Plex auth from temp token
+    // Get stored Plex auth from temp token. The token is consumed only on
+    // success (just before the return below) so failures here don't lock the
+    // user out of retrying — the token stays valid until its TTL expires.
     const stored = await app.redis.get(REDIS_KEYS.PLEX_TEMP_TOKEN(tempToken));
     if (!stored) {
       return reply.unauthorized('Invalid or expired temp token. Please restart login.');
     }
-
-    // Delete temp token (one-time use)
-    await app.redis.del(REDIS_KEYS.PLEX_TEMP_TOKEN(tempToken));
 
     const { plexAccountId, plexUsername, plexEmail, plexThumb, plexToken } = JSON.parse(stored) as {
       plexAccountId: string;
@@ -550,6 +617,10 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
         thumbUrl: plexThumb,
         isServerAdmin: true, // They verified as admin
       });
+
+      // Consume the temp token now that the user/server records are committed.
+      // Failures above leave the token in Redis so the user can retry.
+      await app.redis.del(REDIS_KEYS.PLEX_TEMP_TOKEN(tempToken));
 
       app.log.info({ userId: newUser.id, serverId, role }, 'New Plex user with server created');
 
@@ -715,6 +786,7 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
           id: servers.id,
           token: servers.token,
           name: servers.name,
+          url: servers.url,
           machineIdentifier: servers.machineIdentifier,
         })
         .from(servers)
@@ -746,11 +818,35 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
         return { server: null };
       }
 
-      // Test connections
+      // Test plex.tv-discovered connections
       const testedConnections = await testServerConnections(
         targetServer.connections,
         existingServer.token
       );
+
+      // If the saved URL isn't one of plex.tv's connections, it's a custom URL.
+      // Test it standalone and prepend it so the user can see + click it.
+      const savedUrlIsCustom = !testedConnections.some((c) => c.uri === existingServer.url);
+      if (savedUrlIsCustom) {
+        try {
+          const parsed = new URL(existingServer.url);
+          const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80;
+          const customResult = await testSingleConnection(
+            {
+              uri: existingServer.url,
+              local: false,
+              address: parsed.hostname,
+              port,
+              custom: true,
+            },
+            existingServer.token
+          );
+          testedConnections.unshift(customResult);
+        } catch {
+          // Saved URL was malformed - skip injection rather than failing the whole request
+        }
+      }
+
       const recommended = testedConnections.find((c) => c.reachable);
 
       return {
@@ -763,6 +859,111 @@ export const plexRoutes: FastifyPluginAsync = async (app) => {
           connections: testedConnections,
         },
       };
+    }
+  );
+
+  /**
+   * POST /plex/test-connection - Test reachability of a user-supplied URL
+   *
+   * Used to pre-verify a custom URL before saving the server. Returns a single
+   * PlexDiscoveredConnection with custom: true so the frontend can render the
+   * same row treatment (reachability + inline error) as plex.tv connections.
+   *
+   * Auth: accepts either an authenticated owner session OR a Plex signup
+   * tempToken. The signup branch is used by Login.tsx before the user has a
+   * Tracearr account; the temp token is read from Redis (not consumed) and
+   * its plex token is used for the test request.
+   *
+   * If both `tempToken` and `accountId` are sent, `tempToken` takes priority.
+   */
+  app.post(
+    '/plex/test-connection',
+    async (request, reply): Promise<{ connection: PlexDiscoveredConnection } | undefined> => {
+      const body = plexTestConnectionSchema.safeParse(request.body);
+      if (!body.success) {
+        return reply.badRequest('uri is required');
+      }
+
+      const { uri, accountId, tempToken } = body.data;
+
+      // Resolve the plex token. Two branches:
+      // 1. tempToken (signup): look up the stored Plex token from Redis
+      //    without consuming it.
+      // 2. authenticated owner: use accountId/fallback like /available-servers.
+      let plexToken: string;
+      if (tempToken) {
+        const stored = await app.redis.get(REDIS_KEYS.PLEX_TEMP_TOKEN(tempToken));
+        if (!stored) {
+          return reply.unauthorized('Invalid or expired temp token');
+        }
+        const parsed = JSON.parse(stored) as { plexToken: string };
+        plexToken = parsed.plexToken;
+      } else {
+        // Run the standard authenticate decorator (covers JWT verify +
+        // isTokenRevoked). It sends the reply on failure, so short-circuit.
+        await app.authenticate(request, reply);
+        if (reply.sent) return undefined;
+        const authUser = request.user;
+        if (authUser.role !== 'owner') {
+          return reply.forbidden('Only server owners can test connections');
+        }
+        const user = await getUserById(authUser.userId);
+        if (!user) {
+          return reply.unauthorized('User not found');
+        }
+
+        if (accountId) {
+          const account = await db
+            .select({ plexToken: plexAccounts.plexToken })
+            .from(plexAccounts)
+            .where(and(eq(plexAccounts.id, accountId), eq(plexAccounts.userId, user.id)))
+            .limit(1);
+          if (account.length === 0) {
+            return reply.notFound('Plex account not found');
+          }
+          plexToken = account[0]!.plexToken;
+        } else {
+          const existingPlexServers = await db
+            .select({ token: servers.token })
+            .from(servers)
+            .where(eq(servers.type, 'plex'))
+            .limit(1);
+          if (existingPlexServers.length > 0) {
+            plexToken = existingPlexServers[0]!.token;
+          } else {
+            const userAccounts = await db
+              .select({ plexToken: plexAccounts.plexToken })
+              .from(plexAccounts)
+              .where(eq(plexAccounts.userId, user.id))
+              .limit(1);
+            if (userAccounts.length === 0) {
+              return reply.badRequest('No Plex accounts available to authenticate the test');
+            }
+            plexToken = userAccounts[0]!.plexToken;
+          }
+        }
+      }
+
+      let parsed: URL;
+      try {
+        parsed = new URL(uri);
+      } catch {
+        return reply.badRequest('Invalid URL');
+      }
+      const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80;
+
+      const connection = await testSingleConnection(
+        {
+          uri,
+          local: false,
+          address: parsed.hostname,
+          port,
+          custom: true,
+        },
+        plexToken
+      );
+
+      return { connection };
     }
   );
 

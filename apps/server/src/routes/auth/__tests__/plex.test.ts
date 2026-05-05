@@ -28,9 +28,16 @@ vi.mock('../../../utils/crypto.js', () => ({
   decrypt: vi.fn((token: string) => token.replace('encrypted_', '')),
 }));
 
-vi.mock('../../../services/mediaServer/index.js', () => {
-  const mockGetUsers = vi.fn().mockResolvedValue([{ id: '1', username: 'admin', isAdmin: true }]);
+// Hoisted so a top-level beforeEach can re-establish defaults after
+// vi.resetAllMocks() (which wipes implementations as well as call history).
+// vi.hoisted() is required because vi.mock factories run before module-level
+// const declarations — without it, the factories would capture `undefined`.
+const { mockGetUsers, mockGetAllServerIds } = vi.hoisted(() => ({
+  mockGetUsers: vi.fn(),
+  mockGetAllServerIds: vi.fn(),
+}));
 
+vi.mock('../../../services/mediaServer/index.js', () => {
   class MockPlexClient {
     getUsers = mockGetUsers;
   }
@@ -64,7 +71,7 @@ vi.mock('../../../utils/claimCode.js', () => ({
 }));
 
 vi.mock('../../../services/serverService.js', () => ({
-  getAllServerIds: vi.fn().mockResolvedValue([]),
+  getAllServerIds: mockGetAllServerIds,
 }));
 
 // Import mocked modules
@@ -236,9 +243,30 @@ const mockPlexServer = {
 describe('Plex Auth Routes', () => {
   let app: FastifyInstance;
 
+  // Re-establish default mock implementations after each reset. These are
+  // depended on by multiple suites (PlexClient instance method, generateTokens
+  // server-id lookup, fire-and-forget background sync) — hoisting them here
+  // keeps the resetAllMocks pattern free of order-dependent leaks across
+  // describes.
+  beforeEach(() => {
+    mockGetUsers.mockResolvedValue([{ id: '1', username: 'admin', isAdmin: true }]);
+    mockGetAllServerIds.mockResolvedValue([]);
+    // syncServer is awaited via .then() in the route's fire-and-forget path.
+    // Without a resolved value, the chained `.then` blows up.
+    vi.mocked(syncServer).mockResolvedValue({
+      usersAdded: 0,
+      usersUpdated: 0,
+      usersSkipped: 0,
+      usersRemoved: 0,
+      usersRestored: 0,
+      librariesSynced: 0,
+      errors: [],
+    });
+  });
+
   afterEach(async () => {
     await app?.close();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   describe('GET /plex/available-servers', () => {
@@ -576,7 +604,7 @@ describe('Plex Auth Routes', () => {
 
     afterEach(async () => {
       if (app) await app.close();
-      vi.clearAllMocks();
+      vi.resetAllMocks();
       mockRedis.get.mockReset();
       mockRedis.setex.mockReset();
       mockRedis.del.mockReset();
@@ -757,7 +785,7 @@ describe('Plex Auth Routes', () => {
 
     afterEach(async () => {
       if (app) await app.close();
-      vi.clearAllMocks();
+      vi.resetAllMocks();
       mockRedis.get.mockReset();
       mockRedis.setex.mockReset();
       mockRedis.del.mockReset();
@@ -782,9 +810,24 @@ describe('Plex Auth Routes', () => {
         });
       });
 
+      // The route does a db.select for the existing server BEFORE the claim
+      // code check, so even tests that only assert the 403 need this stub.
+      const stubExistingServerLookupEmpty = () => {
+        vi.mocked(db.select).mockReturnValue({
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue([]),
+        } as never);
+        vi.mocked(db.insert).mockReturnValue({
+          values: vi.fn().mockReturnThis(),
+          returning: vi.fn().mockResolvedValue([{ id: randomUUID() }]),
+        } as never);
+      };
+
       it('requires claim code for first user', async () => {
         app = await buildUnauthenticatedTestApp();
 
+        stubExistingServerLookupEmpty();
         mockRedis.get.mockResolvedValue(JSON.stringify(storedData));
         mockRedis.del.mockResolvedValue(1);
 
@@ -805,6 +848,7 @@ describe('Plex Auth Routes', () => {
       it('rejects invalid claim code for first user', async () => {
         app = await buildUnauthenticatedTestApp();
 
+        stubExistingServerLookupEmpty();
         vi.mocked(validateClaimCode).mockReturnValue(false);
         mockRedis.get.mockResolvedValue(JSON.stringify(storedData));
         mockRedis.del.mockResolvedValue(1);
@@ -1042,7 +1086,7 @@ describe('Plex Auth Routes', () => {
 
     afterEach(async () => {
       if (app) await app.close();
-      vi.clearAllMocks();
+      vi.resetAllMocks();
       mockRedis.get.mockReset();
       mockRedis.setex.mockReset();
       mockRedis.del.mockReset();
@@ -1277,6 +1321,389 @@ describe('Plex Auth Routes', () => {
         expect(response.statusCode).toBe(403);
         expect(response.json().message).toContain('already has an owner');
       });
+    });
+  });
+
+  describe('POST /plex/test-connection', () => {
+    beforeEach(() => {
+      mockRedis.get.mockReset();
+      mockRedis.del.mockReset();
+      mockFetch.mockReset();
+    });
+
+    it('returns reachable: true on successful test (tempToken auth)', async () => {
+      app = await buildUnauthenticatedTestApp();
+      mockRedis.get.mockResolvedValue(JSON.stringify({ plexToken: 'plex-tok-from-temp' }));
+      mockFetch.mockResolvedValueOnce({ ok: true });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/plex/test-connection',
+        payload: { uri: 'http://192.168.1.100:32400', tempToken: 'temp-123' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.connection.reachable).toBe(true);
+      expect(body.connection.custom).toBe(true);
+      expect(body.connection.uri).toBe('http://192.168.1.100:32400');
+      expect(body.connection.address).toBe('192.168.1.100');
+      expect(body.connection.port).toBe(32400);
+      // Critical: tempToken must not be consumed by the test endpoint —
+      // the user retains it until /plex/connect succeeds.
+      expect(mockRedis.del).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 when tempToken is invalid/expired', async () => {
+      app = await buildUnauthenticatedTestApp();
+      mockRedis.get.mockResolvedValue(null);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/plex/test-connection',
+        payload: { uri: 'http://192.168.1.100:32400', tempToken: 'expired' },
+      });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('returns 400 for invalid URL', async () => {
+      app = await buildUnauthenticatedTestApp();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/plex/test-connection',
+        payload: { uri: 'not-a-url', tempToken: 'temp-123' },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('does NOT consume tempToken even when test fails', async () => {
+      app = await buildUnauthenticatedTestApp();
+      mockRedis.get.mockResolvedValue(JSON.stringify({ plexToken: 'plex-tok' }));
+      mockFetch.mockRejectedValueOnce(new Error('network'));
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/plex/test-connection',
+        payload: { uri: 'http://192.168.1.100:32400', tempToken: 'temp-123' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().connection.reachable).toBe(false);
+      expect(mockRedis.del).not.toHaveBeenCalled();
+    });
+
+    it('categorizes DNS failures (ENOTFOUND) as code: dns', async () => {
+      app = await buildUnauthenticatedTestApp();
+      mockRedis.get.mockResolvedValue(JSON.stringify({ plexToken: 'plex-tok' }));
+      const dnsError = new Error('fetch failed');
+      (dnsError as Error & { cause?: unknown }).cause = {
+        code: 'ENOTFOUND',
+        message: 'getaddrinfo ENOTFOUND nope.invalid',
+      };
+      mockFetch.mockRejectedValueOnce(dnsError);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/plex/test-connection',
+        payload: { uri: 'http://nope.invalid:32400', tempToken: 'temp-123' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.connection.reachable).toBe(false);
+      expect(body.connection.error.code).toBe('dns');
+      expect(body.connection.error.message).toContain('ENOTFOUND');
+    });
+
+    it('categorizes ECONNREFUSED as code: refused', async () => {
+      app = await buildUnauthenticatedTestApp();
+      mockRedis.get.mockResolvedValue(JSON.stringify({ plexToken: 'plex-tok' }));
+      const refusedError = new Error('fetch failed');
+      (refusedError as Error & { cause?: unknown }).cause = {
+        code: 'ECONNREFUSED',
+        message: 'connect ECONNREFUSED 192.168.1.100:32400',
+      };
+      mockFetch.mockRejectedValueOnce(refusedError);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/plex/test-connection',
+        payload: { uri: 'http://192.168.1.100:32400', tempToken: 'temp-123' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().connection.error.code).toBe('refused');
+    });
+
+    it('categorizes non-OK responses as code: http with status', async () => {
+      app = await buildUnauthenticatedTestApp();
+      mockRedis.get.mockResolvedValue(JSON.stringify({ plexToken: 'plex-tok' }));
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/plex/test-connection',
+        payload: { uri: 'http://192.168.1.100:32400', tempToken: 'temp-123' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.connection.reachable).toBe(false);
+      expect(body.connection.error.code).toBe('http');
+      expect(body.connection.error.status).toBe(401);
+    });
+
+    it('returns 403 for non-owner authenticated user (no tempToken)', async () => {
+      app = await buildTestApp(viewerUser);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/plex/test-connection',
+        payload: { uri: 'http://192.168.1.100:32400' },
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+
+    it('owner auth path uses fallback Plex token when no accountId provided', async () => {
+      app = await buildTestApp(ownerUser);
+      vi.mocked(getUserById).mockResolvedValue(mockDbUser as never);
+
+      // First select: existing plex servers (returns one with token)
+      const selectMock = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValueOnce([{ token: 'fallback-tok' }]),
+      };
+      vi.mocked(db.select).mockReturnValue(selectMock as never);
+
+      mockFetch.mockResolvedValueOnce({ ok: true });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/plex/test-connection',
+        payload: { uri: 'http://192.168.1.100:32400' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().connection.reachable).toBe(true);
+    });
+  });
+
+  describe('GET /plex/server-connections/:serverId', () => {
+    beforeEach(() => {
+      mockFetch.mockReset();
+    });
+
+    it('injects saved URL as custom: true when not in plex.tv connections', async () => {
+      app = await buildTestApp(ownerUser);
+
+      const customUrl = 'http://192.168.1.99:9999';
+      const serverId = randomUUID();
+
+      // First (and only) select: server row by id
+      const selectMock = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([
+          {
+            id: serverId,
+            token: 'srv-tok',
+            name: 'Home',
+            url: customUrl, // saved URL not in plex.tv connections
+            machineIdentifier: 'mid-abc',
+          },
+        ]),
+      };
+      vi.mocked(db.select).mockReturnValue(selectMock as never);
+
+      vi.mocked(PlexClient.getServers).mockResolvedValue([
+        {
+          ...mockPlexServer,
+          clientIdentifier: 'mid-abc',
+          // None of these connections match the saved customUrl
+        },
+      ]);
+
+      // Order: testServerConnections first (2 plex.tv connections), then the custom URL test
+      mockFetch
+        .mockResolvedValueOnce({ ok: true }) // local plex.tv conn
+        .mockResolvedValueOnce({ ok: true }) // remote plex.tv conn
+        .mockResolvedValueOnce({ ok: true }); // custom URL test
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/plex/server-connections/${serverId}`,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.server).not.toBeNull();
+      // Custom URL row is prepended (unshift), so it's first
+      expect(body.server.connections[0].uri).toBe(customUrl);
+      expect(body.server.connections[0].custom).toBe(true);
+      expect(body.server.connections[0].address).toBe('192.168.1.99');
+      expect(body.server.connections[0].port).toBe(9999);
+    });
+
+    it('does NOT inject when saved URL matches a plex.tv connection', async () => {
+      app = await buildTestApp(ownerUser);
+
+      const matchingUrl = 'http://192.168.1.100:32400'; // matches mockPlexServer.connections[0].uri
+      const serverId = randomUUID();
+
+      const selectMock = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue([
+          {
+            id: serverId,
+            token: 'srv-tok',
+            name: 'Home',
+            url: matchingUrl,
+            machineIdentifier: 'mid-abc',
+          },
+        ]),
+      };
+      vi.mocked(db.select).mockReturnValue(selectMock as never);
+
+      vi.mocked(PlexClient.getServers).mockResolvedValue([
+        { ...mockPlexServer, clientIdentifier: 'mid-abc' },
+      ]);
+
+      mockFetch.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ ok: true });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/plex/server-connections/${serverId}`,
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.server.connections).toHaveLength(2);
+      expect(body.server.connections.every((c: { custom?: boolean }) => !c.custom)).toBe(true);
+    });
+  });
+
+  describe('POST /plex/connect - Temp token consumption', () => {
+    let app: FastifyInstance;
+
+    afterEach(async () => {
+      if (app) await app.close();
+      vi.resetAllMocks();
+      mockRedis.get.mockReset();
+      mockRedis.setex.mockReset();
+      mockRedis.del.mockReset();
+    });
+
+    const tempToken = 'temp-token-survives';
+    const storedData = {
+      plexAccountId: 'plex-account-x',
+      plexUsername: 'user',
+      plexEmail: 'u@e.com',
+      plexThumb: 'https://e.com/u.jpg',
+      plexToken: 'plex-token-x',
+    };
+
+    it('does NOT delete tempToken when verifyServerAdmin fails (allows retry)', async () => {
+      app = await buildUnauthenticatedTestApp();
+
+      mockRedis.get.mockResolvedValue(JSON.stringify(storedData));
+      vi.mocked(PlexClient.verifyServerAdmin).mockResolvedValue({
+        success: false,
+        code: 'CONNECTION_FAILED',
+        message: 'Cannot reach Plex server',
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/plex/connect',
+        payload: {
+          tempToken,
+          serverUri: 'http://localhost:32400',
+          serverName: 'My Plex Server',
+        },
+      });
+
+      expect(response.statusCode).toBe(503);
+      // Critical: token survives failure so the user can retry
+      expect(mockRedis.del).not.toHaveBeenCalled();
+    });
+
+    it('deletes tempToken on successful connect', async () => {
+      app = await buildUnauthenticatedTestApp();
+      vi.mocked(isClaimCodeEnabled).mockReturnValue(false);
+
+      mockRedis.get.mockResolvedValue(JSON.stringify(storedData));
+      mockRedis.del.mockResolvedValue(1);
+
+      vi.mocked(PlexClient.verifyServerAdmin).mockResolvedValue({ success: true });
+
+      const serverId = randomUUID();
+      const userId = randomUUID();
+      const plexAccountId = randomUUID();
+
+      let selectCallCount = 0;
+      const selectMock = {
+        from: vi.fn().mockImplementation(() => {
+          selectCallCount++;
+          if (selectCallCount === 1) {
+            return {
+              where: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockResolvedValue([]),
+            };
+          }
+          return Promise.resolve([]);
+        }),
+      };
+      vi.mocked(db.select).mockReturnValue(selectMock as never);
+
+      vi.mocked(db.insert)
+        .mockReturnValueOnce({
+          values: vi.fn().mockReturnThis(),
+          returning: vi.fn().mockResolvedValue([{ id: serverId }]),
+        } as never)
+        .mockReturnValueOnce({
+          values: vi.fn().mockReturnThis(),
+          returning: vi.fn().mockResolvedValue([{ id: userId, username: 'user', role: 'owner' }]),
+        } as never)
+        .mockReturnValueOnce({
+          values: vi.fn().mockReturnThis(),
+          returning: vi.fn().mockResolvedValue([{ id: plexAccountId }]),
+        } as never)
+        .mockReturnValueOnce({
+          values: vi.fn().mockResolvedValue(undefined),
+        } as never);
+
+      vi.mocked(db.update)
+        .mockReturnValueOnce({
+          set: vi.fn().mockReturnThis(),
+          where: vi.fn().mockResolvedValue(undefined),
+        } as never)
+        .mockReturnValueOnce({
+          set: vi.fn().mockReturnThis(),
+          where: vi.fn().mockResolvedValue(undefined),
+        } as never);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/plex/connect',
+        payload: {
+          tempToken,
+          serverUri: 'http://localhost:32400',
+          serverName: 'My Plex Server',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockRedis.del).toHaveBeenCalledWith(expect.stringContaining(tempToken));
     });
   });
 });
